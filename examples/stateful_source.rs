@@ -1,10 +1,32 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use jetstream::stateful_source;
 use jetstream::persistent::{PersistentStateBackend, persistent_source, PersistentState};
 use timely::Data;
 use timely::dataflow::operators::{Inspect, ToStream};
+
+fn main() {
+    
+    timely::execute_from_args(std::env::args(), move |worker| {
+        worker.dataflow::<usize, _, _>(|scope| {
+            let state_backend = DiskState{dir: PathBuf::from("/tmp/jetstream/state"), state_type: PhantomData::<i64>};
+            
+            let logic = |state| if state < 20 {
+                let msg = state + 1;
+                println!("emitting {msg}");
+                (msg, state + 1)
+            } else {
+                std::process::exit(0);
+            };
+            persistent_source(scope, state_backend, logic).inspect(|x| println!("Saw {x:?}"));
+        });
+        println!("Built dataflow");
+        for i in 0..10 {
+            worker.step();
+        }
+    })
+    .unwrap();
+}
 
 struct DiskState<P> {
     dir: PathBuf,
@@ -40,26 +62,4 @@ P: PersistentState + Default,
         std::fs::write(path, bytes).unwrap();
         Ok(())
     }
-}
-
-fn main() {
-    
-    timely::execute_from_args(std::env::args(), move |worker| {
-        worker.dataflow::<usize, _, _>(|scope| {
-            let state_backend = DiskState{dir: PathBuf::from("/tmp/jetstream/state"), state_type: PhantomData::<i64>};
-            let logic = |state| if state < 20 {
-                let msg = state + 1;
-                println!("emitting {msg}");
-                (msg, state + 1)
-            } else {
-                std::process::exit(0);
-            };
-            persistent_source(scope, state_backend, logic).inspect(|x| println!("Saw {x:?}"));
-        });
-        println!("Built dataflow");
-        for i in 0..10 {
-            worker.step();
-        }
-    })
-    .unwrap();
 }
