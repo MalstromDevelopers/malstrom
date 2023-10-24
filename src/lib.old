@@ -1,0 +1,186 @@
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use timely::dataflow::channels::pact::Pipeline;
+use timely::dataflow::operators::ConnectLoop;
+use timely::dataflow::operators::Feedback;
+use timely::dataflow::operators::Map;
+use timely::dataflow::operators::Operator;
+use timely::dataflow::stream::Stream;
+use timely::dataflow::InputHandle;
+use timely::dataflow::Scope;
+use timely::dataflow::ScopeParent;
+use timely::Data;
+
+static STATE_DIR: &str = "~/.jetstream/state.bin";
+
+pub trait PersistantState: Data + Serialize + DeserializeOwned {}
+impl<T: Data + Serialize + DeserializeOwned> PersistantState for T {}
+
+fn load_state<P: DeserializeOwned>() -> Option<P> {
+    println!("Loading state");
+    let fileinp = std::fs::read(STATE_DIR).ok()?;
+    let state: P = bincode::deserialize(&fileinp).ok()?;
+    Some(state)
+}
+
+fn save_state<P: Serialize>(state: &P) -> Option<()> {
+    println!("Saving state");
+    // TODO: make a result
+    let bytes = bincode::serialize(state).ok()?;
+    std::fs::write(STATE_DIR, bytes).ok()?;
+    Some(())
+}
+
+enum DataOrState<D, P> {
+    Data(D),
+    State(P),
+}
+
+/// Create a new stream from a persisted stateful source
+pub fn stateful_source<P: PersistantState, S: Scope, D: Data>(
+    scope: &mut S,
+    factory: impl Fn() -> P,
+    logic: impl Fn(P) -> (D, P) + 'static,
+) -> Stream<S, D>
+where
+    S: ScopeParent<Timestamp = usize>,
+{
+    // TODO we hardcode the timestamp type to usize here
+    // but that may no be desirable to users
+
+    // hande which feeds state into the source
+    let mut state_input = InputHandle::<usize, P>::new();
+    let state_stream = state_input.to_stream(scope);
+    // handle which feeds data downstream
+    // let mut data_input = InputHandle::<usize, D>::new();
+    // handle which feeds state to the persistor
+    // let mut persist_input = InputHandle::<usize, P>::new();
+
+    // let data_stream = data_input.to_stream(scope);
+    // let persist_stream = persist_input.to_stream(scope);
+
+    // load or create the initial state
+    let initial_state = load_state().unwrap_or_else(factory);
+    state_input.send(initial_state);
+
+    // call the given function to generate input then
+    // disentangle the state and data. Feed the state into the state_input
+    // and the data downstream
+    let data_stream = state_stream
+        .map(logic)
+        .map_in_place(|(_, state)| {
+            save_state(&state);
+        })
+        // destructure
+        .map(move|(data, state)| {
+            // feed the state back into the input
+            state_input.send(state);
+            data
+        });
+        // .sink(Pipeline, "StatefulSource_Destructure", move |handle| {
+        //     while let Some((capability, mixeddata)) = handle.next() {
+        //         let time = capability.time();
+
+        //         // not sure what this swap does exactly,
+        //         // copied it from the timely book
+        //         let mut vector = Vec::new();
+        //         mixeddata.swap(&mut vector);
+
+        //         for (data, state) in vector.drain(..) {
+        //             data_input.send(data);
+        //             data_input.advance_to(*time);
+
+        //             persist_input.send(state);
+        //             persist_input.advance_to(*time);
+        //         }
+        //     }
+        // });
+
+    // persist data and feed it back into the state input
+    // state_stream
+    //     .map_in_place(|state| {
+    //         save_state(state);
+    //     })
+    //     .sink(Pipeline, "StatefulSource_Feedback", move |handle| {
+    //         while let Some((capability, state)) = handle.next() {
+    //             let time = capability.time();
+    //             // not sure what this swap does exactly,
+    //             // copied it from the timely book
+    //             let mut vector = Vec::new();
+    //             state.swap(&mut vector);
+
+    //             state_input.send_batch(&mut vector);
+    //             state_input.advance_to(*time);
+    //         }
+    //     });
+
+    data_stream
+}
+
+/// Extension trait for `Stream`.
+// pub trait StatefulMap<'de, S: Scope, D: Data, P: PersistantState<'de>> {
+//     /// The persistent stateful map, holy grail of stream processing
+//     ///
+//     /// This map is actually composed of three operators
+//     /// 1. create_state: Used to create either a new state or recreate it from a snapshot
+//     /// 2. stateful_map: UDF which gets the state and data, may manipulate both and emit them downstream
+//     /// 3. persist_state: Used to persist the state
+//     ///
+//     /// How this works:
+//     /// The create_state function gets called once, when (re)starting the dataflow to create the initial or
+//     /// recoverd state `P` and emits it downstream. If there are any upstream datasources, this method will
+//     /// also emit their messages `D` unchanged. After creating the inital state, this function becomes a noop.
+//     ///
+//     /// The stateful_map gets data `D` and state `P` as input and emits the new data `D2` and `P2`
+//     ///
+//     /// The persist_state gets data `D2` and state `P2` as input and
+//     /// - persists `P2` (e.g. to disk)
+//     /// - emits `D2` unmodified
+//     /// - routes `P2` **back into the create_state (which is now a noop) as `P`** to act as the state for the next map application
+
+//     /// a stateful map is a operater which gets
+//     /// - some data
+//     /// - some mutable state
+//     /// it can then mutate the state and manipulate the data
+//     /// and must then return both
+//     fn map_stateful<
+//     D2: Data,
+//     P2: PersistantState<'de>,
+//     L: FnMut(D, P)->( D2 + 'static, P2 + 'static)>(&self, logic: L) -> Stream<S, (D2, P2)>;
+// }
+
+pub trait StatefulSource<'de, S: Scope, D: Data, P: PersistantState> {}
+
+#[cfg(test)]
+mod tests {
+    use timely::dataflow::operators::Inspect;
+
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let factory = || {
+            println!("State factory called");
+            0 as usize
+        };
+        let logic = |state| {
+            if state < 20 {
+                println!("Source called");
+                return (4, state + 1);
+            } else {
+                panic!("I AM DONE")
+            }
+        };
+
+        timely::execute_from_args(std::env::args(), move |worker| {
+            worker.dataflow::<usize, _, _>(|scope| {
+                stateful_source(scope, factory, logic).inspect(|x| println!("{x:?}"));
+            });
+            println!("Built dataflow");
+            for _ in 0..10 {
+                worker.step();
+            }
+        })
+        .unwrap();
+    }
+}

@@ -1,0 +1,45 @@
+extern crate timely;
+use timely::dataflow::operators::generic::source;
+use timely::dataflow::operators::{Capability};
+use timely::dataflow::stream::Stream;
+use timely::dataflow::scopes::Child;
+use timely::worker::Worker;
+use timely::communication::allocator::Generic;
+
+fn stateful_source<S, D: Data>(worker: Worker<Generic>) -> Stream<S, D> {}
+
+fn main() {
+    let wok
+
+    timely::execute::execute_directly(
+        |worker| worker.dataflow(
+            |scope| 
+            source(scope, "KafkaSource", |capability, info| {
+
+            // Acquire a re-activator for this operator.
+            use timely::scheduling::Scheduler;
+            let activator = scope.activator_for(&info.address[..]);
+
+            let mut cap = Some(capability);
+            move |output| {
+
+                let mut done = false;
+                if let Some(cap) = cap.as_mut() {
+
+                    // get some data and send it.
+                    let time = cap.time().clone();
+                    output.session(&cap)
+                          .give(*cap.time());
+
+                    // downgrade capability.
+                    cap.downgrade(&(time + 1));
+                    done = time > 20;
+                }
+
+                if done { cap = None; }
+                else    { activator.activate(); }
+            }
+        })
+        )
+    );
+}
