@@ -8,6 +8,7 @@ pub mod persistent;
 mod split;
 mod util;
 mod union;
+mod sketch;
 
 /// Signifies an empty stream
 #[derive(Clone)]
