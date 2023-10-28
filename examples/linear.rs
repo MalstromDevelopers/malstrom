@@ -29,7 +29,7 @@ pub fn main() {
     });
     let mut stream = JetStream::from_operator(source).then(flatten).then(print);
 
-    // We will now step this stream 10 times
+    // We will now step this stream 50 times
     // On each step the stream will schedule all operators bottom-up **at most once**.
     //
     // if we scheduled every operator exactly once per step, the number of outstanding
