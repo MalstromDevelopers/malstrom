@@ -1,0 +1,47 @@
+/// This is an example of linear flow control
+
+use crossbeam::channel::{Receiver, Sender};
+use jetstream::poc::{JetStream, StandardOperator, SourceMapper, Nothing, dist_rand};
+
+pub fn main() {
+
+    // this source generates 5 numbers every time it is
+    // activated
+    let source: StandardOperator<Nothing, Vec<i64>, _> = StandardOperator::new(SourceMapper::new(
+        || Some((0..5).collect())
+    ));
+    
+    // the next operator will flatten this vec
+    // and produce 5 output messages for every one input message
+    let flatten = StandardOperator::from(
+        |inputs: &Vec<Receiver<Vec<i64>>>, outputs: &Vec<Sender<i64>>| {
+        let data = inputs.iter().filter_map(|r| r.try_recv().ok()).flatten().collect();
+        dist_rand(data, outputs)
+    });
+
+    // this operator just reads one record from each of its inputs, when it gets activated
+    let print = StandardOperator::from(|inputs: &Vec<Receiver<i64>>, _outputs: &Vec<Sender<()>>| {
+        let input_size: usize = inputs.iter().map(|x| x.len()).sum();
+        println!("outstanding messages: {input_size}");
+        for msg in inputs.iter().filter_map(|x| x.try_recv().ok()) {
+            println!("{msg}");
+        }
+    });
+    let mut stream = JetStream::from_operator(source).then(flatten).then(print);
+
+    // We will now step this stream 10 times
+    // On each step the stream will schedule all operators bottom-up **at most once**.
+    //
+    // if we scheduled every operator exactly once per step, the number of outstanding
+    // messages for print to process would grow with each step, as print processes fewer
+    // messages per step than our source produces
+    //
+    // To avoid this, jetstream schedules each operator at most once, starting downstream
+    // and stopping this round of scheduling, if an operator still has remaining input after
+    // being scheduled.
+    // The result is, that we see the count of outstanding messages for print never exceeding 5.
+
+    for _ in 0..50 {
+        stream.step()
+    }
+}

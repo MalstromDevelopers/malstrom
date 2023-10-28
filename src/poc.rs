@@ -1,6 +1,7 @@
+use std::iter;
 use std::process::Output;
 
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{bounded, Receiver, Sender, unbounded};
 use rand;
 use rand::seq::SliceRandom;
 
@@ -11,25 +12,29 @@ impl<T: Clone + 'static> Data for T {}
 /// A union of two data types
 /// useful when combining streams
 #[derive(Clone, Copy)]
-enum DataUnion<L, R> {
+pub enum DataUnion<L, R> {
     Left(L),
     Right(R),
 }
 
 /// A mapper which can be applied to transform data of type A
 /// into data of type B
-trait Mapper<I, O>: 'static {
-    fn apply(&mut self, _: Vec<Option<I>>) -> Vec<O>;
+pub trait Mapper<I, O>: 'static {
+    fn apply(&mut self, inputs: &Vec<Receiver<I>>, outputs: &Vec<Sender<O>>) -> ();
 }
-impl<I, O, S> Mapper<I, O> for S
-where
-    S: FnMut(Vec<Option<I>>) -> Vec<O> + 'static,
-{
-    fn apply(&mut self, values: Vec<Option<I>>) -> Vec<O> {
-        self(values)
+pub struct MapperContainer<F> {
+    func: F
+}
+impl<F> MapperContainer<F> {
+    fn new(func: F) -> Self {
+        Self { func }
     }
 }
-
+impl<F, I, O> Mapper<I, O> for  MapperContainer<F> where F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static {
+    fn apply(&mut self, inputs: &Vec<Receiver<I>>, outputs: &Vec<Sender<O>>) -> () {
+        (self.func)(inputs, outputs)
+    }
+}
 /// A distributor, which is some strategy to distribute N records
 /// to M outputs
 trait Distributor<O>: 'static {
@@ -67,23 +72,40 @@ impl<T> Distributor<T> for RandomDistributor {
     }
 }
 
+/// a helper function to distribute output randomly
+pub fn dist_rand<O>(data: Vec<O>, outputs: &Vec<Sender<O>>) -> () {
+    for d in data {
+        if let Some(tx) = outputs.choose(&mut rand::thread_rng()) {
+            // TODO: currently we just crash if a downstream op is unavailable
+            // but we may want to try sending to a different one instead
+            tx.send(d).expect("Failed to send data downstream");
+        } else {
+            // no outputs
+            return;
+        }
+    }
+}
+
 /// The NoopMapper is a mapper which does nothing!
 /// It transforms data of type A into data of type A
-struct NoopMapper;
+/// and sends it randomly to its outputs
+pub struct NoopMapper;
 impl NoopMapper {
     pub fn new() -> Self {
         NoopMapper {}
     }
 }
 impl<I> Mapper<I, I> for NoopMapper {
-    fn apply(&mut self, data: Vec<Option<I>>) -> Vec<I> {
-        data.into_iter().filter_map(|x| x).collect()
-    }
+    fn apply(&mut self, inputs: &Vec<Receiver<I>>, outputs: &Vec<Sender<I>>) -> () {
+        let data = inputs.iter().map(|x| x.try_recv().ok()).filter_map(|x| x).collect();
+        dist_rand(data, outputs)
+}
 }
 
 /// The source mapper will ignore any of its input data and
 /// instead create any number of records out of thin air
-struct SourceMapper<S: 'static> {
+/// and distribute them evenly across its outputs
+pub struct SourceMapper<S: 'static> {
     source_func: S,
 }
 impl<S, T> SourceMapper<S>
@@ -94,105 +116,112 @@ where
         SourceMapper { source_func }
     }
 }
-impl<I, T, S> Mapper<I, T> for SourceMapper<S>
+impl<I, O, S> Mapper<I, O> for SourceMapper<S>
 where
-    S: FnMut() -> Option<T>,
+    S: FnMut() -> Option<O>,
 {
-    fn apply(&mut self, _: Vec<Option<I>>) -> Vec<T> {
-        match (self.source_func)() {
+    fn apply(&mut self, _inputs: &Vec<Receiver<I>>, outputs: &Vec<Sender<O>>) -> () {
+        let data = match (self.source_func)() {
             Some(x) => vec![x],
             None => vec![],
-        }
+        };
+        dist_rand(data, outputs)
     }
 }
 
 /// The simplest trait in the world
 /// Any jetstream operator, MUST implement
 /// this trait
-pub trait Operate {
+pub trait Operator{
     /// Calling step instructs the operator, that it should attempt to make
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its inputs and writes
     /// to its outputs
     fn step(&mut self) -> ();
+
+    fn has_input(&mut self) -> bool;
 }
 
 /// This attempts to be the most generic operator possible
-/// It has N inputs and M outputs
-/// A mapper function to mapper data
-/// A distributor to distribute the transformed data to the outputs
-struct Operator<I, O, M, D>
-// I: Input, O: Output, F: op, D: Distributor
+/// It has N inputs and M outputs and
+/// a mapper function to map inputs to outputs
+pub struct StandardOperator<I, O, M>
+// I: Input, O: Output, M: Mapper
 where
     M: Mapper<I, O>,
-    D: Distributor<O>,
 {
     inputs: Vec<Receiver<I>>,
-    op: M,
-    distributor: D,
+    mapper: M,
     outputs: Vec<Sender<O>>,
 }
 
-impl<I, O, M, D> Operator<I, O, M, D>
+impl<I, O, F> From<F> for StandardOperator<I, O, MapperContainer<F>>
 where
-    M: Mapper<I, O>,
-    D: Distributor<O>,
+F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static
 {
-    pub fn new(op: M, distributor: D) -> Self {
+    fn from(mapper: F) -> StandardOperator<I, O, MapperContainer<F>> {
         Self {
             inputs: Vec::new(),
-            op: op,
-            distributor: distributor,
+            mapper: MapperContainer::new(mapper),
             outputs: Vec::new(),
         }
     }
+}
 
-    pub fn add_downstream<T, U: Mapper<O, T>, V: Distributor<T>>(
-        &mut self,
-        other: &mut Operator<O, T, U, V>,
-    ) {
-        let (tx, rx) = bounded::<O>(1);
-        // and now kiss!
+impl<I, O, M> StandardOperator<I, O, M>
+where
+    M: Mapper<I, O>,
+{
+
+    pub fn new(mapper: M) -> Self {
+        Self { inputs: Vec::new(), mapper, outputs: Vec::new() }
+    }
+    
+
+    fn add_output<T, N: Mapper<O, T>>(&mut self, other: &mut StandardOperator<O, T, N>) -> () {
+        let (tx, rx) = unbounded::<O>();
         self.outputs.push(tx);
+
+        // TODO: could be done cleaner with a trait
         other.inputs.push(rx)
     }
 }
 
-impl<I, O, M, D> Operate for Operator<I, O, M, D>
+impl<I, O, M> Operator for StandardOperator<I, O, M>
 where
     M: Mapper<I, O>,
-    D: Distributor<O>,
 {
     fn step(&mut self) -> () {
         // TODO maybe the whole thing would be more efficient
         // if we used iterator instead of vec, on the other hand this way the
         // op can now where an input is from, which may be useful to track e.g.
         // for `zip` or similar
-        let in_data: Vec<Option<I>> = self.inputs.iter().map(|rx| rx.try_recv().ok()).collect();
-        let transformed = self.op.apply(in_data);
-        self.distributor.distribute(transformed, &self.outputs)
+        self.mapper.apply(&self.inputs, &self.outputs);
+    }
+
+    fn has_input(&mut self) -> bool {
+        self.inputs.iter().any(|x| !x.is_empty())
     }
 }
 
 /// nothing data
 #[derive(Clone)]
-struct Nothing;
+pub struct Nothing;
 
 /// Creates a do nothing operator.
-fn noop<T>() -> Operator<T, T, NoopMapper, RandomDistributor> {
-    Operator::new(NoopMapper::new(), RandomDistributor::new())
+fn noop<T>() -> StandardOperator<T, T, NoopMapper> {
+    StandardOperator::new(NoopMapper::new())
 }
 
-struct JetStream<Input, Output, M, D>
+pub struct JetStream<Input, Output, M>
 where
     M: Mapper<Input, Output>,
-    D: Distributor<Output>,
 {
-    operators: Vec<Box<dyn Operate>>,
-    last_op: Operator<Input, Output, M, D>,
+    operators: Vec<Box<dyn Operator>>,
+    last_op: StandardOperator<Input, Output, M>,
 }
 
-impl<T> JetStream<T, T, NoopMapper, RandomDistributor> {
+impl<T> JetStream<T, T, NoopMapper> {
     pub fn new() -> Self {
         Self {
             operators: Vec::new(),
@@ -201,14 +230,13 @@ impl<T> JetStream<T, T, NoopMapper, RandomDistributor> {
     }
 }
 
-impl<I, O, M, D> JetStream<I, O, M, D>
+impl<I, O, M> JetStream<I, O, M>
 where
     I: Data,
     O: Data,
-    M: Mapper<I, O>,
-    D: Distributor<O>,
+    M: Mapper<I, O>
 {
-    pub fn from_operator(operator: Operator<I, O, M, D>) -> Self {
+    pub fn from_operator(operator: StandardOperator<I, O, M>) -> Self {
         Self {
             operators: Vec::new(),
             last_op: operator,
@@ -216,11 +244,11 @@ where
     }
 
     /// Add a datasource to a stream which has no data in it
-    pub fn source<S: Fn() -> Option<O>>(
+    pub fn source<S: FnMut() -> Option<O>>(
         self,
         source_func: S,
-    ) -> JetStream<Nothing, O, SourceMapper<S>, RandomDistributor> {
-        let last_op = Operator::new(SourceMapper::new(source_func), RandomDistributor::new());
+    ) -> JetStream<Nothing, O, SourceMapper<S>> {
+        let last_op = StandardOperator::new(SourceMapper::new(source_func));
 
         let mut operators = self.operators;
         operators.push(Box::new(self.last_op));
@@ -229,13 +257,13 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    fn then<P, M2: Mapper<O, P>, D2: Distributor<P>>(
+    pub fn then<O2, M2: Mapper<O, O2>>(
         self,
-        mut operator: Operator<O, P, M2, D2>,
-    ) -> JetStream<O, P, M2, D2> {
+        mut operator: StandardOperator<O, O2, M2>,
+    ) -> JetStream<O, O2, M2> {
         let mut last_op = self.last_op;
         let mut operators = self.operators;
-        last_op.add_downstream(&mut operator);
+        last_op.add_output(&mut operator);
         operators.push(Box::new(last_op));
         JetStream {
             operators,
@@ -247,57 +275,74 @@ where
     /// and add it to our Vec of operators, but don't change
     /// the last op
     /// This is useful for side outputs
-    fn side<P: Data, M2: Mapper<O, P>, D2: Distributor<P>>(
+    fn side<P: Data, M2: Mapper<O, P>>(
         &mut self,
-        mut operator: Operator<O, P, M2, D2>,
+        mut operator: StandardOperator<O, P, M2>,
     ) -> () {
-        self.last_op.add_downstream(&mut operator);
+        self.last_op.add_output(&mut operator);
         self.operators.push(Box::new(operator))
+    }
+
+    pub fn step(&mut self) -> () {
+
+        // it is important to step operators at least once
+        // even if they don't have input, as they may be sources
+        // which need to run without input
+        self.last_op.step();
+        if self.last_op.has_input() {
+            return;
+        }
+        for operator in self.operators.iter_mut().rev() {
+            operator.step();
+            if operator.has_input() {
+                return;
+            }
+        }
     }
 }
 
-impl<Input, Output, M, D> JetStream<Input, Output, M, D>
+impl<Input, Output, M> JetStream<Input, Output, M>
 where
     Input: Data,
     Output: Data,
     M: Mapper<Input, Output>,
-    D: Distributor<Output>,
 {
     /// union two streams
     pub fn union<
         InputB: Data,
         OutputB: Data,
-        MB: Mapper<InputB, OutputB>,
-        DB: Distributor<OutputB>,
+        MB: Mapper<InputB, OutputB>
     >(
         &mut self,
-        other: &mut JetStream<InputB, OutputB, MB, DB>,
+        other: &mut JetStream<InputB, OutputB, MB>,
     ) -> JetStream<
         DataUnion<Output, OutputB>,
         DataUnion<Output, OutputB>,
-        NoopMapper,
-        RandomDistributor,
+        NoopMapper
     > {
         let mut new_stream = JetStream::new();
-        let mut transform_left = Operator::new(
-            |v: Vec<Option<Output>>| {
-                v.into_iter()
+
+        // wrap data from left into a data union
+        let mut transform_left = StandardOperator::from(
+            |inputs: &Vec<Receiver<Output>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
+                    let data = inputs.iter().map(|x| x.try_recv().ok())
                     .filter_map(|x| x.and_then(|y| Some(DataUnion::Left(y))))
-                    .collect()
+                    .collect();
+                    dist_rand(data, outputs)
             },
-            RandomDistributor::new(),
         );
-        let mut transform_right = Operator::new(
-            |v: Vec<Option<OutputB>>| {
-                v.into_iter()
+        // wrap data from right into a data union
+        let mut transform_right = StandardOperator::from(
+            |inputs: &Vec<Receiver<OutputB>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
+                    let data = inputs.iter().map(|x| x.try_recv().ok())
                     .filter_map(|x| x.and_then(|y| Some(DataUnion::Right(y))))
-                    .collect()
+                    .collect();
+                    dist_rand(data, outputs)
             },
-            RandomDistributor::new(),
         );
 
-        transform_left.add_downstream(&mut new_stream.last_op);
-        transform_right.add_downstream(&mut new_stream.last_op);
+        transform_left.add_output(&mut new_stream.last_op);
+        transform_right.add_output(&mut new_stream.last_op);
 
         self.side(transform_left);
         other.side(transform_right);
