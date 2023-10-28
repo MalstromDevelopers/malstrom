@@ -37,7 +37,7 @@ pub fn main() {
     // messages per step than our source produces
     //
     // To avoid this, jetstream schedules each operator at most once, starting downstream
-    // and stopping this round of scheduling, if an operator still has remaining input after
+    // and stopping a round of scheduling, if an operator still has remaining input after
     // being scheduled.
     // The result is, that we see the count of outstanding messages for print never exceeding 5.
 
