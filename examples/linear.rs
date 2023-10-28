@@ -1,32 +1,36 @@
 /// This is an example of linear flow control
-
 use crossbeam::channel::{Receiver, Sender};
-use jetstream::poc::{JetStream, StandardOperator, SourceMapper, Nothing, dist_rand};
+use jetstream::{
+    map::Map,
+    poc::{dist_rand, JetStream, Nothing, StandardOperator},
+};
 
 pub fn main() {
-
     // this source generates 5 numbers every time it is
     // activated
-    let source: StandardOperator<Nothing, Vec<i64>, _> = StandardOperator::new(SourceMapper::new(
-        || Some((0..5).collect())
-    ));
-    
+    let source: StandardOperator<Nothing, Vec<i64>> = StandardOperator::new(|_, outputs| {
+        let data: Vec<i64> = (0..5).collect();
+        dist_rand(vec![data].into_iter(), outputs)
+    });
+
     // the next operator will flatten this vec
     // and produce 5 output messages for every one input message
     let flatten = StandardOperator::from(
         |inputs: &Vec<Receiver<Vec<i64>>>, outputs: &Vec<Sender<i64>>| {
-        let data = inputs.iter().filter_map(|r| r.try_recv().ok()).flatten().collect();
-        dist_rand(data, outputs)
-    });
+            let data = inputs.iter().filter_map(|r| r.try_recv().ok()).flatten();
+            dist_rand(data, outputs)
+        },
+    );
 
     // this operator just reads one record from each of its inputs, when it gets activated
-    let print = StandardOperator::from(|inputs: &Vec<Receiver<i64>>, _outputs: &Vec<Sender<()>>| {
-        let input_size: usize = inputs.iter().map(|x| x.len()).sum();
-        println!("outstanding messages: {input_size}");
-        for msg in inputs.iter().filter_map(|x| x.try_recv().ok()) {
-            println!("{msg}");
-        }
-    });
+    let print =
+        StandardOperator::from(|inputs: &Vec<Receiver<i64>>, _outputs: &Vec<Sender<()>>| {
+            let input_size: usize = inputs.iter().map(|x| x.len()).sum();
+            println!("outstanding messages: {input_size}");
+            for msg in inputs.iter().filter_map(|x| x.try_recv().ok()) {
+                println!("{msg}");
+            }
+        });
     let mut stream = JetStream::from_operator(source).then(flatten).then(print);
 
     // We will now step this stream 50 times
@@ -44,4 +48,10 @@ pub fn main() {
     for _ in 0..50 {
         stream.step()
     }
+
+    // almost the same stream, but written more concisely
+    let _ = JetStream::new()
+        .source(|| Some((0..5).collect::<Vec<i64>>()))
+        .map(|mut x| x.pop())
+        .map(|x| println!("{x:?}"));
 }
