@@ -1,12 +1,8 @@
 use std::iter;
-use std::rc::Rc;
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use rand;
 use rand::seq::SliceRandom;
-
-use crate::worker::Worker;
-use crate::StreamError;
 
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
@@ -21,7 +17,7 @@ pub enum DataUnion<L, R> {
 }
 
 /// a helper function to distribute output randomly
-pub fn dist_rand<O>(data: impl Iterator<Item = O>, outputs: &Vec<Sender<O>>) -> () {
+pub fn dist_rand<O>(data: impl Iterator<Item = O>, outputs: &Vec<Sender<O>>) {
     for d in data {
         if let Some(tx) = outputs.choose(&mut rand::thread_rng()) {
             // TODO: currently we just crash if a downstream op is unavailable
@@ -41,7 +37,7 @@ pub trait Operator {
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its inputs and writes
     /// to its outputs
-    fn step(&mut self) -> ();
+    fn step(&mut self);
 
     fn has_input(&mut self) -> bool;
 }
@@ -51,13 +47,13 @@ pub trait Operator {
 /// a mapper function to map inputs to outputs
 pub struct StandardOperator<I, O> {
     inputs: Vec<Receiver<I>>,
-    mapper: Box<dyn FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> ()>,
+    mapper: Box<dyn FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>)>,
     outputs: Vec<Sender<O>>,
 }
 
 impl<I, O, F> From<F> for StandardOperator<I, O>
 where
-    F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static,
+    F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) + 'static,
 {
     fn from(mapper: F) -> StandardOperator<I, O> {
         Self::new(mapper)
@@ -65,7 +61,7 @@ where
 }
 
 impl<I, O> StandardOperator<I, O> {
-    pub fn new(mapper: impl FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static) -> Self {
+    pub fn new(mapper: impl FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) + 'static) -> Self {
         Self {
             inputs: Vec::new(),
             mapper: Box::new(mapper),
@@ -73,7 +69,7 @@ impl<I, O> StandardOperator<I, O> {
         }
     }
 
-    pub fn add_output<T>(&mut self, other: &mut StandardOperator<O, T>) -> () {
+    pub fn add_output<T>(&mut self, other: &mut StandardOperator<O, T>) {
         let (tx, rx) = unbounded::<O>();
         self.outputs.push(tx);
 
@@ -83,7 +79,7 @@ impl<I, O> StandardOperator<I, O> {
 }
 
 impl<I, O> Operator for StandardOperator<I, O> {
-    fn step(&mut self) -> () {
+    fn step(&mut self) {
         // TODO maybe the whole thing would be more efficient
         // if we used iterator instead of vec, on the other hand this way the
         // op can now where an input is from, which may be useful to track e.g.
@@ -140,9 +136,10 @@ where
         self,
         mut source_func: impl FnMut() -> Option<O> + 'static,
     ) -> JetStream<Nothing, O> {
-        let last_op = StandardOperator::new(move |_inputs, outputs| match source_func() {
-            Some(x) => dist_rand(iter::once(x), outputs),
-            None => {}
+        let last_op = StandardOperator::new(move |_inputs, outputs| {
+            if let Some(x) = source_func() {
+                dist_rand(iter::once(x), outputs)
+            }
         });
 
         let mut operators = self.operators;
@@ -162,15 +159,6 @@ where
             last_op: operator,
         }
     }
-
-    /// add an operator to the outputs of our current last_op
-    /// and add it to our Vec of operators, but don't change
-    /// the last op
-    /// This is useful for side outputs
-    fn side<P: Data>(&mut self, mut operator: StandardOperator<O, P>) -> () {
-        self.last_op.add_output(&mut operator);
-        self.operators.push(Box::new(operator))
-    }
 }
 
 impl<I, O> Operator for JetStream<I, O> {
@@ -178,7 +166,7 @@ impl<I, O> Operator for JetStream<I, O> {
         self.last_op.has_input()
     }
 
-    fn step(&mut self) -> () {
+    fn step(&mut self) {
         // it is important to step operators at least once
         // even if they don't have input, as they may be sources
         // which need to run without input

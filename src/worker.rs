@@ -1,8 +1,6 @@
-use std::{mem, process::Output, rc::Rc};
-
 use crossbeam::channel::{Receiver, Sender};
 
-use crate::poc::{dist_rand, Data, DataUnion, JetStream, Nothing, Operator, StandardOperator};
+use crate::poc::{dist_rand, Data, DataUnion, JetStream, Operator, StandardOperator};
 
 pub struct Worker {
     streams: Vec<Box<dyn Operator>>,
@@ -14,11 +12,11 @@ impl Worker {
         }
     }
 
-    pub fn add_stream<I: Data, O: Data>(&mut self, stream: JetStream<I, O>) -> () {
+    pub fn add_stream<I: Data, O: Data>(&mut self, stream: JetStream<I, O>) {
         self.streams.push(Box::new(stream));
     }
 
-    pub fn step(&mut self) -> () {
+    pub fn step(&mut self) {
         for stream in self.streams.iter_mut().rev() {
             stream.step();
             if stream.has_input() {
@@ -41,7 +39,7 @@ impl Worker {
                 let data = inputs
                     .iter()
                     .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.and_then(|y| Some(DataUnion::Left(y))));
+                    .filter_map(|x| x.map(|y| DataUnion::Left(y)));
                 dist_rand(data, outputs)
             },
         );
@@ -51,7 +49,7 @@ impl Worker {
                 let data = inputs
                     .iter()
                     .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.and_then(|y| Some(DataUnion::Right(y))));
+                    .filter_map(|x| x.map(|y| DataUnion::Right(y)));
                 dist_rand(data, outputs)
             },
         );

@@ -1,5 +1,3 @@
-use crossbeam::channel::{Receiver, Sender};
-
 use crate::poc::{dist_rand, Data, JetStream, StandardOperator};
 
 pub trait Filter<O> {
