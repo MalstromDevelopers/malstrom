@@ -2,23 +2,25 @@ use crossbeam::channel::{Receiver, Sender};
 
 use crate::poc::{dist_rand, Data, JetStream, StandardOperator};
 
-pub trait Map<I> {
-    fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStream<I, O>;
+pub trait Filter<O> {
+    fn filter(self, filter: impl FnMut(&O) -> bool + 'static) -> JetStream<O, O>;
 }
 
-impl<I, O> Map<O> for JetStream<I, O>
+impl<I, O> Filter<O> for JetStream<I, O>
 where
     I: Data,
     O: Data,
 {
-    fn map<T: Data>(self, mut mapper: impl FnMut(O) -> T + 'static) -> JetStream<O, T> {
+    fn filter(self, mut filter: impl FnMut(&O) -> bool + 'static) -> JetStream<O, O> {
         let operator = StandardOperator::new(move |inputs, outputs| {
             let inp = inputs.iter().filter_map(|x| x.try_recv().ok());
             let mut data = Vec::new();
             for x in inp {
                 // this is super weird, but I could not get the code to borrow
                 // check otherwise
-                data.push(mapper(x))
+                if filter(&x) {
+                    data.push(x)
+                }
             }
             dist_rand(data.into_iter(), outputs)
         });

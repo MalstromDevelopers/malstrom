@@ -1,8 +1,10 @@
 /// This is an example of linear flow control
 use crossbeam::channel::{Receiver, Sender};
 use jetstream::{
+    filter::Filter,
     map::Map,
     poc::{dist_rand, JetStream, Nothing, StandardOperator},
+    worker::{self, Worker},
 };
 
 pub fn main() {
@@ -31,7 +33,7 @@ pub fn main() {
                 println!("{msg}");
             }
         });
-    let mut stream = JetStream::from_operator(source).then(flatten).then(print);
+    let stream = JetStream::from_operator(source).then(flatten).then(print);
 
     // We will now step this stream 50 times
     // On each step the stream will schedule all operators bottom-up **at most once**.
@@ -44,14 +46,16 @@ pub fn main() {
     // and stopping a round of scheduling, if an operator still has remaining input after
     // being scheduled.
     // The result is, that we see the count of outstanding messages for print never exceeding 5.
-
+    let mut worker = Worker::new();
+    worker.add_stream(stream);
     for _ in 0..50 {
-        stream.step()
+        worker.step()
     }
 
     // almost the same stream, but written more concisely
     let _ = JetStream::new()
         .source(|| Some((0..5).collect::<Vec<i64>>()))
         .map(|mut x| x.pop())
+        .filter(|x| x.is_some())
         .map(|x| println!("{x:?}"));
 }

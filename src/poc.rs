@@ -1,9 +1,12 @@
 use std::iter;
-use std::process::Output;
+use std::rc::Rc;
 
-use crossbeam::channel::{bounded, Receiver, Sender, unbounded};
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use rand;
 use rand::seq::SliceRandom;
+
+use crate::worker::Worker;
+use crate::StreamError;
 
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
@@ -18,7 +21,7 @@ pub enum DataUnion<L, R> {
 }
 
 /// a helper function to distribute output randomly
-pub fn dist_rand<O>(data: impl Iterator<Item=O>, outputs: &Vec<Sender<O>>) -> () {
+pub fn dist_rand<O>(data: impl Iterator<Item = O>, outputs: &Vec<Sender<O>>) -> () {
     for d in data {
         if let Some(tx) = outputs.choose(&mut rand::thread_rng()) {
             // TODO: currently we just crash if a downstream op is unavailable
@@ -33,7 +36,7 @@ pub fn dist_rand<O>(data: impl Iterator<Item=O>, outputs: &Vec<Sender<O>>) -> ()
 /// The simplest trait in the world
 /// Any jetstream operator, MUST implement
 /// this trait
-pub trait Operator{
+pub trait Operator {
     /// Calling step instructs the operator, that it should attempt to make
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its inputs and writes
@@ -46,8 +49,7 @@ pub trait Operator{
 /// This attempts to be the most generic operator possible
 /// It has N inputs and M outputs and
 /// a mapper function to map inputs to outputs
-pub struct StandardOperator<I, O>
-{
+pub struct StandardOperator<I, O> {
     inputs: Vec<Receiver<I>>,
     mapper: Box<dyn FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> ()>,
     outputs: Vec<Sender<O>>,
@@ -55,22 +57,23 @@ pub struct StandardOperator<I, O>
 
 impl<I, O, F> From<F> for StandardOperator<I, O>
 where
-F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static
+    F: FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static,
 {
     fn from(mapper: F) -> StandardOperator<I, O> {
         Self::new(mapper)
     }
 }
 
-impl<I, O> StandardOperator<I, O>
-{
-
+impl<I, O> StandardOperator<I, O> {
     pub fn new(mapper: impl FnMut(&Vec<Receiver<I>>, &Vec<Sender<O>>) -> () + 'static) -> Self {
-        Self { inputs: Vec::new(), mapper: Box::new(mapper), outputs: Vec::new() }
+        Self {
+            inputs: Vec::new(),
+            mapper: Box::new(mapper),
+            outputs: Vec::new(),
+        }
     }
-    
 
-    fn add_output<T>(&mut self, other: &mut StandardOperator<O, T>) -> () {
+    pub fn add_output<T>(&mut self, other: &mut StandardOperator<O, T>) -> () {
         let (tx, rx) = unbounded::<O>();
         self.outputs.push(tx);
 
@@ -79,8 +82,7 @@ impl<I, O> StandardOperator<I, O>
     }
 }
 
-impl<I, O> Operator for StandardOperator<I, O>
-{
+impl<I, O> Operator for StandardOperator<I, O> {
     fn step(&mut self) -> () {
         // TODO maybe the whole thing would be more efficient
         // if we used iterator instead of vec, on the other hand this way the
@@ -103,8 +105,7 @@ fn noop<T>() -> StandardOperator<T, T> {
     StandardOperator::new(|_inputs, _outputs| {})
 }
 
-pub struct JetStream<Input, Output>
-{
+pub struct JetStream<Input, Output> {
     operators: Vec<Box<dyn Operator>>,
     last_op: StandardOperator<Input, Output>,
 }
@@ -130,16 +131,18 @@ where
         }
     }
 
+    pub fn tail_mut(&mut self) -> &mut StandardOperator<I, O> {
+        &mut self.last_op
+    }
+
     /// Add a datasource to a stream which has no data in it
     pub fn source(
         self,
         mut source_func: impl FnMut() -> Option<O> + 'static,
     ) -> JetStream<Nothing, O> {
-        let last_op = StandardOperator::new(move |_inputs, outputs| {
-            match source_func() {
-                Some(x) => dist_rand(iter::once(x), outputs),
-                None => {}
-            }
+        let last_op = StandardOperator::new(move |_inputs, outputs| match source_func() {
+            Some(x) => dist_rand(iter::once(x), outputs),
+            None => {}
         });
 
         let mut operators = self.operators;
@@ -149,10 +152,7 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<O2>(
-        self,
-        mut operator: StandardOperator<O, O2>,
-    ) -> JetStream<O, O2> {
+    pub fn then<O2>(self, mut operator: StandardOperator<O, O2>) -> JetStream<O, O2> {
         let mut last_op = self.last_op;
         let mut operators = self.operators;
         last_op.add_output(&mut operator);
@@ -167,16 +167,18 @@ where
     /// and add it to our Vec of operators, but don't change
     /// the last op
     /// This is useful for side outputs
-    fn side<P: Data>(
-        &mut self,
-        mut operator: StandardOperator<O, P>,
-    ) -> () {
+    fn side<P: Data>(&mut self, mut operator: StandardOperator<O, P>) -> () {
         self.last_op.add_output(&mut operator);
         self.operators.push(Box::new(operator))
     }
+}
 
-    pub fn step(&mut self) -> () {
+impl<I, O> Operator for JetStream<I, O> {
+    fn has_input(&mut self) -> bool {
+        self.last_op.has_input()
+    }
 
+    fn step(&mut self) -> () {
         // it is important to step operators at least once
         // even if they don't have input, as they may be sources
         // which need to run without input
@@ -193,50 +195,6 @@ where
     }
 }
 
-impl<Input, Output> JetStream<Input, Output>
-where
-    Input: Data,
-    Output: Data,
-{
-    /// union two streams
-    pub fn union<
-        InputB: Data,
-        OutputB: Data,
-    >(
-        &mut self,
-        other: &mut JetStream<InputB, OutputB>,
-    ) -> JetStream<
-        DataUnion<Output, OutputB>,
-        DataUnion<Output, OutputB>,
-    > {
-        let mut new_stream = JetStream::new();
-
-        // wrap data from left into a data union
-        let mut transform_left = StandardOperator::from(
-            |inputs: &Vec<Receiver<Output>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                    let data = inputs.iter().map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.and_then(|y| Some(DataUnion::Left(y))));
-                    dist_rand(data, outputs)
-            },
-        );
-        // wrap data from right into a data union
-        let mut transform_right = StandardOperator::from(
-            |inputs: &Vec<Receiver<OutputB>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                    let data = inputs.iter().map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.and_then(|y| Some(DataUnion::Right(y))));
-                    dist_rand(data, outputs)
-            },
-        );
-
-        transform_left.add_output(&mut new_stream.last_op);
-        transform_right.add_output(&mut new_stream.last_op);
-
-        self.side(transform_left);
-        other.side(transform_right);
-        new_stream
-    }
-}
-
 #[cfg(test)]
 mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
@@ -244,11 +202,12 @@ mod tests {
 
     #[test]
     fn test_its_way_too_late() {
+        let mut worker = Worker::new();
         let source_a = || Some(rand::random::<f64>());
         let source_b = || Some(rand::random::<f64>());
 
         let mut stream_a = JetStream::new().source(source_a);
         let mut stream_b = JetStream::new().source(source_b);
-        let union_stream = stream_a.union(&mut stream_b);
+        let union_stream = worker.union(stream_a, stream_b);
     }
 }
