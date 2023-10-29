@@ -1,6 +1,6 @@
 use crossbeam::channel::{Receiver, Sender};
 
-use crate::poc::{dist_rand, Data, DataUnion, JetStream, Operator, StandardOperator};
+use crate::stream::{dist_rand, Data, DataUnion, JetStream, Operator, StandardOperator};
 
 pub struct Worker {
     streams: Vec<Box<dyn Operator>>,

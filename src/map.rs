@@ -1,4 +1,4 @@
-use crate::poc::{dist_rand, Data, JetStream, StandardOperator};
+use crate::stream::{dist_rand, Data, JetStream, StandardOperator};
 
 pub trait Map<I> {
     fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStream<I, O>;

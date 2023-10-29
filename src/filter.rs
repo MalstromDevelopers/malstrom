@@ -1,4 +1,4 @@
-use crate::poc::{dist_rand, Data, JetStream, StandardOperator};
+use crate::stream::{dist_rand, Data, JetStream, StandardOperator};
 
 pub trait Filter<O> {
     fn filter(self, filter: impl FnMut(&O) -> bool + 'static) -> JetStream<O, O>;

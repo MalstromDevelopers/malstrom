@@ -3,7 +3,7 @@ use crossbeam::channel::{Receiver, Sender};
 use jetstream::{
     filter::Filter,
     map::Map,
-    poc::{dist_rand, JetStream, Nothing, StandardOperator},
+    stream::{dist_rand, JetStream, Nothing, StandardOperator},
     worker::{self, Worker},
 };
 

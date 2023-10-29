@@ -185,6 +185,8 @@ impl<I, O> Operator for JetStream<I, O> {
 
 #[cfg(test)]
 mod tests {
+    use crate::worker::Worker;
+
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 

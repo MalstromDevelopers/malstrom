@@ -1,6 +1,6 @@
 pub mod filter;
 pub mod map;
-pub mod poc;
+pub mod stream;
 pub mod worker;
 use thiserror::Error;
 
