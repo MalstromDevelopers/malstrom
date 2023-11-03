@@ -10,7 +10,7 @@ use jetstream::{
 pub fn main() {
     // this source generates 5 numbers every time it is
     // activated
-    let source: StandardOperator<Nothing, Vec<i64>> = StandardOperator::new(|_, outputs| {
+    let source: StandardOperator<Nothing, Vec<i64>> = StandardOperator::new(|_, outputs, _frontier_handle| {
         let data: Vec<i64> = (0..5).collect();
         dist_rand(vec![data].into_iter(), outputs)
     });
@@ -47,14 +47,14 @@ pub fn main() {
     // being scheduled.
     // The result is, that we see the count of outstanding messages for print never exceeding 5.
     let mut worker = Worker::new();
-    worker.add_stream(stream);
+    worker.add_stream(stream.finalize());
     for _ in 0..50 {
         worker.step()
     }
 
     // almost the same stream, but written more concisely
     let _ = JetStream::new()
-        .source(|| Some((0..5).collect::<Vec<i64>>()))
+        .source(|_| Some((0..5).collect::<Vec<i64>>()))
         .map(|mut x| x.pop())
         .filter(|x| x.is_some())
         .map(|x| println!("{x:?}"));

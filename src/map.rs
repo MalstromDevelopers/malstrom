@@ -1,16 +1,15 @@
 use crate::stream::{dist_rand, Data, JetStream, StandardOperator};
 
 pub trait Map<I> {
-    fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStream<I, O>;
+    fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStream<O>;
 }
 
-impl<I, O> Map<O> for JetStream<I, O>
+impl<O> Map<O> for JetStream<O>
 where
-    I: Data,
     O: Data,
 {
-    fn map<T: Data>(self, mut mapper: impl FnMut(O) -> T + 'static) -> JetStream<O, T> {
-        let operator = StandardOperator::new(move |inputs, outputs| {
+    fn map<T: Data>(self, mut mapper: impl FnMut(O) -> T + 'static) -> JetStream<T> {
+        let operator = StandardOperator::new(move |inputs, outputs, _| {
             let inp = inputs.iter().filter_map(|x| x.try_recv().ok());
             let mut data = Vec::new();
             for x in inp {
