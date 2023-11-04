@@ -1,16 +1,21 @@
-use crossbeam::channel::{Receiver, Sender, unbounded};
+use crossbeam::channel::{unbounded, Receiver, Sender};
 
-use crate::{stream::{dist_rand, Data, DataUnion, JetStream, StandardOperator, Finalized, AddOutput, AddInput}, frontier::{Frontier, FrontierHandle, Probe}, watch::channel};
+use crate::{
+    frontier::Probe,
+    stream::{
+        dist_rand, AddInput, AddOutput, Data, DataUnion, Finalized, JetStream, StandardOperator,
+    },
+};
 
 pub struct Worker {
     streams: Vec<JetStream<Finalized>>,
-    probes: Vec<Probe>
+    probes: Vec<Probe>,
 }
 impl Worker {
     pub fn new() -> Worker {
         Worker {
             streams: Vec::new(),
-            probes: Vec::new()
+            probes: Vec::new(),
         }
     }
 
@@ -20,7 +25,7 @@ impl Worker {
     }
 
     pub fn get_frontier(&self) -> Option<u64> {
-        self.probes.last().and_then(|x| Some(x.read()))
+        self.probes.last().map(|x| x.read())
     }
 
     pub fn step(&mut self) {
@@ -61,11 +66,9 @@ impl Worker {
         );
 
         let mut unioned = StandardOperator::from(
-            |inputs: &Vec<Receiver<DataUnion<Output, OutputB>>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                let data = inputs
-                    .iter()
-                    .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x);
+            |inputs: &Vec<Receiver<DataUnion<Output, OutputB>>>,
+             outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
+                let data = inputs.iter().map(|x| x.try_recv().ok()).filter_map(|x| x);
                 dist_rand(data, outputs)
             },
         );
