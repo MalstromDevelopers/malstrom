@@ -82,4 +82,95 @@ impl Worker {
 
         JetStream::from_operator(unioned)
     }
+
+    /// split stream into n streams
+    pub fn split<Output: Data>(
+        &mut self,
+        input: JetStream<Output>,
+        mut partitioner: impl FnMut(&Output) -> usize + 'static, // TODO: Should this take in the partition count?
+        partition_count: usize,
+    ) -> Vec<JetStream<Output>> {
+        let communication: Vec<_> = (0..partition_count).map(|_| unbounded()).collect();
+
+        let mut distributer = StandardOperator::from(
+            move |inputs: &Vec<Receiver<Output>>, outputs: &Vec<Sender<Output>>| {
+                let data = inputs.iter().filter_map(|x| x.try_recv().ok());
+
+                let out_len: usize = outputs.len();
+
+                for d in data {
+                    // calculate the output stream by moduloing the return of the partition function
+                    let target_output_index = partitioner(&d) % out_len;
+
+                    outputs[target_output_index]
+                        .send(d)
+                        .expect("Failed to send data downstream")
+                }
+            },
+        );
+
+        let output_operators: Vec<JetStream<Output>> = communication
+            .into_iter()
+            .map(|(tx, rx)| {
+                distributer.add_output(tx);
+
+                let mut op = StandardOperator::from(
+                    |inputs: &Vec<Receiver<Output>>, outputs: &Vec<Sender<Output>>| {
+                        let data = inputs.iter().filter_map(|x| x.try_recv().ok());
+                        dist_rand(data, outputs)
+                    },
+                );
+                op.add_input(rx);
+
+                JetStream::from_operator(op)
+            })
+            .collect();
+
+        self.add_stream(input.then(distributer).finalize());
+
+        output_operators
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{frontier::FrontierHandle, worker::Worker};
+
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_split() {
+        println!("Build new stream");
+        let mut worker = Worker::new();
+        println!("Add source");
+        let source = |_: &mut FrontierHandle| Some(rand::random::<f64>().clamp(0.0, 1.0));
+
+        let stream = JetStream::new().source(source);
+
+        println!("Split stream");
+        let split_streams = worker.split(stream, |x: &f64| if *x < 0.5 { 0 } else { 1 }, 2);
+
+        println!("Finalize streams");
+        // Finalize all streams to step the workers
+        // let final_stream = stream.finalize(); // is already finalized in th split function
+        let final_split_stream: Vec<JetStream<Finalized>> =
+            split_streams.into_iter().map(|o| o.finalize()).collect();
+
+        assert_eq!(final_split_stream.len(), 2);
+
+        println!("Step twice");
+        // TODO: This results in an infinite loop???
+        // worker.step();
+        // worker.step();
+
+        assert_eq!(
+            final_split_stream
+                .into_iter()
+                .map(|o| o.get_probe().read())
+                .sum::<u64>(),
+            2
+        );
+    }
 }
