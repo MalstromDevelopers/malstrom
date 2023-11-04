@@ -4,7 +4,7 @@ pub mod stream;
 pub mod worker;
 pub mod frontier;
 mod watch;
-pub mod network_exchange;
+// pub mod network_exchange;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
