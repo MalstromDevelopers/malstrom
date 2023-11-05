@@ -2,6 +2,7 @@ pub mod filter;
 pub mod frontier;
 pub mod map;
 pub mod state_backend;
+pub mod stateful_map;
 pub mod stream;
 mod watch;
 pub mod worker;
