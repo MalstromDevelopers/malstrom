@@ -15,12 +15,24 @@ where
 }
 
 /// Hashmap based state backend
-struct HashMapStateBackend<K, V>
+pub struct HashMapStateBackend<K, V>
 where
     K: PartialEq + Eq + Hash,
     V: Data,
 {
     map: HashMap<K, V>,
+}
+
+impl<K, V> HashMapStateBackend<K, V>
+where
+    K: PartialEq + Eq + Hash,
+    V: Data,
+{
+    pub fn new() -> HashMapStateBackend<K,V> {
+        HashMapStateBackend {
+            map: HashMap::new(),
+        }
+    }
 }
 
 impl<K, V> StateBackend<K, V> for HashMapStateBackend<K, V>
