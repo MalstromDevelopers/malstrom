@@ -47,3 +47,37 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::{state_backend::HashMapStateBackend,worker::Worker, frontier::FrontierHandle};
+
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_stateful_map() {
+        let mut worker = Worker::new();
+        let state: HashMapStateBackend<u8, f64> = HashMapStateBackend::new();
+
+        let source = |frontier_handle: &mut FrontierHandle| {
+            frontier_handle.advance_by(1).unwrap();
+            Some(rand::random::<f64>())
+        
+        };
+        let stream = JetStream::new().source(source)
+            .stateful_map(|x, state| {
+                let new_val = state.get(0).unwrap_or(0.0) + x;
+                state.set(0, new_val);
+                x
+            }, state)
+            .finalize();
+        let probe = stream.get_probe();
+        worker.add_stream(stream);
+        assert_eq!(probe.read(), 0);
+        worker.step();
+        assert_eq!(probe.read(), 1);
+
+        assert_eq!(worker.get_frontier().unwrap(), 1);
+    }
+}
