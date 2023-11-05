@@ -1,9 +1,10 @@
 pub mod filter;
-pub mod map;
-pub mod stream;
-pub mod worker;
 pub mod frontier;
+pub mod map;
+pub mod state_backend;
+pub mod stream;
 mod watch;
+pub mod worker;
 pub mod network_exchange;
 use thiserror::Error;
 
