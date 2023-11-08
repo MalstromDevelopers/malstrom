@@ -26,6 +26,7 @@ impl Worker {
     pub fn step(&mut self) {
         for (i, stream) in self.streams.iter_mut().enumerate().rev() {
             let upstream_frontiers = self.probes[..i].iter().map(|x| x.read()).collect();
+
             stream.step(&upstream_frontiers);
             while stream.has_queued_work() {
                 stream.step(&upstream_frontiers);
@@ -71,6 +72,8 @@ impl Worker {
             })
             .collect();
 
+        self.add_stream(input.build());
+
         // SAFETY: We can unwrap because the vec was built from an iterator of size N
         // so the vec is guaranteed to fit
         unsafe { new_streams.try_into().unwrap_unchecked() }
@@ -92,10 +95,7 @@ mod test {
 
     #[test]
     fn test_split() {
-        println!("Build new stream");
         let mut worker = Worker::new();
-        println!("Add source");
-
         let mut src_count = 0;
         let source = move |_: &mut FrontierHandle| {
             src_count += 1;
@@ -104,14 +104,12 @@ mod test {
 
         let stream = JetStreamEmpty::new().source(source);
 
-        println!("Split stream");
         let [evens, odds] =
             worker.split_n::<2, _>(
                 stream,
                 |x: &i32, _out_n| if (x & 1) == 0 { vec![0] } else { vec![1] },
             );
 
-        println!("Finalize streams");
         // Finalize all streams to step the workers
         // let final_stream = stream.finalize(); // is already finalized in th split function
 
@@ -137,11 +135,11 @@ mod test {
         worker.add_stream(evens.build());
         worker.add_stream(odds.build());
 
-        println!("Step twice");
-        // TODO: This results in an infinite loop???
-        worker.step();
-        worker.step();
-        assert_eq!(rx_a.recv().unwrap(), 2);
-        assert_eq!(rx_b.recv().unwrap(), 1);
+        // Step a few times until the results trickle through
+        for _ in 0..5 {
+            worker.step();
+        }
+        assert_eq!(rx_a.try_recv().unwrap(), 2);
+        assert_eq!(rx_b.try_recv().unwrap(), 1);
     }
 }

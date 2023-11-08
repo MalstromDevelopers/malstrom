@@ -43,8 +43,6 @@ impl Frontier {
 
     pub fn try_fulfill(&mut self, others: &Vec<u64>) {
         let upstream_min = others.iter().min();
-        let desired = &self.desired;
-        println!("Trying to fullfills {desired} {upstream_min:?}");
 
         match upstream_min {
             Some(m) => self.actual.write(*m.min(&self.desired)),

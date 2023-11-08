@@ -129,7 +129,7 @@ pub struct JetStream {
 impl JetStream
 {
     pub fn has_queued_work(&mut self) -> bool {
-        self.operators.last().unwrap().has_queued_work()
+        self.operators.first().unwrap().has_queued_work()
     }
 
     /// frontiers here are the stream level frontiers, i.e. those
@@ -138,10 +138,10 @@ impl JetStream
         // it is important to step operators at least once
         // even if they don't have input, as they may be sources
         // which need to run without input
-        println!("upstream_frontiers {upstream_frontiers:?}");
         for (i, op) in self.operators.iter_mut().enumerate().rev() {
             op.step();
             while op.has_queued_work() {
+
                 op.step();
             }
             let mut upstream_worker_frontiers: Vec<u64> = self.probes[..i].iter().map(|x| x.read()).collect();
@@ -149,11 +149,9 @@ impl JetStream
             op.try_fulfill(&upstream_worker_frontiers);
 
             let f = op.get_probe().read();
-            println!("OP frontier {f}");
         }
         self.frontier.set_desired(self.probes.last().unwrap().read());
         let desired = self.probes.last().unwrap().read();
-        println!("Setting desired to {desired}");
         self.frontier.try_fulfill(upstream_frontiers);
     }
 
