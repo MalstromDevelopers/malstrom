@@ -1,5 +1,5 @@
 use crate::channels::selective_broadcast::{Receiver, Sender, self};
-use crate::stream::jetstream::{JetStream, JetStreamBuilder, DataUnion, Data};
+use crate::stream::jetstream::{JetStream, JetStreamBuilder, Data};
 use crate::frontier::Probe;
 use crate::stream::operator::StandardOperator;
 pub struct Worker {
@@ -20,7 +20,7 @@ impl Worker {
     }
 
     pub fn get_frontier(&self) -> Option<u64> {
-        self.probes.last().and_then(|x| Some(x.read()))
+        self.probes.last().map(|x| x.read())
     }
 
     pub fn step(&mut self) {

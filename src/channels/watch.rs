@@ -61,7 +61,7 @@ impl<T> Sender<T>
 where
     T: Clone,
 {
-    pub fn send(&mut self, new: T) -> (){
+    pub fn send(&mut self, new: T){
         self.write(new)
     }
 }
@@ -70,7 +70,7 @@ impl<T> Sender<T>
 where
     T: Clone,
 {
-    pub fn write(&self, new: T) -> () {
+    pub fn write(&self, new: T) {
         *self.shared.value.write().unwrap() = new;
     }
     pub fn subscribe(&self) -> Receiver<T> {

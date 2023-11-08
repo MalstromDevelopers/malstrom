@@ -1,8 +1,8 @@
-use std::{iter, sync::{Arc, RwLock}, rc::Rc, marker::PhantomData, process::Output};
+use std::{process::Output};
 
-use crate::channels::selective_broadcast::{Receiver, Sender, unbounded, self};
+use crate::channels::selective_broadcast::{Sender, self};
 use rand;
-use rand::seq::SliceRandom;
+
 
 use crate::frontier::{FrontierHandle, Frontier, Probe};
 
@@ -179,7 +179,7 @@ mod tests {
 
         let stream_a = JetStreamEmpty::new().source(source_a);
         let stream_b = JetStreamEmpty::new().source(source_b);
-        let union_stream = worker.union_n([stream_a, stream_b]);
+        let _union_stream = worker.union_n([stream_a, stream_b]);
     }
 
     #[test]

@@ -23,7 +23,7 @@ pub fn full_broadcast<T>(_: &T, recv_cnt: usize) -> Vec<usize> {
 }
 
 /// Link a Sender and receiver together
-pub fn link<T>(sender: &mut Sender<T>, receiver: &mut Receiver<T>) -> () {
+pub fn link<T>(sender: &mut Sender<T>, receiver: &mut Receiver<T>) {
     let receiver_inner = sender.subscribe_inner();
     receiver.0.push(receiver_inner);
 }
@@ -44,7 +44,7 @@ impl <T> Sender<T> where T: Clone {
 
     /// Send a value into this channel. The value will be distributed to receiver
     /// as per the result of the partitioning function
-    pub fn send(&mut self, msg: T) -> () {
+    pub fn send(&mut self, msg: T) {
         let recv_idxs = (self.partitioner)(&msg, self.senders.len());
         let recv_idxs_len = recv_idxs.len();
 

@@ -5,7 +5,7 @@
 /// which can be used at runtime
 
 use crate::frontier::{FrontierHandle, Frontier, Probe};
-use crate::channels::selective_broadcast::{Sender, Receiver, unbounded, full_broadcast};
+use crate::channels::selective_broadcast::{Sender, Receiver, full_broadcast};
 
 use super::jetstream::Data;
 
@@ -92,7 +92,7 @@ impl RuntimeFrontieredOperator for FrontieredOperator  {
         self.frontier.get_probe()
     }
 
-    fn step(&mut self) -> () {
+    fn step(&mut self) {
         let mut handle = FrontierHandle::new(&mut self.frontier);
         self.operator.step(&mut handle)
     }
@@ -101,7 +101,7 @@ impl RuntimeFrontieredOperator for FrontieredOperator  {
         self.operator.has_queued_work()
     }
 
-    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>) -> () {
+    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>) {
         self.frontier.try_fulfill(other_frontiers)
     }
 }
@@ -123,9 +123,9 @@ pub trait RuntimeFrontieredOperator {
 
     fn get_probe(&self) -> Probe;
 
-    fn step(&mut self) -> ();
+    fn step(&mut self);
 
     fn has_queued_work(&self) -> bool;
 
-    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>) -> ();
+    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>);
 }

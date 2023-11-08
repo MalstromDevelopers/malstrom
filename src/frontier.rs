@@ -37,11 +37,11 @@ impl Frontier {
         self.actual.read()
     }
 
-    pub fn set_desired(&mut self, desired: u64) -> () {
+    pub fn set_desired(&mut self, desired: u64) {
         self.desired = desired
     }
 
-    pub fn try_fulfill(&mut self, others: &Vec<u64>) -> () {
+    pub fn try_fulfill(&mut self, others: &Vec<u64>) {
         let upstream_min = others.iter().min();
         let desired = &self.desired;
         println!("Trying to fullfills {desired} {upstream_min:?}");
