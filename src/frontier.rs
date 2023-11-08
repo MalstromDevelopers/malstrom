@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::watch;
+use crate::channels::watch;
 
 #[derive(Error, Debug)]
 pub enum FrontierError {
@@ -12,11 +12,11 @@ pub enum FrontierError {
 
 #[derive(Clone)]
 pub struct Probe {
-    inner: crate::watch::Receiver<u64>
+    inner: watch::Receiver<u64>
 }
 
 impl Probe {
-    pub fn new(recv: crate::watch::Receiver<u64>) -> Self {
+    pub fn new(recv: watch::Receiver<u64>) -> Self {
         Self { inner: recv }
     }
 
@@ -47,8 +47,8 @@ impl Frontier {
         println!("Trying to fullfills {desired} {upstream_min:?}");
 
         match upstream_min {
-            Some(m) => self.actual.send(*m.min(&self.desired)),
-            None => self.actual.send(self.desired)
+            Some(m) => self.actual.write(*m.min(&self.desired)),
+            None => self.actual.write(self.desired)
         };
     }
 

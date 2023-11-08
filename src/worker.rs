@@ -1,9 +1,9 @@
-use crossbeam::channel::{Receiver, Sender, unbounded};
-
-use crate::{stream::{dist_rand, Data, DataUnion, JetStream, StandardOperator, Finalized, AddOutput, AddInput}, frontier::{Frontier, FrontierHandle, Probe}, watch::channel};
-
+use crate::channels::selective_broadcast::{Receiver, Sender, self};
+use crate::stream::jetstream::{JetStream, JetStreamBuilder, DataUnion, Data};
+use crate::frontier::Probe;
+use crate::stream::operator::StandardOperator;
 pub struct Worker {
-    streams: Vec<JetStream<Finalized>>,
+    streams: Vec<JetStream>,
     probes: Vec<Probe>
 }
 impl Worker {
@@ -14,7 +14,7 @@ impl Worker {
         }
     }
 
-    pub fn add_stream(&mut self, stream: JetStream<Finalized>) {
+    pub fn add_stream(&mut self, stream: JetStream) {
         self.probes.push(stream.get_probe());
         self.streams.push(stream);
     }
@@ -33,53 +33,22 @@ impl Worker {
         }
     }
 
-    /// union two streams
-    pub fn union<Output: Data, OutputB: Data>(
-        &mut self,
-        left: JetStream<Output>,
-        right: JetStream<OutputB>,
-    ) -> JetStream<DataUnion<Output, OutputB>> {
-        // wrap data from left into a data union
-        let mut transform_left = StandardOperator::from(
-            |inputs: &Vec<Receiver<Output>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                let data = inputs
-                    .iter()
-                    .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.map(|y| DataUnion::Left(y)));
-                dist_rand(data, outputs)
-            },
-        );
-        // wrap data from right into a data union
-        let mut transform_right = StandardOperator::from(
-            |inputs: &Vec<Receiver<OutputB>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                let data = inputs
-                    .iter()
-                    .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x.map(|y| DataUnion::Right(y)));
-                dist_rand(data, outputs)
-            },
-        );
+    pub fn union_n<const N: usize, Output: Data>(&mut self, streams: [JetStreamBuilder<Output>; N]) -> JetStreamBuilder<Output>{
 
+        // this is the operator which reveives the union stream
         let mut unioned = StandardOperator::from(
-            |inputs: &Vec<Receiver<DataUnion<Output, OutputB>>>, outputs: &Vec<Sender<DataUnion<Output, OutputB>>>| {
-                let data = inputs
-                    .iter()
-                    .map(|x| x.try_recv().ok())
-                    .filter_map(|x| x);
-                dist_rand(data, outputs)
+            |input: &mut Receiver<Output>, output: &mut Sender<Output>| {
+                if let Some(x) = input.recv() {
+                    output.send(x)
+                }
             },
         );
 
-        let (tx1, rx1) = unbounded();
-        let (tx2, rx2) = unbounded();
-        transform_left.add_output(tx1);
-        transform_right.add_output(tx2);
-        unioned.add_input(rx1);
-        unioned.add_input(rx2);
-
-        self.add_stream(left.then(transform_left).finalize());
-        self.add_stream(right.then(transform_right).finalize());
-
-        JetStream::from_operator(unioned)
+        for mut input_stream in streams.into_iter() {
+            selective_broadcast::link(input_stream.get_output_mut(), unioned.get_input_mut());
+            self.add_stream(input_stream.build());
+        }
+        JetStreamBuilder::from_operator(unioned)
     }
+
 }

@@ -1,15 +1,16 @@
-use crate::stream::{dist_rand, Data, JetStream, StandardOperator};
+use crate::stream::jetstream::{dist_rand, Data, JetStream, JetStreamBuilder};
+use crate::stream::operator::OperatorBuilder;
 
 pub trait Map<I> {
-    fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStream<O>;
+    fn map<O: Data>(self, mapper: impl FnMut(I) -> O + 'static) -> JetStreamBuilder<O>;
 }
 
-impl<O> Map<O> for JetStream<O>
+impl<O> Map<O> for JetStreamBuilder<O>
 where
     O: Data,
 {
-    fn map<T: Data>(self, mut mapper: impl FnMut(O) -> T + 'static) -> JetStream<T> {
-        let operator = StandardOperator::new(move |inputs, outputs, _| {
+    fn map<T: Data>(self, mut mapper: impl FnMut(O) -> T + 'static) -> JetStreamBuilder<T> {
+        let operator = OperatorBuilder::new(move |inputs, outputs, _| {
             let inp = inputs.iter().filter_map(|x| x.try_recv().ok());
             let mut data = Vec::new();
             for x in inp {
