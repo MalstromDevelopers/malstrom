@@ -19,6 +19,17 @@ pub trait AppendableOperator<O> {
     fn build(self: Box<Self>) -> FrontieredOperator;
 }
 
+/// An Operator which does nothing except passing data along
+pub fn pass_through_operator<T: Data>() -> StandardOperator<T, T> {
+    StandardOperator::from(
+    |input: &mut Receiver<T>, output: &mut Sender<T>| {
+        if let Some(x) = input.recv() {
+            output.send(x)
+        }
+    }
+)
+}
+
 /// A builder type to build generic operators
 pub struct StandardOperator<I, O> {
     input: Receiver<I>,
@@ -31,6 +42,12 @@ impl<I, O> StandardOperator<I, O> where I: Data, O: Data {
     pub fn new(mapper: impl FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle) + 'static) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
+        Self {input, mapper: Box::new(mapper), output}
+    }
+
+    pub fn new_with_partitioning(mapper: impl FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle) + 'static, partitioner: impl Fn(&O, usize) -> Vec<usize> + 'static) -> Self {
+        let input = Receiver::new_unlinked();
+        let output = Sender::new_unlinked(partitioner);
         Self {input, mapper: Box::new(mapper), output}
     }
 

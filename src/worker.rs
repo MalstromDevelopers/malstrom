@@ -1,16 +1,16 @@
-use crate::channels::selective_broadcast::{Receiver, Sender, self};
-use crate::stream::jetstream::{JetStream, JetStreamBuilder, Data};
+use crate::channels::selective_broadcast;
 use crate::frontier::Probe;
-use crate::stream::operator::StandardOperator;
+use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
+use crate::stream::operator::{pass_through_operator, StandardOperator};
 pub struct Worker {
     streams: Vec<JetStream>,
-    probes: Vec<Probe>
+    probes: Vec<Probe>,
 }
 impl Worker {
     pub fn new() -> Worker {
         Worker {
             streams: Vec::new(),
-            probes: Vec::new()
+            probes: Vec::new(),
         }
     }
 
@@ -33,16 +33,13 @@ impl Worker {
         }
     }
 
-    pub fn union_n<const N: usize, Output: Data>(&mut self, streams: [JetStreamBuilder<Output>; N]) -> JetStreamBuilder<Output>{
-
+    /// Unions N streams with identical output types into a single stream
+    pub fn union_n<const N: usize, Output: Data>(
+        &mut self,
+        streams: [JetStreamBuilder<Output>; N],
+    ) -> JetStreamBuilder<Output> {
         // this is the operator which reveives the union stream
-        let mut unioned = StandardOperator::from(
-            |input: &mut Receiver<Output>, output: &mut Sender<Output>| {
-                if let Some(x) = input.recv() {
-                    output.send(x)
-                }
-            },
-        );
+        let mut unioned = pass_through_operator();
 
         for mut input_stream in streams.into_iter() {
             selective_broadcast::link(input_stream.get_output_mut(), unioned.get_input_mut());
@@ -51,4 +48,100 @@ impl Worker {
         JetStreamBuilder::from_operator(unioned)
     }
 
+    pub fn split_n<const N: usize, Output: Data>(
+        &mut self,
+        input: JetStreamBuilder<Output>,
+        partitioner: impl Fn(&Output, usize) -> Vec<usize> + 'static,
+    ) -> [JetStreamBuilder<Output>; N] {
+        let partition_op = StandardOperator::new_with_partitioning(
+            |input, output, _| {
+                if let Some(msg) = input.recv() {
+                    output.send(msg)
+                }
+            },
+            partitioner,
+        );
+        let mut input = input.then(partition_op);
+
+        let new_streams: Vec<JetStreamBuilder<Output>> = (0..N)
+            .map(|_| {
+                let mut operator = pass_through_operator();
+                selective_broadcast::link(input.get_output_mut(), operator.get_input_mut());
+                JetStreamBuilder::from_operator(operator)
+            })
+            .collect();
+
+        // SAFETY: We can unwrap because the vec was built from an iterator of size N
+        // so the vec is guaranteed to fit
+        unsafe { new_streams.try_into().unwrap_unchecked() }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        channels::selective_broadcast::{Receiver, Sender},
+        frontier::FrontierHandle,
+        stream::jetstream::JetStreamEmpty,
+        worker::Worker,
+    };
+
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_split() {
+        println!("Build new stream");
+        let mut worker = Worker::new();
+        println!("Add source");
+
+        let mut src_count = 0;
+        let source = move |_: &mut FrontierHandle| {
+            src_count += 1;
+            Some(src_count)
+        };
+
+        let stream = JetStreamEmpty::new().source(source);
+
+        println!("Split stream");
+        let [evens, odds] =
+            worker.split_n::<2, _>(
+                stream,
+                |x: &i32, _out_n| if (x & 1) == 0 { vec![0] } else { vec![1] },
+            );
+
+        println!("Finalize streams");
+        // Finalize all streams to step the workers
+        // let final_stream = stream.finalize(); // is already finalized in th split function
+
+        let (tx_a, rx_a) = crossbeam::channel::unbounded();
+        let (tx_b, rx_b) = crossbeam::channel::unbounded();
+
+        // Attach a sink to both operators, so we can observe the values
+        let evens = evens.then(StandardOperator::from(
+            move |input: &mut Receiver<i32>, _output: &mut Sender<i32>| {
+                if let Some(msg) = input.recv() {
+                    tx_a.send(msg).unwrap()
+                }
+            },
+        ));
+        let odds = odds.then(StandardOperator::from(
+            move |input: &mut Receiver<i32>, _output: &mut Sender<i32>| {
+                if let Some(msg) = input.recv() {
+                    tx_b.send(msg).unwrap()
+                }
+            },
+        ));
+
+        worker.add_stream(evens.build());
+        worker.add_stream(odds.build());
+
+        println!("Step twice");
+        // TODO: This results in an infinite loop???
+        worker.step();
+        worker.step();
+        assert_eq!(rx_a.recv().unwrap(), 2);
+        assert_eq!(rx_b.recv().unwrap(), 1);
+    }
 }
