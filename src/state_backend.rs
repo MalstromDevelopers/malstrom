@@ -1,52 +1,37 @@
 use std::collections::HashMap;
-use std::hash::Hash;
 
-use crate::stream::Data;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
-/// Trait to represent state backends which supports
-/// key values
-pub trait StateBackend<K, V>
-where
-    K: PartialEq + Eq + Hash,
-    V: Data,
-{
-    fn set(&mut self, key: K, value: V);
-    fn get(&self, key: K) -> Option<V>;
+pub trait State {}
+pub trait PersistentState: State + Serialize + DeserializeOwned {}
+
+pub trait PersistentStateBackend<T, P: PersistentState> {
+    fn load(&self, worker_index: usize) -> Option<P>;
+    fn persist(&self, worker_index: usize, state: &P);
 }
 
-/// Hashmap based state backend
-pub struct HashMapStateBackend<K, V>
-where
-    K: PartialEq + Eq + Hash,
-    V: Data,
-{
-    map: HashMap<K, V>,
+struct DummyPersistentBackend<K,V> {
+    hashmap: HashMap<K,V>,
+    saved: bool,
+    loaded: bool
 }
 
-impl<K, V> HashMapStateBackend<K, V>
-where
-    K: PartialEq + Eq + Hash,
-    V: Data,
-{
-    pub fn new() -> HashMapStateBackend<K,V> {
-        HashMapStateBackend {
-            map: HashMap::new(),
-        }
+impl<K,V> DummyPersistentBackend<K,V> {
+    pub fn new() -> DummyPersistentBackend<K,V> {
+        DummyPersistentBackend {
+            hashmap: HashMap::new(),
+            saved: false,
+            loaded: false}
     }
 }
 
-impl<K, V> StateBackend<K, V> for HashMapStateBackend<K, V>
-where
-    K: PartialEq + Eq + Hash,
-    V: Data,
-{
-    /// Setter for keys
-    fn set(&mut self, key: K, value: V) {
-        self.map.insert(key, value);
+impl<K,V> PersistentStateBackend<K,V> for DummyPersistentBackend<K,V> {
+    fn load(&self, worker_index: usize) -> Option<V> {
+        None
     }
 
-    // Getter for keys
-    fn get(&self, key: K) -> Option<V> {
-        self.map.get(&key).cloned()
+    fn persist(&self, worker_index: usize, state: &V) {
+        todo!()
     }
 }
