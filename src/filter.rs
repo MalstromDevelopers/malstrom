@@ -1,4 +1,4 @@
-use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
+use crate::stream::jetstream::{Data, JetStreamBuilder};
 use crate::stream::operator::StandardOperator;
 
 pub trait Filter<O> {
@@ -10,17 +10,16 @@ where
     O: Data,
 {
     fn filter(self, mut filter: impl FnMut(&O) -> bool + 'static) -> JetStreamBuilder<O> {
-        let operator = StandardOperator::new(move |inputs, outputs, _| {
-            let inp = inputs.iter().filter_map(|x| x.try_recv().ok());
-            let mut data = Vec::new();
-            for x in inp {
-                // this is super weird, but I could not get the code to borrow
-                // check otherwise
-                if filter(&x) {
-                    data.push(x)
+        let operator = StandardOperator::new(move |input, output, frontier| {
+
+            // since this operator does not participate in progress tracking
+            // it must set u64::MAX to not block others from advancing
+            let _ = frontier.advance_to(u64::MAX);
+            if let Some(msg) = input.recv() {
+                if filter(&msg) {
+                    output.send(msg)
                 }
             }
-            dist_rand(data.into_iter(), outputs)
         });
         self.then(operator)
     }
