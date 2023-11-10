@@ -97,7 +97,7 @@ impl<T> Receiver<T> {
     /// Receive a value. None if no value to receive or all Senders dropped.
     pub fn recv(&self) -> Option<T> {
         for r in self.0.iter() {
-            match r.recv().ok() {
+            match r.try_recv().ok() {
                 Some(x) => return Some(x),
                 None => continue
             }

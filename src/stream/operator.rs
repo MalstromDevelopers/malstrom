@@ -1,11 +1,10 @@
+use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// Operators:
 /// Lifecycle:
 /// OperatorBuilder -> Appendable Operator -> FrontieredOperator
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
-
-use crate::frontier::{FrontierHandle, Frontier, Probe};
-use crate::channels::selective_broadcast::{Sender, Receiver, full_broadcast};
+use crate::frontier::{Frontier, FrontierHandle, Probe};
 
 use super::jetstream::Data;
 
@@ -19,19 +18,50 @@ pub trait AppendableOperator<O> {
     fn build(self: Box<Self>) -> FrontieredOperator;
 }
 
+/// An Operator which does nothing except passing data along
+pub fn pass_through_operator<T: Data>() -> StandardOperator<T, T> {
+    StandardOperator::from(|input: &mut Receiver<T>, output: &mut Sender<T>| {
+        if let Some(x) = input.recv() {
+            output.send(x)
+        }
+    })
+}
+
 /// A builder type to build generic operators
 pub struct StandardOperator<I, O> {
     input: Receiver<I>,
     mapper: Box<dyn FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle)>,
-    output: Sender<O>
+    output: Sender<O>,
 }
 
-impl<I, O> StandardOperator<I, O> where I: Data, O: Data {
-
-    pub fn new(mapper: impl FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle) + 'static) -> Self {
+impl<I, O> StandardOperator<I, O>
+where
+    I: Data,
+    O: Data,
+{
+    pub fn new(
+        mapper: impl FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle) + 'static,
+    ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
-        Self {input, mapper: Box::new(mapper), output}
+        Self {
+            input,
+            mapper: Box::new(mapper),
+            output,
+        }
+    }
+
+    pub fn new_with_partitioning(
+        mapper: impl FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle) + 'static,
+        partitioner: impl Fn(&O, usize) -> Vec<usize> + 'static,
+    ) -> Self {
+        let input = Receiver::new_unlinked();
+        let output = Sender::new_unlinked(partitioner);
+        Self {
+            input,
+            mapper: Box::new(mapper),
+            output,
+        }
     }
 
     pub fn get_input_mut(&mut self) -> &mut Receiver<I> {
@@ -39,7 +69,11 @@ impl<I, O> StandardOperator<I, O> where I: Data, O: Data {
     }
 }
 
-impl <I, O> AppendableOperator<O> for StandardOperator<I, O> where I: 'static, O: 'static{
+impl<I, O> AppendableOperator<O> for StandardOperator<I, O>
+where
+    I: 'static,
+    O: 'static,
+{
     fn get_output_mut(&mut self) -> &mut Sender<O> {
         &mut self.output
     }
@@ -50,13 +84,13 @@ impl <I, O> AppendableOperator<O> for StandardOperator<I, O> where I: 'static, O
     }
 }
 
-impl< I, O, F> From<F> for StandardOperator< I, O>
+impl<I, O, F> From<F> for StandardOperator<I, O>
 where
     F: FnMut(&mut Receiver<I>, &mut Sender<O>) + 'static,
     I: Data,
-    O: Data
+    O: Data,
 {
-    fn from(mut mapper: F) -> StandardOperator< I, O> {
+    fn from(mut mapper: F) -> StandardOperator<I, O> {
         Self::new(move |i, o, _| mapper(i, o))
     }
 }
@@ -67,7 +101,7 @@ where
 //     mapper: Box<dyn FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle)>,
 //     output: Sender<O>,
 // }
-impl<I, O> Operator for StandardOperator< I, O> {
+impl<I, O> Operator for StandardOperator<I, O> {
     fn step(&mut self, frontier_handle: &mut FrontierHandle) {
         (self.mapper)(&mut self.input, &mut self.output, frontier_handle);
     }
@@ -79,15 +113,18 @@ impl<I, O> Operator for StandardOperator< I, O> {
 
 pub struct FrontieredOperator {
     frontier: Frontier,
-    operator: Box<dyn Operator>
+    operator: Box<dyn Operator>,
 }
 
 impl FrontieredOperator {
     fn new<I: 'static, O: 'static>(operator: StandardOperator<I, O>) -> Self {
-        Self { frontier: Frontier::default(), operator: Box::new(operator) }
+        Self {
+            frontier: Frontier::default(),
+            operator: Box::new(operator),
+        }
     }
 }
-impl RuntimeFrontieredOperator for FrontieredOperator  {
+impl RuntimeFrontieredOperator for FrontieredOperator {
     fn get_probe(&self) -> Probe {
         self.frontier.get_probe()
     }
@@ -120,7 +157,6 @@ pub trait Operator {
     fn has_queued_work(&self) -> bool;
 }
 pub trait RuntimeFrontieredOperator {
-
     fn get_probe(&self) -> Probe;
 
     fn step(&mut self);
