@@ -1,22 +1,24 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::Probe;
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
-use crate::stream::operator::{pass_through_operator, StandardOperator};
+use crate::stream::operator::{pass_through_operator, StandardOperator, FrontieredOperator, RuntimeFrontieredOperator};
 pub struct Worker {
-    streams: Vec<JetStream>,
+    operators: Vec<FrontieredOperator>,
     probes: Vec<Probe>,
 }
 impl Worker {
     pub fn new() -> Worker {
         Worker {
-            streams: Vec::new(),
+            operators: Vec::new(),
             probes: Vec::new(),
         }
     }
 
     pub fn add_stream(&mut self, stream: JetStream) {
-        self.probes.push(stream.get_probe());
-        self.streams.push(stream);
+        for op in stream.into_operators().into_iter() {
+            self.probes.push(op.get_probe());
+            self.operators.push(op);
+        }
     }
 
     pub fn get_frontier(&self) -> Option<u64> {
@@ -24,13 +26,15 @@ impl Worker {
     }
 
     pub fn step(&mut self) {
-        for (i, stream) in self.streams.iter_mut().enumerate().rev() {
-            let upstream_frontiers = self.probes[..i].iter().map(|x| x.read()).collect();
+        for (i, op) in self.operators.iter_mut().enumerate().rev() {
+            // TODO: Expose this info to the operators
+            let upstream_frontiers: Vec<u64> = self.probes[..i].iter().map(|x| x.read()).collect();
 
-            stream.step(&upstream_frontiers);
-            while stream.has_queued_work() {
-                stream.step(&upstream_frontiers);
+            op.step();
+            while op.has_queued_work() {
+                op.step();
             }
+            op.try_fulfill(&upstream_frontiers);
         }
     }
 

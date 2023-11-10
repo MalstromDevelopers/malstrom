@@ -4,9 +4,9 @@ use crate::channels::selective_broadcast::{Sender, self};
 use rand;
 
 
-use crate::frontier::{FrontierHandle, Frontier, Probe};
+use crate::frontier::FrontierHandle;
 
-use super::operator::{StandardOperator, RuntimeFrontieredOperator, FrontieredOperator, AppendableOperator};
+use super::operator::{StandardOperator, FrontieredOperator, AppendableOperator};
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
@@ -17,19 +17,6 @@ impl<T: Clone + 'static> Data for T {}
 #[derive(Clone)]
 pub struct Nothing;
 
-/// Finalized
-/// Important: Finalized is used as a marker type and does
-/// not implement 'Data'
-#[derive(Clone)]
-pub struct Finalized;
-
-/// A union of two data types
-/// useful when combining streams
-#[derive(Clone, Copy)]
-pub enum DataUnion<L, R> {
-    Left(L),
-    Right(R),
-}
 
 pub struct JetStreamEmpty;
 
@@ -47,14 +34,13 @@ impl JetStreamEmpty {
                 output.send(x)
             }
         });
-        JetStreamBuilder { operators: Vec::new(), probes: Vec::new(), tail: Box::new(operator)}
+        JetStreamBuilder { operators: Vec::new(), tail: Box::new(operator)}
     }
 }
 
 pub struct JetStreamBuilder<Output> {
     operators: Vec<FrontieredOperator>,
     // these are probes for every operator in operators
-    probes: Vec<Probe>,
     tail: Box<dyn AppendableOperator<Output>>,
 }
 
@@ -63,7 +49,6 @@ impl JetStreamBuilder<Output> {
     pub fn from_operator<I: 'static, O: 'static>(operator: StandardOperator<I, O>) -> JetStreamBuilder<O> {
         JetStreamBuilder {
             operators: Vec::new(),
-            probes: Vec::new(),
             tail: Box::new(operator),
         }
     }
@@ -99,65 +84,33 @@ where
         selective_broadcast::link(self.tail.get_output_mut(), operator.get_input_mut());
 
         let old_tail_f = self.tail.build();
-
-        self.probes.push(old_tail_f.get_probe());
         self.operators.push(old_tail_f);
 
         JetStreamBuilder {
             operators: self.operators,
-            probes: self.probes,
             tail: Box::new(operator)
         }
     }
 
     pub fn build(mut self) -> JetStream {
         let tail = self.tail.build();
-        self.probes.push(tail.get_probe());
         self.operators.push(tail);
-        JetStream { operators: self.operators, probes: self.probes, frontier: Frontier::default() }
+        JetStream { operators: self.operators}
     }
 
 }
 
 pub struct JetStream {
     operators: Vec<FrontieredOperator>,
-    // these are probes for every operator in operators
-    probes: Vec<Probe>,
-    frontier: Frontier,
 }
 
 impl JetStream
 {
-    pub fn has_queued_work(&mut self) -> bool {
-        self.operators.first().unwrap().has_queued_work()
+
+    pub fn into_operators(self) -> Vec<FrontieredOperator> {
+        self.operators
     }
 
-    /// frontiers here are the stream level frontiers, i.e. those
-    /// coming from the worker
-    pub fn step(&mut self, upstream_frontiers: &Vec<u64>) {
-        // it is important to step operators at least once
-        // even if they don't have input, as they may be sources
-        // which need to run without input
-        for (i, op) in self.operators.iter_mut().enumerate().rev() {
-            op.step();
-            while op.has_queued_work() {
-
-                op.step();
-            }
-            let mut upstream_worker_frontiers: Vec<u64> = self.probes[..i].iter().map(|x| x.read()).collect();
-            upstream_worker_frontiers.extend(upstream_frontiers);
-            op.try_fulfill(&upstream_worker_frontiers);
-
-            let f = op.get_probe().read();
-        }
-        self.frontier.set_desired(self.probes.last().unwrap().read());
-        let desired = self.probes.last().unwrap().read();
-        self.frontier.try_fulfill(upstream_frontiers);
-    }
-
-    pub fn get_probe(&self) -> Probe {
-        self.probes.last().unwrap().clone()
-    }
 }
 
 #[cfg(test)]
@@ -180,22 +133,4 @@ mod tests {
         let _union_stream = worker.union_n([stream_a, stream_b]);
     }
 
-    #[test]
-    fn test_probe() {
-        let mut worker = Worker::new();
-
-        let source = |frontier_handle: &mut FrontierHandle| {
-            frontier_handle.advance_by(1).unwrap();
-            Some(rand::random::<f64>())
-        
-        };
-        let stream = JetStreamEmpty::new().source(source).build();
-        let probe = stream.get_probe();
-        worker.add_stream(stream);
-        assert_eq!(probe.read(), 0);
-        worker.step();
-        assert_eq!(probe.read(), 1);
-
-        assert_eq!(worker.get_frontier().unwrap(), 1);
-    }
 }
