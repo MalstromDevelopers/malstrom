@@ -1,15 +1,14 @@
+mod channels;
 pub mod filter;
 pub mod frontier;
+pub mod inspect;
+pub mod kafka;
 pub mod map;
+pub mod network_exchange;
 pub mod state_backend;
 pub mod stateful_map;
 pub mod stream;
-mod watch;
 pub mod worker;
-pub mod network_exchange;
-pub mod kafka;
-pub mod inspect;
-mod channels;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
