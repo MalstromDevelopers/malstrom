@@ -7,7 +7,7 @@ use bincode::{config, Decode, Encode};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-pub trait State {}
+pub trait State: Default + Clone {}
 pub trait PersistentState: State + Encode + Decode {}
 
 pub trait PersistentStateBackend<P: PersistentState> {
@@ -15,7 +15,7 @@ pub trait PersistentStateBackend<P: PersistentState> {
     fn persist(&self, state: P);
 }
 
-struct FilesystemStateBackend<P>
+pub struct FilesystemStateBackend<P>
 where
     P: PersistentState,
 {
