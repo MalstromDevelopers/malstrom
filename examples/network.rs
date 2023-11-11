@@ -5,7 +5,7 @@ use jetstream::{
 use url::Url;
 
 const ADDRESS_A: &'static str = "inproc://nng/stream_a";
-const ADDRESS_B: &'static str = "inproc://nng/stream_a";
+const ADDRESS_B: &'static str = "inproc://nng/stream_b";
 
 /// This is an example of two Streams (A and B) which exchange
 /// data via a network.
