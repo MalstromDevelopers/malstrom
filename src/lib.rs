@@ -7,6 +7,9 @@ pub mod stream;
 mod watch;
 pub mod worker;
 pub mod network_exchange;
+pub mod kafka;
+pub mod inspect;
+mod channels;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
