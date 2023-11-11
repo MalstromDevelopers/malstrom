@@ -1,7 +1,9 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::Probe;
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
-use crate::stream::operator::{pass_through_operator, StandardOperator, FrontieredOperator, RuntimeFrontieredOperator};
+use crate::stream::operator::{
+    pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
+};
 pub struct Worker {
     operators: Vec<FrontieredOperator>,
     probes: Vec<Probe>,

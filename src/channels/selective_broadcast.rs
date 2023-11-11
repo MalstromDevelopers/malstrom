@@ -1,21 +1,25 @@
-use itertools;
 use crossbeam;
+use itertools;
 
 /// Selective Broadcast:
-/// 
+///
 /// Selective Broadcast channels are MPMC channels, where a partitioning function is used
 /// to determine which receivers shall receive a value.
 /// The value is copied as often as necessary, to ensure multiple receivers can receive it.
 /// NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 /// big queues with this channel.
-pub fn unbounded<T >(partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static) -> (Sender<T>, Receiver<T>) {
+pub fn unbounded<T>(
+    partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static,
+) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = crossbeam::channel::unbounded::<T>();
     (
-        Sender{senders: vec![tx], partitioner: Box::new(partitioner)},
-        Receiver(vec![rx])
+        Sender {
+            senders: vec![tx],
+            partitioner: Box::new(partitioner),
+        },
+        Receiver(vec![rx]),
     )
 }
-
 
 /// A simple partitioner, which will broadcast a value to all receivers
 pub fn full_broadcast<T>(_: &T, recv_cnt: usize) -> Vec<usize> {
@@ -31,39 +35,54 @@ pub fn link<T>(sender: &mut Sender<T>, receiver: &mut Receiver<T>) {
 /// Selective Broadcast Sender
 pub struct Sender<T> {
     senders: Vec<crossbeam::channel::Sender<T>>,
-    partitioner: Box<dyn Fn(&T, usize) -> Vec<usize>>
+    partitioner: Box<dyn Fn(&T, usize) -> Vec<usize>>,
 }
 /// Selective Broadcast Receiver
 pub struct Receiver<T>(Vec<crossbeam::channel::Receiver<T>>);
 
-impl <T> Sender<T> where T: Clone {
-
+impl<T> Sender<T>
+where
+    T: Clone,
+{
     pub fn new_unlinked(partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static) -> Self {
-        Self { senders: Vec::new(), partitioner: Box::new(partitioner) }
+        Self {
+            senders: Vec::new(),
+            partitioner: Box::new(partitioner),
+        }
     }
 
     /// Send a value into this channel. The value will be distributed to receiver
     /// as per the result of the partitioning function
     pub fn send(&mut self, msg: T) {
+        if self.senders.len() == 0 {
+            return;
+        }
+
         let recv_idxs = (self.partitioner)(&msg, self.senders.len());
         let recv_idxs_len = recv_idxs.len();
 
         // repeat_n will clone for every iteration except the last
         // this gives us a small optimization on the common "1 receiver" case :)
-        for (idx, elem) in recv_idxs.into_iter().zip(itertools::repeat_n(msg, recv_idxs_len)) {
+        for (idx, elem) in recv_idxs
+            .into_iter()
+            .zip(itertools::repeat_n(msg, recv_idxs_len))
+        {
             // SAFETY: We modul o the index with the sender length, so it can not be
             // out of bounds
-            let sender = unsafe {self.senders.get_unchecked(idx % self.senders.len())};
+            let sender = unsafe { self.senders.get_unchecked(idx % self.senders.len()) };
             match sender.send(elem) {
                 Ok(_) => continue,
                 // remove dropped receivers
-                Err(_) => {self.senders.remove(idx); self.senders.shrink_to_fit()}
+                Err(_) => {
+                    self.senders.remove(idx);
+                    self.senders.shrink_to_fit()
+                }
             }
         }
     }
 }
 
-impl <T> Sender<T> {
+impl<T> Sender<T> {
     /// Subrscribe to this sender
     pub fn subscribe(&mut self) -> Receiver<T> {
         let rx = self.subscribe_inner();
@@ -89,7 +108,6 @@ impl <T> Sender<T> {
 // }
 
 impl<T> Receiver<T> {
-
     pub fn new_unlinked() -> Self {
         Self(Vec::new())
     }
@@ -99,9 +117,9 @@ impl<T> Receiver<T> {
         for r in self.0.iter() {
             match r.try_recv().ok() {
                 Some(x) => return Some(x),
-                None => continue
+                None => continue,
             }
-        };
+        }
         None
     }
 
@@ -109,4 +127,3 @@ impl<T> Receiver<T> {
         self.0.iter().all(|r| r.is_empty())
     }
 }
-

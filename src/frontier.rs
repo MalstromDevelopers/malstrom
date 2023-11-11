@@ -7,12 +7,12 @@ pub enum FrontierError {
     #[error("Attempted to set a desired time lower than actual")]
     DesiredLessThanActual,
     #[error("Can not advance as others actual frontiers are larger")]
-    CanNotAdvance
+    CanNotAdvance,
 }
 
 #[derive(Clone)]
 pub struct Probe {
-    inner: watch::Receiver<u64>
+    inner: watch::Receiver<u64>,
 }
 
 impl Probe {
@@ -28,11 +28,10 @@ impl Probe {
 #[derive(Clone, Debug)]
 pub struct Frontier {
     desired: u64,
-    actual: watch::Sender<u64>
+    actual: watch::Sender<u64>,
 }
 
 impl Frontier {
-
     pub fn get_actual(&self) -> u64 {
         self.actual.read()
     }
@@ -46,7 +45,7 @@ impl Frontier {
 
         match upstream_min {
             Some(m) => self.actual.write(*m.min(&self.desired)),
-            None => self.actual.write(self.desired)
+            None => self.actual.write(self.desired),
         };
     }
 
@@ -56,10 +55,12 @@ impl Frontier {
 }
 
 impl Default for Frontier {
-    
     fn default() -> Self {
         let (tx, _) = watch::channel(0);
-        Self { desired: 0, actual: tx }
+        Self {
+            desired: 0,
+            actual: tx,
+        }
     }
 }
 
@@ -68,28 +69,32 @@ pub struct FrontierHandle<'g> {
     frontier: &'g mut Frontier,
 }
 
-impl <'g>FrontierHandle<'g> {
-
-    pub fn new(frontier: &'g mut Frontier)  -> Self {
+impl<'g> FrontierHandle<'g> {
+    pub fn new(frontier: &'g mut Frontier) -> Self {
         FrontierHandle { frontier }
     }
 
     pub fn advance_to(&mut self, desired: u64) -> Result<(), FrontierError> {
         match desired < self.frontier.actual.read() {
-           true => Err(FrontierError::DesiredLessThanActual),
-           false => {self.frontier.desired = desired; Ok(())}
+            true => Err(FrontierError::DesiredLessThanActual),
+            false => {
+                self.frontier.desired = desired;
+                Ok(())
+            }
         }
     }
     pub fn advance_by(&mut self, desired: u64) -> Result<(), FrontierError> {
         let new_desired = self.frontier.desired + desired;
         match new_desired < self.frontier.actual.read() {
-           true => Err(FrontierError::DesiredLessThanActual),
-           false => {self.frontier.desired = new_desired; Ok(())}
+            true => Err(FrontierError::DesiredLessThanActual),
+            false => {
+                self.frontier.desired = new_desired;
+                Ok(())
+            }
         }
     }
 
     pub fn get_actual(&self) -> u64 {
         self.frontier.actual.read()
     }
-
 }
