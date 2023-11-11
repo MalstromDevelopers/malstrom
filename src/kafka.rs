@@ -50,7 +50,9 @@ pub fn create_and_subscribe_consumer(
             .assign(&topic_parititon)
             .expect("Failed to subscribe to topic");
     } else {
-        consumer.subscribe(&[topic]).expect("Failed to subscribe to topic");
+        consumer
+            .subscribe(&[topic])
+            .expect("Failed to subscribe to topic");
     }
     consumer
 }
@@ -95,7 +97,6 @@ impl KafkaSource for JetStreamEmpty {
             move |_input: &mut Receiver<Nothing>,
                   output: &mut Sender<OwnedMessage>,
                   frontier: &mut FrontierHandle| {
-
                 if let Some(msg) = kafka_poll(&consumer) {
                     // should always succeed
                     let _ = frontier.advance_to(

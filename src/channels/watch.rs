@@ -61,7 +61,7 @@ impl<T> Sender<T>
 where
     T: Clone,
 {
-    pub fn send(&mut self, new: T){
+    pub fn send(&mut self, new: T) {
         self.write(new)
     }
 }
