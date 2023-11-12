@@ -7,12 +7,14 @@ use bincode::{config, Decode, Encode};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use crate::frontier::Frontier;
+
 pub trait State: Default + Clone {}
 pub trait PersistentState: State + Encode + Decode {}
 
 pub trait PersistentStateBackend<P: PersistentState> {
-    fn load(&self) -> Option<P>;
-    fn persist(&self, state: P);
+    fn load(&self, frontier: &Frontier) -> Option<P>;
+    fn persist(&self, state: P, frontier: &Frontier);
 }
 
 pub struct FilesystemStateBackend<P>
@@ -41,7 +43,7 @@ impl<P> PersistentStateBackend<P> for FilesystemStateBackend<P>
 where
     P: PersistentState,
 {
-    fn load(&self) -> Option<P> {
+    fn load(&self, _: &Frontier) -> Option<P> {
         let file_result = File::open(&self.path);
         match file_result {
             Ok(_) => (),
@@ -63,7 +65,7 @@ where
         Some(decoded)
     }
 
-    fn persist(&self, state: P) {
+    fn persist(&self, state: P, _: &Frontier) {
         if let Ok(mut file) = File::create(&self.path) {
             if let Ok(bytes) = bincode::encode_to_vec(state, self.config) {
                 let _ = file.write_all(&bytes);
@@ -80,26 +82,45 @@ mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
     use pretty_assertions::assert_eq;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_persistent_backend() {
+        let frontier = Frontier::default();
+
+        let path = NamedTempFile::new()
+            .expect("Could not create temp file")
+            .into_temp_path()
+            .to_str()
+            .unwrap()
+            .to_string();
+
         let backend: FilesystemStateBackend<i32> =
-            FilesystemStateBackend::new("/tmp/fsbackend".to_string(), config::standard());
+            FilesystemStateBackend::new(path, config::standard());
 
         let value: i32 = 42;
 
-        backend.persist(value);
-        let deser_value: i32 = backend.load().expect("Could not load state");
+        backend.persist(value, &frontier);
+        let deser_value: i32 = backend.load(&frontier).expect("Could not load state");
 
         assert_eq!(value, deser_value);
     }
 
     #[test]
     fn test_persistent_backend_non_existent() {
-        let backend: FilesystemStateBackend<i32> =
-            FilesystemStateBackend::new("/tmp/fsbackend".to_string(), config::standard());
+        let frontier = Frontier::default();
 
-        let deser_value: Option<i32> = backend.load();
+        let path = NamedTempFile::new()
+            .expect("Could not create temp file")
+            .into_temp_path()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let backend: FilesystemStateBackend<i32> =
+            FilesystemStateBackend::new(path, config::standard());
+
+        let deser_value: Option<i32> = backend.load(&frontier);
 
         assert_eq!(None, deser_value);
     }
