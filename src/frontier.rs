@@ -6,11 +6,9 @@ use crate::channels::watch;
 pub enum FrontierError {
     #[error("Attempted to set a desired time lower than actual")]
     DesiredLessThanActual,
-    #[error("Can not advance as others actual frontiers are larger")]
-    CanNotAdvance,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Probe {
     inner: watch::Receiver<u64>,
 }
@@ -29,24 +27,34 @@ impl Probe {
 pub struct Frontier {
     desired: u64,
     actual: watch::Sender<u64>,
+    upstreams: Vec<Probe>,
 }
 
 impl Frontier {
+    pub fn add_upstream_probe(&mut self, probe: Probe) -> () {
+        self.upstreams.push(probe)
+    }
+
     pub fn get_actual(&self) -> u64 {
         self.actual.read()
     }
 
-    pub fn set_desired(&mut self, desired: u64) {
-        self.desired = desired
+    pub fn advance_to(&mut self, desired: u64) -> Result<(), FrontierError> {
+        match desired < self.actual.read() {
+            true => Err(FrontierError::DesiredLessThanActual),
+            false => {
+                self.desired = desired;
+                self.update();
+                Ok(())
+            }
+        }
     }
 
-    pub fn try_fulfill(&mut self, others: &Vec<u64>) {
-        let upstream_min = others.iter().min();
-
-        match upstream_min {
-            Some(m) => self.actual.write(*m.min(&self.desired)),
+    fn update(&mut self) {
+        match self.upstreams.iter().map(|x| x.read()).min() {
+            Some(m) => self.actual.write(m.min(self.desired)),
             None => self.actual.write(self.desired),
-        };
+        }
     }
 
     pub fn get_probe(&self) -> Probe {
@@ -60,6 +68,7 @@ impl Default for Frontier {
         Self {
             desired: 0,
             actual: tx,
+            upstreams: Vec::new(),
         }
     }
 }
@@ -75,26 +84,23 @@ impl<'g> FrontierHandle<'g> {
     }
 
     pub fn advance_to(&mut self, desired: u64) -> Result<(), FrontierError> {
-        match desired < self.frontier.actual.read() {
-            true => Err(FrontierError::DesiredLessThanActual),
-            false => {
-                self.frontier.desired = desired;
-                Ok(())
-            }
-        }
+        self.frontier.advance_to(desired)
     }
-    pub fn advance_by(&mut self, desired: u64) -> Result<(), FrontierError> {
-        let new_desired = self.frontier.desired + desired;
-        match new_desired < self.frontier.actual.read() {
-            true => Err(FrontierError::DesiredLessThanActual),
-            false => {
-                self.frontier.desired = new_desired;
-                Ok(())
-            }
-        }
+    pub fn get_actual(&self) -> u64 {
+        self.frontier.get_actual()
     }
 
-    pub fn get_actual(&self) -> u64 {
-        self.frontier.actual.read()
+    /// Get the minimum frontier of the upstream operators
+    /// This is essentially the same as asking "What is the oldest
+    /// message I still need to be able to handle"
+    ///
+    /// If there are no upstreams, this will be u64::MAX
+    pub fn get_upstream_actual(&self) -> u64 {
+        self.frontier
+            .upstreams
+            .iter()
+            .map(|x| x.read())
+            .min()
+            .unwrap_or(u64::MAX)
     }
 }

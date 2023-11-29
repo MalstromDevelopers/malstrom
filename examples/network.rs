@@ -1,11 +1,20 @@
+use std::{
+    net::{SocketAddr, SocketAddrV4},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
 use jetstream::{
-    inspect::Inspect, network_exchange::NetworkExchange, stream::jetstream::JetStreamEmpty,
+    inspect::Inspect,
+    network_exchange::{NetworkExchange, Remote},
+    stream::jetstream::JetStreamEmpty,
     worker::Worker,
 };
+use tonic::transport::Uri;
 use url::Url;
-
-const ADDRESS_A: &'static str = "inproc://nng/stream_a";
-const ADDRESS_B: &'static str = "inproc://nng/stream_b";
 
 /// This is an example of two Streams (A and B) which exchange
 /// data via a network.
@@ -15,14 +24,24 @@ const ADDRESS_B: &'static str = "inproc://nng/stream_b";
 /// They will exchange messages in such a way, that A gets all
 /// the even numbers and B gets all the odd numbers.
 fn main() {
-    let a = std::thread::spawn(run_stream_a);
-    let b = std::thread::spawn(run_stream_b);
+    let addr_a: SocketAddr = SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), 29918));
+    let addr_b: SocketAddr = SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), 29919));
+
+    let remote_a = Remote::new("A".into(), format!("http://{addr_a}").parse().unwrap());
+    let remote_b = Remote::new("B".into(), format!("http://{addr_b}").parse().unwrap());
+
+    let a = std::thread::spawn(move || run_stream_a("A".into(), addr_a, vec![remote_b]));
+    let b = std::thread::spawn(move || run_stream_b("B".into(), addr_b, vec![remote_a]));
 
     a.join().unwrap();
     b.join().unwrap();
 }
 
-fn run_stream_a() {
+fn run_stream_a(
+    client_id: String,
+    this_addr: SocketAddr,
+    others: Vec<Remote>,
+) {
     // We will set up two streams, one producing the numbers
     // from 0..10 and another producing the numbers 10..20
     let mut numbers_a = (0..10).into_iter();
@@ -35,10 +54,6 @@ fn run_stream_a() {
         }
     });
 
-    // next we will set up communication for both streams
-    let stream_a_addr = Url::parse(ADDRESS_A).unwrap();
-    let stream_b_addr = Url::parse(ADDRESS_B).unwrap();
-
     // Soooo, what is happening here?
     // We are creating an exchange operator, which will
     // listen on `stream_a_addr` and will try to connect
@@ -47,7 +62,7 @@ fn run_stream_a() {
     // It will send all even values downstream locally, by giving them index 0
     // (local) and all odd values to stream_b
     let stream = stream
-        .network_exchange(stream_a_addr, &[stream_b_addr], |data, _count| {
+        .network_exchange(client_id, this_addr, &others, |data, _count| {
             if (data & 1) == 0 {
                 // even
                 vec![0]
@@ -55,20 +70,25 @@ fn run_stream_a() {
                 vec![1]
             }
         })
-        .expect("Failed to connect to remote");
-
-    // we will attach an inspect to see our data
-    let stream = stream.inspect(|x| println!("Stream A: {x}")).build();
+        .expect("Failed to connect to remote")
+        .inspect(|x| println!("Stream A: {x}"))
+        .build();
 
     let mut worker = Worker::new();
     worker.add_stream(stream);
 
-    for _ in 0..20 {
+    while worker.get_frontier().unwrap_or(0) < 9 {
         worker.step()
     }
+    println!("Stream A done with frontier at {:?}", worker.get_frontier());
+    std::thread::sleep(Duration::from_secs(2));
 }
 
-fn run_stream_b() {
+fn run_stream_b(
+    client_id: String,
+    this_addr: SocketAddr,
+    others: Vec<Remote>,
+) {
     let mut numbers_b = (10..20).into_iter();
     let stream = JetStreamEmpty.source(move |frontier| {
         if let Some(i) = numbers_b.next() {
@@ -79,12 +99,8 @@ fn run_stream_b() {
         }
     });
 
-    // next we will set up communication for both streams
-    let stream_a_addr = Url::parse(ADDRESS_A).unwrap();
-    let stream_b_addr = Url::parse(ADDRESS_B).unwrap();
-
     let stream = stream
-        .network_exchange(stream_b_addr, &[stream_a_addr], |data, _count| {
+        .network_exchange(client_id, this_addr, &others, |data, _count| {
             if (data & 1) == 0 {
                 // even
                 vec![1]
@@ -92,15 +108,16 @@ fn run_stream_b() {
                 vec![0]
             }
         })
-        .expect("Failed to connect to remote");
-
-    // we will attach an inspect to see our data
-    let stream = stream.inspect(|x| println!("Stream B: {x}")).build();
+        .expect("Failed to connect to remote")
+        .inspect(|x| println!("Stream B: {x}"))
+        .build();
 
     let mut worker = Worker::new();
     worker.add_stream(stream);
 
-    for _ in 0..20 {
+    while worker.get_frontier().unwrap_or(0) < 9 {
         worker.step()
     }
+    println!("Stream B done with frontier at {:?}", worker.get_frontier());
+    std::thread::sleep(Duration::from_secs(2));
 }

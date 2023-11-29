@@ -123,6 +123,10 @@ impl FrontieredOperator {
             operator: Box::new(operator),
         }
     }
+
+    pub fn add_upstream_probe(&mut self, probe: Probe) -> () {
+        self.frontier.add_upstream_probe(probe)
+    }
 }
 impl RuntimeFrontieredOperator for FrontieredOperator {
     fn get_probe(&self) -> Probe {
@@ -136,10 +140,6 @@ impl RuntimeFrontieredOperator for FrontieredOperator {
 
     fn has_queued_work(&self) -> bool {
         self.operator.has_queued_work()
-    }
-
-    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>) {
-        self.frontier.try_fulfill(other_frontiers)
     }
 }
 
@@ -162,6 +162,4 @@ pub trait RuntimeFrontieredOperator {
     fn step(&mut self);
 
     fn has_queued_work(&self) -> bool;
-
-    fn try_fulfill(&mut self, other_frontiers: &Vec<u64>);
 }

@@ -1,0 +1,22 @@
+syntax = "proto3";
+package jetstream.network_exchange;
+
+service NetworkExchange {
+  // Basic stream for the network exchange
+  rpc SimpleExchange(SubscribeRequest) returns (stream WrapperResponse) {}
+}
+
+message WrapperResponse {
+  // This is just a wrapper which contains the real encoded type
+  // TODO: Evaluate whether this is really a smart thing to do
+  // For now it makes the build process easier
+  bytes encoded = 1;
+}
+
+// Message to subscribe to updates
+message SubscribeRequest {
+  // this is an id the client uses to identify itself
+  // technically there are no rules here, but this should ideally
+  // be stable. Good choice: Pod Ordinal Index of a stateful set
+  string client_id = 1;
+}

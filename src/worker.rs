@@ -17,7 +17,10 @@ impl Worker {
     }
 
     pub fn add_stream(&mut self, stream: JetStream) {
-        for op in stream.into_operators().into_iter() {
+        for mut op in stream.into_operators().into_iter() {
+            for p in self.probes.iter() {
+                op.add_upstream_probe(p.clone())
+            }
             self.probes.push(op.get_probe());
             self.operators.push(op);
         }
@@ -29,14 +32,10 @@ impl Worker {
 
     pub fn step(&mut self) {
         for (i, op) in self.operators.iter_mut().enumerate().rev() {
-            // TODO: Expose this info to the operators
-            let upstream_frontiers: Vec<u64> = self.probes[..i].iter().map(|x| x.read()).collect();
-
             op.step();
             while op.has_queued_work() {
                 op.step();
             }
-            op.try_fulfill(&upstream_frontiers);
         }
     }
 
