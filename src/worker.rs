@@ -1,5 +1,5 @@
 use crate::channels::selective_broadcast;
-use crate::frontier::Probe;
+use crate::frontier::{Probe, Timestamp};
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
@@ -26,7 +26,7 @@ impl Worker {
         }
     }
 
-    pub fn get_frontier(&self) -> Option<u64> {
+    pub fn get_frontier(&self) -> Option<Timestamp> {
         self.probes.last().map(|x| x.read())
     }
 

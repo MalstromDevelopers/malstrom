@@ -1,6 +1,24 @@
+use bincode::{Decode, Encode};
 use thiserror::Error;
 
 use crate::channels::watch;
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub struct Timestamp(u64);
+
+impl Timestamp {
+    pub const MAX: Timestamp = Timestamp(u64::MAX);
+
+    pub fn new(val: u64) -> Self {
+        Self(val)
+    }
+}
+
+impl Into<u64> for Timestamp {
+    fn into(self) -> u64 {
+        self.0
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum FrontierError {
@@ -10,23 +28,23 @@ pub enum FrontierError {
 
 #[derive(Clone, Debug)]
 pub struct Probe {
-    inner: watch::Receiver<u64>,
+    inner: watch::Receiver<Timestamp>,
 }
 
 impl Probe {
-    pub fn new(recv: watch::Receiver<u64>) -> Self {
+    pub fn new(recv: watch::Receiver<Timestamp>) -> Self {
         Self { inner: recv }
     }
 
-    pub fn read(&self) -> u64 {
+    pub fn read(&self) -> Timestamp {
         self.inner.read()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Frontier {
-    desired: u64,
-    actual: watch::Sender<u64>,
+    desired: Timestamp,
+    actual: watch::Sender<Timestamp>,
     upstreams: Vec<Probe>,
 }
 
@@ -35,11 +53,11 @@ impl Frontier {
         self.upstreams.push(probe)
     }
 
-    pub fn get_actual(&self) -> u64 {
+    pub fn get_actual(&self) -> Timestamp {
         self.actual.read()
     }
 
-    pub fn advance_to(&mut self, desired: u64) -> Result<(), FrontierError> {
+    pub fn advance_to(&mut self, desired: Timestamp) -> Result<(), FrontierError> {
         match desired < self.actual.read() {
             true => Err(FrontierError::DesiredLessThanActual),
             false => {
@@ -64,9 +82,9 @@ impl Frontier {
 
 impl Default for Frontier {
     fn default() -> Self {
-        let (tx, _) = watch::channel(0);
+        let (tx, _) = watch::channel(Timestamp::default());
         Self {
-            desired: 0,
+            desired: Timestamp::default(),
             actual: tx,
             upstreams: Vec::new(),
         }
@@ -83,10 +101,10 @@ impl<'g> FrontierHandle<'g> {
         FrontierHandle { frontier }
     }
 
-    pub fn advance_to(&mut self, desired: u64) -> Result<(), FrontierError> {
+    pub fn advance_to(&mut self, desired: Timestamp) -> Result<(), FrontierError> {
         self.frontier.advance_to(desired)
     }
-    pub fn get_actual(&self) -> u64 {
+    pub fn get_actual(&self) -> Timestamp {
         self.frontier.get_actual()
     }
 
@@ -94,13 +112,13 @@ impl<'g> FrontierHandle<'g> {
     /// This is essentially the same as asking "What is the oldest
     /// message I still need to be able to handle"
     ///
-    /// If there are no upstreams, this will be u64::MAX
-    pub fn get_upstream_actual(&self) -> u64 {
+    /// If there are no upstreams, this will be Timestamp::MAX
+    pub fn get_upstream_actual(&self) -> Timestamp {
         self.frontier
             .upstreams
             .iter()
             .map(|x| x.read())
             .min()
-            .unwrap_or(u64::MAX)
+            .unwrap_or(Timestamp::MAX)
     }
 }

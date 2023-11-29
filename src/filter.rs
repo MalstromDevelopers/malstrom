@@ -1,3 +1,4 @@
+use crate::frontier::Timestamp;
 use crate::stream::jetstream::{Data, JetStreamBuilder};
 use crate::stream::operator::StandardOperator;
 
@@ -13,7 +14,7 @@ where
         let operator = StandardOperator::new(move |input, output, frontier| {
             // since this operator does not participate in progress tracking
             // it must set u64::MAX to not block others from advancing
-            let _ = frontier.advance_to(u64::MAX);
+            let _ = frontier.advance_to(Timestamp::MAX);
             if let Some(msg) = input.recv() {
                 if filter(&msg) {
                     output.send(msg)

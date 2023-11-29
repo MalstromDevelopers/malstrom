@@ -5,13 +5,13 @@ use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
     ops::Range,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use self::grpc::{ExchangeClient, ExchangeServer};
 use crate::{
     channels::selective_broadcast,
-    frontier::{Frontier, FrontierError, FrontierHandle},
+    frontier::{Frontier, FrontierError, FrontierHandle, Timestamp},
     stream::jetstream::{Data, JetStreamBuilder},
     stream::operator::StandardOperator,
 };
@@ -113,11 +113,17 @@ where
         remotes: &[Remote],
         mut partitioner: impl FnMut(&T, usize) -> Vec<usize> + 'static,
     ) -> Result<JetStreamBuilder<T>, Box<dyn std::error::Error>> {
-        // TODO: Make connection timeout configurable
-        // TODO: Make queue_size configurable
+        // TODO: Make these configurable
         let queue_size = 128;
         let retries = 5;
         let retry_interval = Duration::from_secs(1);
+        // if we only attach frontier updates to data, remotes may never know
+        // about a finished stream, so we will occasionally send frontier
+        // info
+        // TODD: probably will want to make this independent for diffferent
+        // remotes
+        let frontier_heartbeat = Duration::from_secs(1);
+        let mut last_heartbeat = Instant::now();
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -173,30 +179,45 @@ where
                         // for zero len in the if
                         let wrapped_idx = (target - 1) % remotes_clients.len();
                         // encode the data and attach current upstream frontier
+                        let frontier = frontier.get_upstream_actual();
                         let encoded =
-                            bincode::encode_to_vec((msg, frontier.get_upstream_actual()), config)
-                                .expect("Error encoding value");
-                        server.send(encoded, wrapped_idx);
+                            bincode::encode_to_vec(msg, config).expect("Error encoding value");
+                        server.send((frontier, Some(encoded)), wrapped_idx);
                     }
                 }
+            }
+
+            // send some blind progress updates
+            if Instant::now().duration_since(last_heartbeat) > frontier_heartbeat {
+                let frontier = frontier.get_upstream_actual();
+                for i in 0..remotes_clients.len() {
+                    server.send((frontier, None), i);
+                }
+                last_heartbeat = Instant::now();
             }
 
             // handle incoming
             // prev_frontier is the biggest frontier we have seen so far from this remote
             for (client, prev_frontier) in remotes_clients.iter_mut() {
-                for msg in client.recv_all() {
-                    let decoded = bincode::decode_from_slice::<(T, u64), _>(msg.as_slice(), config);
+                for (frontier, msg) in client.recv_all() {
+                    let decoded = msg.map(|m| {
+                        bincode::decode_from_slice::<T, _>(m.as_slice(), config).map(|x| x.0)
+                    });
                     match decoded {
-                        Ok(val) => {
-                            let (data, msg_frontier) = val.0;
-                            match prev_frontier.advance_to(msg_frontier) {
-                                Ok(_) => output.send(data),
-                                Err(FrontierError::DesiredLessThanActual) => {
-                                    event!(Level::WARN, "Received outdated message. Discarding...")
-                                }
+                        Some(Ok(data)) => match prev_frontier.advance_to(frontier) {
+                            Ok(_) => output.send(data),
+                            Err(FrontierError::DesiredLessThanActual) => {
+                                event!(Level::WARN, "Received outdated message. Discarding...")
                             }
+                        },
+                        Some(Err(e)) => {
+                            event!(Level::ERROR, "Error decoding remote message: {}", e)
                         }
-                        Err(e) => event!(Level::ERROR, "Error decoding remote message: {}", e),
+
+                        // pure frontier update
+                        None => {
+                            let _ = prev_frontier.advance_to(frontier);
+                        }
                     }
                 }
             }
@@ -205,7 +226,7 @@ where
                 .iter()
                 .map(|x| x.1.get_actual())
                 .min()
-                .unwrap_or(u64::MAX);
+                .unwrap_or(Timestamp::MAX);
             frontier.advance_to(this_new_frontier).unwrap();
         };
 

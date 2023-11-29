@@ -2,6 +2,7 @@ mod api {
     tonic::include_proto!("jetstream.network_exchange");
 }
 
+use crate::frontier::Timestamp;
 use anyhow::Context;
 use api::network_exchange_server::NetworkExchange;
 use api::{SubscribeRequest, WrapperResponse};
@@ -9,18 +10,19 @@ use flume::{Receiver, Sender};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
-
 // based off https://github.com/hyperium/tonic/blob/master/examples/src/streaming/server.rs
+
+type Message = (Timestamp, Option<Vec<u8>>);
 
 pub struct ExchangeServer {
     server_task: JoinHandle<()>,
-    send_queues: Vec<Sender<Vec<u8>>>,
+    send_queues: Vec<Sender<Message>>,
     shutdown_tx: Sender<()>,
 }
 
@@ -43,7 +45,7 @@ impl ExchangeServer {
         let mut send_queues = Vec::with_capacity(remote_names.len());
 
         for name in remote_names.iter() {
-            let (tx, rx) = flume::bounded::<Vec<u8>>(queue_size);
+            let (tx, rx) = flume::bounded::<Message>(queue_size);
             send_queues_rx.insert(name.clone(), rx);
             send_queues.push(tx);
         }
@@ -81,7 +83,7 @@ impl ExchangeServer {
     ///
     /// # Panics
     /// If the internal server has crashed
-    pub fn send(&self, msg: Vec<u8>, idx: usize) -> Option<()> {
+    pub fn send(&self, msg: Message, idx: usize) -> Option<()> {
         assert!(!self.server_task.is_finished());
 
         // TODO: panics if self.send_queues.len() == 0
@@ -96,6 +98,22 @@ impl ExchangeServer {
 
 impl Drop for ExchangeServer {
     fn drop(&mut self) {
+        // wait for all queues to be drained
+        loop {
+            let mut has_active = false;
+            for q in self.send_queues.iter_mut() {
+                if q.is_empty() {
+                    // disconnect the channel once all messages are
+                    // drained
+                    q.downgrade();
+                } else {
+                    has_active = true;
+                }
+            }
+            if !has_active {
+                break;
+            }
+        }
         let _ = self.shutdown_tx.send(());
     }
 }
@@ -105,7 +123,7 @@ pub struct InnerExchangeServer<T> {
 }
 
 #[tonic::async_trait]
-impl NetworkExchange for InnerExchangeServer<Vec<u8>> {
+impl NetworkExchange for InnerExchangeServer<(Timestamp, Option<Vec<u8>>)> {
     type SimpleExchangeStream = Pin<Box<dyn Stream<Item = Result<WrapperResponse, Status>> + Send>>;
 
     async fn simple_exchange(
@@ -130,7 +148,10 @@ impl NetworkExchange for InnerExchangeServer<Vec<u8>> {
         tokio::spawn(async move {
             // let mut application_stream = recv.re();
             while let Ok(item) = recv.recv_async().await {
-                let msg = Ok(WrapperResponse { encoded: item });
+                let msg = Ok(WrapperResponse {
+                    frontier: item.0.into(),
+                    encoded: item.1,
+                });
 
                 match tx.send_async(msg).await {
                     Ok(_) => {
@@ -153,8 +174,7 @@ use api::network_exchange_client::NetworkExchangeClient;
 use tonic::transport::Uri;
 
 pub struct ExchangeClient {
-    recv_queue_rx: Receiver<Vec<u8>>,
-
+    recv_queue_rx: Receiver<Message>,
     client_task: tokio::task::JoinHandle<()>,
 }
 
@@ -168,7 +188,7 @@ impl ExchangeClient {
         queue_size: usize,
         client_id: String,
     ) -> Self {
-        let (recv_queue_tx, recv_queue_rx) = flume::bounded::<Vec<u8>>(queue_size);
+        let (recv_queue_tx, recv_queue_rx) = flume::bounded::<Message>(queue_size);
 
         // try connecting to a remote endpoint
         let mut maybe_client = None;
@@ -206,7 +226,10 @@ impl ExchangeClient {
                 .into_inner();
             while let Some(msg) = stream.next().await {
                 match msg {
-                    Ok(m) => recv_queue_tx.send_async(m.encoded).await.unwrap(),
+                    Ok(m) => recv_queue_tx
+                        .send_async((Timestamp::new(m.frontier), m.encoded))
+                        .await
+                        .unwrap(),
                     Err(e) => panic!("Unimplemented client excepion: {}", e),
                 }
             }
@@ -219,7 +242,7 @@ impl ExchangeClient {
     }
 
     /// Retrieve all messages received since last calling this method
-    pub fn recv_all(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
+    pub fn recv_all(&self) -> impl Iterator<Item = Message> + '_ {
         self.recv_queue_rx.drain()
     }
 }

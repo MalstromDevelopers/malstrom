@@ -8,6 +8,7 @@ use std::{
 };
 
 use jetstream::{
+    frontier::Timestamp,
     inspect::Inspect,
     network_exchange::{NetworkExchange, Remote},
     stream::jetstream::JetStreamEmpty,
@@ -37,19 +38,17 @@ fn main() {
     b.join().unwrap();
 }
 
-fn run_stream_a(
-    client_id: String,
-    this_addr: SocketAddr,
-    others: Vec<Remote>,
-) {
+fn run_stream_a(client_id: String, this_addr: SocketAddr, others: Vec<Remote>) {
     // We will set up two streams, one producing the numbers
     // from 0..10 and another producing the numbers 10..20
+    // and we will set the frontier to u64::MAX to indicate we are done
     let mut numbers_a = (0..10).into_iter();
     let stream = JetStreamEmpty.source(move |frontier| {
         if let Some(i) = numbers_a.next() {
-            frontier.advance_to(i).unwrap();
+            frontier.advance_to(Timestamp::new(i)).unwrap();
             Some(i)
         } else {
+            frontier.advance_to(Timestamp::MAX).unwrap();
             None
         }
     });
@@ -77,24 +76,20 @@ fn run_stream_a(
     let mut worker = Worker::new();
     worker.add_stream(stream);
 
-    while worker.get_frontier().unwrap_or(0) < 9 {
+    while worker.get_frontier().unwrap_or(Timestamp::default()) < Timestamp::MAX {
         worker.step()
     }
     println!("Stream A done with frontier at {:?}", worker.get_frontier());
-    std::thread::sleep(Duration::from_secs(2));
 }
 
-fn run_stream_b(
-    client_id: String,
-    this_addr: SocketAddr,
-    others: Vec<Remote>,
-) {
+fn run_stream_b(client_id: String, this_addr: SocketAddr, others: Vec<Remote>) {
     let mut numbers_b = (10..20).into_iter();
     let stream = JetStreamEmpty.source(move |frontier| {
         if let Some(i) = numbers_b.next() {
-            frontier.advance_to(i).unwrap();
+            frontier.advance_to(Timestamp::new(i)).unwrap();
             Some(i)
         } else {
+            frontier.advance_to(Timestamp::MAX).unwrap();
             None
         }
     });
@@ -115,9 +110,8 @@ fn run_stream_b(
     let mut worker = Worker::new();
     worker.add_stream(stream);
 
-    while worker.get_frontier().unwrap_or(0) < 9 {
-        worker.step()
+    while worker.get_frontier().unwrap_or(Timestamp::default()) < Timestamp::MAX {
+        worker.step();
     }
     println!("Stream B done with frontier at {:?}", worker.get_frontier());
-    std::thread::sleep(Duration::from_secs(2));
 }

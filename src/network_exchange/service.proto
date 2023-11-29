@@ -10,7 +10,9 @@ message WrapperResponse {
   // This is just a wrapper which contains the real encoded type
   // TODO: Evaluate whether this is really a smart thing to do
   // For now it makes the build process easier
-  bytes encoded = 1;
+  uint64 frontier = 1;
+  optional bytes encoded = 2;
+  
 }
 
 // Message to subscribe to updates

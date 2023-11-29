@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::channels::selective_broadcast::{Receiver, Sender};
-use crate::frontier::FrontierHandle;
+use crate::frontier::{FrontierHandle, Timestamp};
 use crate::stream::jetstream::{Data, JetStreamBuilder, JetStreamEmpty, Nothing};
 use crate::stream::operator::StandardOperator;
 use rdkafka::message::OwnedMessage;
@@ -98,12 +98,13 @@ impl KafkaSource for JetStreamEmpty {
                   output: &mut Sender<OwnedMessage>,
                   frontier: &mut FrontierHandle| {
                 if let Some(msg) = kafka_poll(&consumer) {
+                    let offset: u64 = msg
+                        .offset()
+                        .try_into()
+                        .expect("Received negative message offset from Kafka");
+
                     // should always succeed
-                    let _ = frontier.advance_to(
-                        msg.offset()
-                            .try_into()
-                            .expect("Received negative message offset from Kafka"),
-                    );
+                    let _ = frontier.advance_to(Timestamp::new(offset));
                     output.send(msg);
                 }
             },
