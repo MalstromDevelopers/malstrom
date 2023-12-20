@@ -7,6 +7,7 @@ pub mod map;
 pub mod network_exchange;
 pub mod stream;
 pub mod worker;
+pub mod snapshot;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
