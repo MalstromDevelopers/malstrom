@@ -1,6 +1,44 @@
 use crossbeam;
 use itertools;
 
+use crate::snapshot::barrier::BarrierData;
+
+struct BarrierReceiver<T>(crossbeam::channel::Receiver<BarrierData<T>>, Option<usize>);
+
+impl<T> BarrierReceiver<T> {
+    fn new(rx: crossbeam::channel::Receiver<BarrierData<T>>) -> Self {
+        Self(rx, None)
+    }
+
+    /// Receive only data, no barriers.
+    /// If a barrier is the next element in the channel, return None
+    fn receive_data(&mut self) -> Option<BarrierData<T>> {
+        if self.1.is_some() {
+            return None;
+        }
+        match self.0.try_recv().ok() {
+            Some(BarrierData::Data(d)) => Some(BarrierData::Data(d)),
+            Some(BarrierData::Barrier(b)) => {
+                self.1 = Some(b);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn is_barred(&self) -> bool {
+        self.1.is_some()
+    }
+    /// Remove any existing barrier from this channel
+    fn take_barrier(&mut self) -> Option<BarrierData<T>> {
+        self.1.take().map(|x| BarrierData::Barrier(x))
+    }
+}
+
 /// Selective Broadcast:
 ///
 /// Selective Broadcast channels are MPMC channels, where a partitioning function is used
@@ -11,13 +49,13 @@ use itertools;
 pub fn unbounded<T>(
     partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static,
 ) -> (Sender<T>, Receiver<T>) {
-    let (tx, rx) = crossbeam::channel::unbounded::<T>();
+    let (tx, rx) = crossbeam::channel::unbounded::<BarrierData<T>>();
     (
         Sender {
             senders: vec![tx],
             partitioner: Box::new(partitioner),
         },
-        Receiver(vec![rx]),
+        Receiver(vec![BarrierReceiver::new(rx)]),
     )
 }
 
@@ -34,11 +72,11 @@ pub fn link<T>(sender: &mut Sender<T>, receiver: &mut Receiver<T>) {
 
 /// Selective Broadcast Sender
 pub struct Sender<T> {
-    senders: Vec<crossbeam::channel::Sender<T>>,
+    senders: Vec<crossbeam::channel::Sender<BarrierData<T>>>,
     partitioner: Box<dyn Fn(&T, usize) -> Vec<usize>>,
 }
 /// Selective Broadcast Receiver
-pub struct Receiver<T>(Vec<crossbeam::channel::Receiver<T>>);
+pub struct Receiver<T>(Vec<BarrierReceiver<T>>);
 
 impl<T> Sender<T>
 where
@@ -53,14 +91,15 @@ where
 
     /// Send a value into this channel. The value will be distributed to receiver
     /// as per the result of the partitioning function
-    pub fn send(&mut self, msg: T) {
+    pub fn send(&mut self, msg: BarrierData<T>) {
         if self.senders.len() == 0 {
             return;
         }
-
-        let recv_idxs = (self.partitioner)(&msg, self.senders.len());
+        let recv_idxs = match &msg {
+            BarrierData::Data(x) => (self.partitioner)(&x, self.senders.len()),
+            BarrierData::Barrier(_) => (0..self.senders.len()).into_iter().collect(),
+        };
         let recv_idxs_len = recv_idxs.len();
-
         // repeat_n will clone for every iteration except the last
         // this gives us a small optimization on the common "1 receiver" case :)
         for (idx, elem) in recv_idxs
@@ -89,10 +128,10 @@ impl<T> Sender<T> {
         Receiver(vec![rx])
     }
 
-    fn subscribe_inner(&mut self) -> crossbeam::channel::Receiver<T> {
+    fn subscribe_inner(&mut self) -> BarrierReceiver<T> {
         let (tx, rx) = crossbeam::channel::unbounded();
         self.senders.push(tx);
-        rx
+        BarrierReceiver::new(rx)
     }
 }
 
@@ -113,14 +152,27 @@ impl<T> Receiver<T> {
     }
 
     /// Receive a value. None if no value to receive or all Senders dropped.
-    pub fn recv(&self) -> Option<T> {
-        for r in self.0.iter() {
-            match r.try_recv().ok() {
+    ///
+    /// This method synchronizes barriers, i.e. if a channel is barred, it will
+    /// not receive any messages from that channel until all channels are barred.
+    /// Once all channels are barred, a single barrier will be emitted
+    pub fn recv(&mut self) -> Option<BarrierData<T>> {
+        for r in self.0.iter_mut() {
+            match r.receive_data() {
                 Some(x) => return Some(x),
                 None => continue,
             }
         }
-        None
+        // We can reach this by three possibilities
+        // 1. There are no receivers in the vec
+        // 2. There is no data
+        // 3. All channels are barred
+        if self.0.iter().all(|x| x.is_barred()) {
+            // PANIC: Unwrap is safe as we just asserted, that they are all barred
+            self.0.iter_mut().map(|x| x.take_barrier().unwrap()).next()
+        } else {
+            None
+        }
     }
 
     pub fn is_empty(&self) -> bool {

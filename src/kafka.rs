@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::frontier::{FrontierHandle, Timestamp};
-use crate::stream::jetstream::{Data, JetStreamBuilder, JetStreamEmpty, Nothing};
+use crate::snapshot::backend::{NoState, PersistenceBackend};
+use crate::stream::jetstream::{Data, JetStreamBuilder, JetStreamEmpty, NoData};
 use crate::stream::operator::StandardOperator;
 use rdkafka::message::OwnedMessage;
 use rdkafka::{
@@ -57,7 +58,7 @@ pub fn create_and_subscribe_consumer(
     consumer
 }
 
-pub trait KafkaSource {
+pub trait KafkaSource<P: PersistenceBackend> {
     fn kafka_source(
         self,
         brokers: Vec<&str>,
@@ -65,7 +66,7 @@ pub trait KafkaSource {
         group_id: &str,
         auto_offset_reset: &str,
         partitions: Option<&[i32]>,
-    ) -> JetStreamBuilder<OwnedMessage>;
+    ) -> JetStreamBuilder<OwnedMessage, P>;
 }
 
 #[instrument(skip_all)]
@@ -81,7 +82,7 @@ fn kafka_poll(consumer: &BaseConsumer) -> Option<OwnedMessage> {
     }
 }
 
-impl KafkaSource for JetStreamEmpty {
+impl<P: PersistenceBackend> KafkaSource<P> for JetStreamEmpty<P> {
     fn kafka_source(
         self,
         brokers: Vec<&str>,
@@ -89,24 +90,22 @@ impl KafkaSource for JetStreamEmpty {
         group_id: &str,
         auto_offset_reset: &str,
         partitions: Option<&[i32]>,
-    ) -> JetStreamBuilder<OwnedMessage> {
+    ) -> JetStreamBuilder<OwnedMessage, P> {
         let consumer =
             create_and_subscribe_consumer(brokers, topic, group_id, auto_offset_reset, partitions);
-
+        // technically this is a stateful operator, but since we use
+        // the frontier to store the offset, we will indicate to the
+        // Operator constructor, that no extra state is needed
         let operator = StandardOperator::new(
-            move |_input: &mut Receiver<Nothing>,
-                  output: &mut Sender<OwnedMessage>,
-                  frontier: &mut FrontierHandle| {
-                if let Some(msg) = kafka_poll(&consumer) {
-                    let offset: u64 = msg
-                        .offset()
-                        .try_into()
-                        .expect("Received negative message offset from Kafka");
-
-                    // should always succeed
-                    let _ = frontier.advance_to(Timestamp::new(offset));
-                    output.send(msg);
-                }
+            move |_input: Option<NoData>, frontier, NoState| {
+                let msg = kafka_poll(&consumer)?;
+                let offset: u64 = msg
+                    .offset()
+                    .try_into()
+                    .expect("Received negative message offset from Kafka");
+                // should always succeed
+                let _ = frontier.advance_to(Timestamp::new(offset));
+                Some(msg)
             },
         );
 

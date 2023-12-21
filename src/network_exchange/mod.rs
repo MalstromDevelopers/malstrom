@@ -154,9 +154,10 @@ where
         let config = bincode::config::standard();
 
         // Operator logic
-        let logic = move |input: &mut selective_broadcast::Receiver<T>,
-                          output: &mut selective_broadcast::Sender<T>,
-                          frontier: &mut FrontierHandle| {
+        let logic = move |input: Option<T>,
+                          frontier: &mut FrontierHandle
+                          state: 
+                          | {
             // HACK: we must reference the runtime here to keep it alive,
             // as otherwise server and client will get dropped
             let _ = runtime.enter();
