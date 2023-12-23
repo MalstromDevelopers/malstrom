@@ -1,3 +1,5 @@
+use timely::progress::frontier;
+
 use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// Operators:
 /// Lifecycle:
@@ -5,7 +7,7 @@ use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
 use crate::frontier::{Frontier, FrontierHandle, Probe, Timestamp};
-use crate::snapshot::backend::{NoState, PersistenceBackend, State};
+use crate::snapshot::backend::{NoState, PersistentState, State, NoPersistenceBackend};
 use crate::snapshot::barrier::BarrierData;
 
 use super::jetstream::Data;
@@ -14,37 +16,40 @@ use super::jetstream::Data;
 /// into a FrontieredOperator
 /// This trait exists mainly for type erasure, so that the Jetstream
 /// need not know the input type of its last operator
-pub trait AppendableOperator<O, P: PersistenceBackend> {
+pub trait AppendableOperator<O, P: PersistentState> {
     fn get_output_mut(&mut self) -> &mut Sender<O>;
 
     fn build(self: Box<Self>) -> FrontieredOperator<P>;
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<T: Data>() -> StandardOperator<T, T, NoState> {
-    StandardOperator::new(|input, frontier_handle, _| {
-        frontier_handle.advance_to(Timestamp::MAX);
-        input
+pub fn pass_through_operator<T: Data, P: PersistentState>() -> StandardOperator<T, T, P> {
+    StandardOperator::new(|input, output, frontier, _| {
+        frontier.advance_to(Timestamp::MAX);
+        if let Some(x) = input.recv()  {
+            output.send(x)
+        }
     })
 }
 
 /// A builder type to build generic operators
-pub struct StandardOperator<I, O, S> {
+pub struct StandardOperator<I, O, P: PersistentState> {
     input: Receiver<I>,
-    mapper: Box<dyn FnMut(Option<I>, &mut FrontierHandle, &mut S) -> Option<O>>,
-    output: Sender<O>,
-    // state the mapper has access to
-    state: Option<S>,
+    mapper: Box<dyn Mapper<I, O, P>>,
+    output: Sender<O>
 }
 
-impl<I, O, S> StandardOperator<I, O, S>
+pub trait Mapper<I, O, P>: FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle, &mut P) -> () + 'static {}
+impl<I, O, P, T: FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle, &mut P) -> () + 'static> Mapper<I, O, P> for T {}
+
+impl<I, O, P> StandardOperator<I, O, P>
 where
     I: Data,
     O: Data,
-    S: State,
+    P: PersistentState
 {
     pub fn new(
-        mapper: impl FnMut(Option<I>, &mut FrontierHandle, &mut S) -> Option<O> + 'static,
+        mapper: impl Mapper<I, O, P>,
     ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
@@ -52,12 +57,11 @@ where
             input,
             mapper: Box::new(mapper),
             output,
-            state: None,
         }
     }
 
     pub fn new_with_partitioning(
-        mapper: impl FnMut(Option<I>, &mut FrontierHandle, &mut S) -> Option<O> + 'static,
+        mapper: impl Mapper<I, O, P>,
         partitioner: impl Fn(&O, usize) -> Vec<usize> + 'static,
     ) -> Self {
         let input = Receiver::new_unlinked();
@@ -66,7 +70,6 @@ where
             input,
             mapper: Box::new(mapper),
             output,
-            state: None,
         }
     }
 
@@ -75,12 +78,11 @@ where
     }
 }
 
-impl<I, O, S, P> AppendableOperator<O, P> for StandardOperator<I, O, S>
+impl<I, O, P> AppendableOperator<O, P> for StandardOperator<I, O, P>
 where
     I: 'static,
     O: Data + 'static,
-    S: State,
-    P: PersistenceBackend,
+    P: PersistentState,
 {
     fn get_output_mut(&mut self) -> &mut Sender<O> {
         &mut self.output
@@ -98,44 +100,17 @@ where
 //     mapper: Box<dyn FnMut(&mut Receiver<I>, &mut Sender<O>, &mut FrontierHandle)>,
 //     output: Sender<O>,
 // }
-impl<I, O, S, P> Operator<P> for StandardOperator<I, O, S>
+impl<I, O, P> Operator<P> for StandardOperator<I, O, P>
 where
     O: Clone,
-    P: PersistenceBackend,
-    S: State,
+    P: PersistentState,
 {
     fn step(
         &mut self,
         frontier_handle: &mut FrontierHandle,
-        persistence_key: usize,
         persistence_backend: &mut P,
     ) {
-        let mut state = self.state.get_or_insert_with(|| {
-            persistence_backend
-                .load::<S>(persistence_key)
-                .unwrap_or_default()
-        });
-        match self.input.recv() {
-            Some(BarrierData::Barrier(b)) => {
-                persistence_backend.persist(
-                    persistence_key,
-                    frontier_handle.get_actual(),
-                    &state,
-                    b,
-                );
-                self.output.send(BarrierData::Barrier(b))
-            }
-            Some(BarrierData::Data(d)) => {
-                if let Some(x) = (self.mapper)(Some(d), frontier_handle, &mut state) {
-                    self.output.send(BarrierData::Data(x))
-                }
-            }
-            None => {
-                if let Some(x) = (self.mapper)(None, frontier_handle, &mut state) {
-                    self.output.send(BarrierData::Data(x))
-                }
-            }
-        }
+        (self.mapper)(&mut self.input, &mut self.output, frontier_handle, persistence_backend);
     }
 
     fn has_queued_work(&self) -> bool {
@@ -143,16 +118,16 @@ where
     }
 }
 
-pub struct FrontieredOperator<P: PersistenceBackend> {
+pub struct FrontieredOperator<P: PersistentState> {
     frontier: Frontier,
     operator: Box<dyn Operator<P>>,
 }
 
 impl<P> FrontieredOperator<P>
 where
-    P: PersistenceBackend,
+    P: PersistentState,
 {
-    fn new<I: 'static, O: Data + 'static, S: State>(operator: StandardOperator<I, O, S>) -> Self {
+    fn new<I: 'static, O: Data + 'static>(operator: StandardOperator<I, O, P>) -> Self {
         Self {
             frontier: Frontier::default(),
             operator: Box::new(operator),
@@ -165,16 +140,16 @@ where
 }
 impl<P> RuntimeFrontieredOperator<P> for FrontieredOperator<P>
 where
-    P: PersistenceBackend,
+    P: PersistentState,
 {
     fn get_probe(&self) -> Probe {
         self.frontier.get_probe()
     }
 
-    fn step(&mut self, persistence_key: usize, persistence_backend: &mut P) {
+    fn step(&mut self, persistence_backend: &mut P) {
         let mut handle = FrontierHandle::new(&mut self.frontier);
         self.operator
-            .step(&mut handle, persistence_key, persistence_backend)
+            .step(&mut handle, persistence_backend)
     }
 
     fn has_queued_work(&self) -> bool {
@@ -185,7 +160,7 @@ where
 /// The simplest trait in the world
 /// Any jetstream operator, MUST implement
 /// this trait
-pub trait Operator<P: PersistenceBackend> {
+pub trait Operator<P: PersistentState> {
     /// Calling step instructs the operator, that it should attempt to make
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its input and writes
@@ -193,7 +168,6 @@ pub trait Operator<P: PersistenceBackend> {
     fn step(
         &mut self,
         frontiers: &mut FrontierHandle,
-        persistence_key: usize,
         persistence_backend: &mut P,
     );
 
@@ -202,11 +176,11 @@ pub trait Operator<P: PersistenceBackend> {
 }
 pub trait RuntimeFrontieredOperator<P>
 where
-    P: PersistenceBackend,
+    P: PersistentState,
 {
     fn get_probe(&self) -> Probe;
 
-    fn step(&mut self, persistence_key: usize, persistence_backend: &mut P);
+    fn step(&mut self, persistence_backend: &mut P);
 
     fn has_queued_work(&self) -> bool;
 }

@@ -7,26 +7,31 @@ impl<T: Default + Clone + 'static> State for T {}
 #[derive(Default, Clone)]
 pub struct NoState;
 
-pub trait PersistenceBackend {
-    fn load_frontier(&self, state_id: usize) -> Timestamp;
-    fn load<S>(&self, state_id: usize) -> Option<S>;
-    fn persist<S>(&self, state_id: usize, frontier: Timestamp, state: &S, snapshot_epoch: usize) -> ();
+pub trait PersistenceBackend<P: PersistentState>: 'static {
+    fn get(&self, state_id: usize, snapshot_epoch: usize) -> P;
+}
+
+pub trait PersistentState: 'static {
+    fn load_frontier(&self) -> Timestamp;
+    fn load<S>(&self) -> Option<S>;
+    fn persist<S>(&self, frontier: Timestamp, state: &S, snapshot_epoch: usize) -> ();
 }
 
 /// A backend which does not persist anything
 #[derive(Default)]
 pub struct NoPersistenceBackend{}
 
-impl PersistenceBackend for NoPersistenceBackend {
-    fn load_frontier(&self, state_id: usize) -> Timestamp {
+impl PersistentState for NoPersistenceBackend {
+
+    fn load_frontier(&self) -> Timestamp {
         Timestamp::default()
     }
 
-    fn load<S>(&self, state_id: usize) -> Option<S> {
+    fn load<S>(&self) -> Option<S> {
         None
     }
 
-    fn persist<S>(&self, state_id: usize, frontier: Timestamp, state: &S, snapshot_epoch: usize) -> () {
+    fn persist<S>(&self, frontier: Timestamp, state: &S, snapshot_epoch: usize) -> () {
         ()
     }
 }

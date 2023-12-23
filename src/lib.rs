@@ -1,11 +1,12 @@
 mod channels;
 // pub mod filter;
 pub mod frontier;
-pub mod inspect;
-pub mod kafka;
+// pub mod inspect;
+// pub mod kafka;
 // pub mod map;
-pub mod network_exchange;
+// pub mod network_exchange;
 pub mod snapshot;
+pub mod source;
 pub mod stateful_map;
 pub mod stream;
 pub mod worker;

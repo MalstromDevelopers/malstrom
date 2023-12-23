@@ -1,25 +1,27 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
-use crate::snapshot::backend::{NoState, PersistenceBackend};
+use crate::snapshot::backend::{NoState, PersistentState, PersistenceBackend};
 use crate::snapshot::SnapshotController;
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
 };
-pub struct Worker<P: PersistenceBackend> {
-    operators: Vec<FrontieredOperator<P>>,
+pub struct Worker<P: PersistentState> {
+    operators: Vec<(FrontieredOperator<P>, P)>,
     probes: Vec<Probe>,
-    snapshot_controller: Box<dyn SnapshotController<P>>,
+    snapshot_controller: Box<dyn SnapshotController>,
+    persistence_backend: Box<dyn PersistenceBackend<P>>
 }
 impl<P> Worker<P>
 where
-    P: PersistenceBackend,
+    P: PersistentState,
 {
-    pub fn new(snapshot_controller: impl SnapshotController<P> + 'static) -> Worker<P> {
+    pub fn new(snapshot_controller: impl SnapshotController + 'static, persistence_backend: impl PersistenceBackend<P>) -> Worker<P> {
         Worker {
             operators: Vec::new(),
             probes: Vec::new(),
             snapshot_controller: Box::new(snapshot_controller),
+            persistence_backend: Box::new(persistence_backend)
         }
     }
 
@@ -29,7 +31,8 @@ where
                 op.add_upstream_probe(p.clone())
             }
             self.probes.push(op.get_probe());
-            self.operators.push(op);
+            let persistent_state = self.persistence_backend.get(self.operators.len());
+            self.operators.push((op, persistent_state));
         }
     }
 
@@ -38,11 +41,10 @@ where
     }
 
     pub fn step(&mut self) {
-        for (i, op) in self.operators.iter_mut().enumerate().rev() {
-            let persistence_backend = self.snapshot_controller.get_backend_mut();
-            op.step(i, persistence_backend);
+        for (op, p_state) in self.operators.iter_mut().rev() {
+            op.step(p_state);
             while op.has_queued_work() {
-                op.step(i, persistence_backend);
+                op.step(p_state);
             }
         }
         self.snapshot_controller.evaluate();
@@ -69,9 +71,11 @@ where
         partitioner: impl Fn(&Output, usize) -> Vec<usize> + 'static,
     ) -> [JetStreamBuilder<Output, P>; N] {
         let partition_op = StandardOperator::new_with_partitioning(
-            |input: Option<Output>, frontier: &mut FrontierHandle, _: &mut NoState| {
+            |input, output, frontier: &mut FrontierHandle, _| {
                 let _ = frontier.advance_to(Timestamp::MAX);
-                input
+                if let Some(x) = input.recv() {
+                    output.send(x)
+                }
             },
             partitioner,
         );

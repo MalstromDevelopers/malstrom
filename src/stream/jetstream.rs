@@ -4,7 +4,7 @@ use crate::{
     channels::selective_broadcast::{self, Sender},
     frontier::Probe,
     snapshot::{
-        backend::{NoState, PersistenceBackend, State},
+        backend::{NoState, PersistentState, State, NoPersistenceBackend},
         barrier::BarrierData,
     },
 };
@@ -23,32 +23,34 @@ impl<T: Clone + 'static> Data for T {}
 #[derive(Clone)]
 pub struct NoData;
 
-pub struct JetStreamEmpty<P: PersistenceBackend>{
-    _p: PhantomData<P>
-}
+// pub struct JetStreamEmpty<P: PersistenceBackend>{
+//     _p: PhantomData<P>
+// }
 
-impl<P> JetStreamEmpty<P>
-where P: PersistenceBackend {
-    pub fn new() -> Self {
-        Self {_p: PhantomData}
-    }
-    /// Add a datasource to a stream which has no data in it
-    pub fn source<O: Data>(
-        self,
-        mut source_func: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,
-    ) -> JetStreamBuilder<O, P> {
-        let operator =
-            StandardOperator::<NoData, O, NoState>::new(move |input, frontier_handle, _| {
-                source_func(frontier_handle)
-            });
-        JetStreamBuilder {
-            operators: Vec::new(),
-            tail: Box::new(operator),
-        }
-    }
-}
+// impl<P> JetStreamEmpty<P>
+// where P: PersistenceBackend {
+//     pub fn new() -> Self {
+//         Self {_p: PhantomData}
+//     }
+//     /// Add a datasource to a stream which has no data in it
+//     pub fn source<O: Data>(
+//         self,
+//         mut source_func: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,
+//     ) -> JetStreamBuilder<O, P> {
+//         let operator =
+//             StandardOperator::<NoData, O, NoPersistenceBackend>::new(move |input, output, frontier_handle, _| {
+//                 if let Some(x) = source_func(frontier_handle) {
+//                     output.send(x)
+//                 }
+//             });
+//         JetStreamBuilder {
+//             operators: Vec::new(),
+//             tail: Box::new(operator),
+//         }
+//     }
+// }
 
-pub struct JetStreamBuilder<Output, P: PersistenceBackend> {
+pub struct JetStreamBuilder<Output, P: PersistentState> {
     operators: Vec<FrontieredOperator<P>>,
     // these are probes for every operator in operators
     tail: Box<dyn AppendableOperator<Output, P>>,
@@ -56,10 +58,10 @@ pub struct JetStreamBuilder<Output, P: PersistenceBackend> {
 
 impl<P> JetStreamBuilder<Output, P>
 where
-    P: PersistenceBackend,
+    P: PersistentState + 'static,
 {
-    pub fn from_operator<I: 'static, O: Data + 'static, S: State>(
-        operator: StandardOperator<I, O, S>,
+    pub fn from_operator<I: 'static, O: Data + 'static>(
+        operator: StandardOperator<I, O, P>,
     ) -> JetStreamBuilder<O, P> {
         JetStreamBuilder {
             operators: Vec::new(),
@@ -71,7 +73,7 @@ where
 impl<O, P> JetStreamBuilder<O, P>
 where
     O: Data,
-    P: PersistenceBackend,
+    P: PersistentState,
 {
     // pub fn tail(&self) -> &FrontieredOperator<O> {
     //     // we can unwrap here, since this impl block is bound by
@@ -93,9 +95,9 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<O2: Data + 'static, S: State>(
+    pub fn then<O2: Data + 'static,>(
         mut self,
-        mut operator: StandardOperator<O, O2, S>,
+        mut operator: StandardOperator<O, O2, P>,
     ) -> JetStreamBuilder<O2, P> {
         // let (tx, rx) = selective_broadcast::<O>();
         selective_broadcast::link(self.tail.get_output_mut(), operator.get_input_mut());
@@ -118,13 +120,13 @@ where
     }
 }
 
-pub struct JetStream<P: PersistenceBackend> {
+pub struct JetStream<P: PersistentState> {
     operators: Vec<FrontieredOperator<P>>,
 }
 
 impl<P> JetStream<P>
 where
-    P: PersistenceBackend,
+    P: PersistentState,
 {
     pub fn into_operators(self) -> Vec<FrontieredOperator<P>> {
         self.operators

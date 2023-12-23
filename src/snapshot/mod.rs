@@ -3,48 +3,24 @@ use crate::{
     stream::jetstream::NoData,
 };
 
-use self::backend::{PersistenceBackend, NoPersistenceBackend};
+use self::backend::{PersistentState, NoPersistenceBackend};
 pub mod backend;
 pub mod barrier;
 
-pub trait SnapshotController<P: PersistenceBackend> {
+pub trait SnapshotController {
     /// this method is called by the worker to schedule the snapshot controller
     fn evaluate(&self) -> ();
 
-    fn get_backend_mut(&mut self) -> &mut P;
+    /// get the number of the latest usable snapshot
+    fn get_latest(&self) -> usize;
 }
-pub struct SnapshotControllerBuilder<T, P> {
-    roots: Sender<NoData>,
-    leafs: Vec<Receiver<T>>,
-    worker_id: usize,
-    backend: P,
-}
-
-impl<T, P> SnapshotController<P> for SnapshotControllerBuilder<T, P>
-where
-    P: PersistenceBackend,
-{
-    fn evaluate(&self) {
-        todo!()
-    }
-
-    /// Get the persistent backend backing snapshots
-    fn get_backend_mut(&mut self) -> &mut P {
-        &mut self.backend
-    }
-}
-
 /// A Snapshot controller that never snapshots
 #[derive(Default)]
-pub struct NoSnapshotController(NoPersistenceBackend);
+pub struct NoSnapshotController;
 
-impl SnapshotController<NoPersistenceBackend> for NoSnapshotController {
+impl SnapshotController for NoSnapshotController {
     fn evaluate(&self) -> () {
         ()
-    }
-
-    fn get_backend_mut(&mut self) -> &mut NoPersistenceBackend {
-        &mut self.0
     }
 }
     
