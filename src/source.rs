@@ -34,6 +34,7 @@ where
                         let (time, loaded_state) = l.load(operator_id);
                         frontier.advance_to(time);
                         state = Some(loaded_state);
+                        output.send(BarrierData::Load(l))
                     }
                     Some(BarrierData::Barrier(mut b)) => {
                         if let Some(st) = state.as_ref() {
