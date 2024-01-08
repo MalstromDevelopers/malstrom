@@ -1,17 +1,7 @@
-use std::{process::Output, marker::PhantomData};
-
 use crate::{
     channels::selective_broadcast::{self, Sender},
-    frontier::Probe,
-    snapshot::{
-        backend::{NoState, PersistentState, State, NoPersistenceBackend},
-        barrier::BarrierData,
-    },
+    snapshot::PersistenceBackend,
 };
-use rand;
-
-use crate::frontier::FrontierHandle;
-
 use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
@@ -50,17 +40,18 @@ pub struct NoData;
 //     }
 // }
 
-pub struct JetStreamBuilder<Output, P: PersistentState> {
+pub struct JetStreamBuilder<O, P> {
     operators: Vec<FrontieredOperator<P>>,
     // these are probes for every operator in operators
-    tail: Box<dyn AppendableOperator<Output, P>>,
+    tail: Box<dyn AppendableOperator<O, P>>,
 }
 
-impl<P> JetStreamBuilder<Output, P>
+impl<P, O> JetStreamBuilder<O, P>
 where
-    P: PersistentState + 'static,
+    O: Data + 'static,
+    P: PersistenceBackend + 'static,
 {
-    pub fn from_operator<I: 'static, O: Data + 'static>(
+    pub fn from_operator<I: 'static,>(
         operator: StandardOperator<I, O, P>,
     ) -> JetStreamBuilder<O, P> {
         JetStreamBuilder {
@@ -73,7 +64,7 @@ where
 impl<O, P> JetStreamBuilder<O, P>
 where
     O: Data,
-    P: PersistentState,
+    P: PersistenceBackend,
 {
     // pub fn tail(&self) -> &FrontieredOperator<O> {
     //     // we can unwrap here, since this impl block is bound by
@@ -89,7 +80,7 @@ where
     //     &mut self.tail.unwrap()
     // }
 
-    pub fn get_output_mut(&mut self) -> &mut Sender<O> {
+    pub fn get_output_mut(&mut self) -> &mut Sender<O, P> {
         self.tail.get_output_mut()
     }
 
@@ -120,13 +111,13 @@ where
     }
 }
 
-pub struct JetStream<P: PersistentState> {
+pub struct JetStream<P: PersistenceBackend> {
     operators: Vec<FrontieredOperator<P>>,
 }
 
 impl<P> JetStream<P>
 where
-    P: PersistentState,
+    P: PersistenceBackend,
 {
     pub fn into_operators(self) -> Vec<FrontieredOperator<P>> {
         self.operators

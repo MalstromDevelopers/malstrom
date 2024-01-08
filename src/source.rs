@@ -1,17 +1,14 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     frontier::FrontierHandle,
-    snapshot::{
-        backend::{PersistentState, State},
-        barrier::BarrierData,
-    },
+    snapshot::{barrier::BarrierData, PersistenceBackend},
     stream::{
         jetstream::{Data, JetStreamBuilder, NoData},
         operator::StandardOperator,
     },
 };
 
-pub trait StatefulSource<O: Data, P: PersistentState, S: State> {
+pub trait StatefulSource<O: Data, P: PersistenceBackend, S> {
     fn stateful_source(
         source_fn: impl FnMut(&mut FrontierHandle, &mut S) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P>;
@@ -20,27 +17,35 @@ pub trait StatefulSource<O: Data, P: PersistentState, S: State> {
 impl<O, P, S> StatefulSource<O, P, S> for JetStreamBuilder<NoData, P>
 where
     O: Data,
-    P: PersistentState,
-    S: State,
+    P: PersistenceBackend,
+    S: 'static
 {
     fn stateful_source(
         mut source_fn: impl FnMut(&mut FrontierHandle, &mut S) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
         let operator = StandardOperator::new(
-            move |input: &mut Receiver<NoData>,
-                  output: &mut Sender<O>,
+            move |input: &mut Receiver<NoData, P>,
+                  output: &mut Sender<O, P>,
                   frontier: &mut FrontierHandle,
-                  p_state: &mut P| {
-                let st = state.get_or_insert_with(|| p_state.load().unwrap_or_default());
+                  operator_id: usize| {
                 match input.recv() {
-                    Some(BarrierData::Barrier(b)) => {
-                        p_state.persist(frontier.get_actual(), st, b);
+                    Some(BarrierData::Load(l)) => {
+                        let (time, loaded_state) = l.load(operator_id);
+                        frontier.advance_to(time);
+                        state = Some(loaded_state);
+                    }
+                    Some(BarrierData::Barrier(mut b)) => {
+                        if let Some(st) = state.as_ref() {
+                            b.persist(frontier.get_actual(), st, operator_id)
+                        }
                         output.send(BarrierData::Barrier(b))
                     }
                     _ => {
-                        if let Some(x) = source_fn(frontier, st) {
-                            output.send(BarrierData::Data(x))
+                        if let Some(st) = state.as_mut() {
+                            if let Some(x) = source_fn(frontier, st) {
+                                output.send(BarrierData::Data(x))
+                            }
                         }
                     }
                 }
@@ -50,7 +55,7 @@ where
     }
 }
 
-pub trait PollSource<O: Data, P: PersistentState> {
+pub trait PollSource<O: Data, P: PersistenceBackend> {
     fn poll_source(
         source_fn: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P>;
@@ -59,7 +64,7 @@ pub trait PollSource<O: Data, P: PersistentState> {
 impl<O, P> PollSource<O, P> for JetStreamBuilder<NoData, P>
 where
     O: Data,
-    P: PersistentState,
+    P: PersistenceBackend,
 {
     fn poll_source(
         mut source_fn: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,

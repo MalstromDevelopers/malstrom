@@ -1,29 +1,25 @@
-mod api {
-    tonic::include_proto!("jetstream.network_exchange");
-}
-
-use crate::frontier::Timestamp;
+/// Implementation of the GRPC layer for the simple network exchange
 use anyhow::Context;
-use api::network_exchange_server::NetworkExchange;
-use api::{SubscribeRequest, WrapperResponse};
+use super::Remote;
+use super::api::exchange_message::ExchangeContent;
+use super::api::network_exchange_server::NetworkExchange;
+use super::api::{SubscribeRequest, ExchangeMessage};
 use flume::{Receiver, Sender};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
-// based off https://github.com/hyperium/tonic/blob/master/examples/src/streaming/server.rs
 
-type Message = (Timestamp, Option<Vec<u8>>);
 
 pub struct ExchangeServer {
-    server_task: JoinHandle<()>,
-    send_queues: Vec<Sender<Message>>,
+    send_queues: Vec<Sender<ExchangeContent>>,
     shutdown_tx: Sender<()>,
+    _server_task: JoinHandle<()>,
 }
 
 impl ExchangeServer {
@@ -39,13 +35,13 @@ impl ExchangeServer {
         rt: &Handle,
         addr: SocketAddr,
         queue_size: usize,
-        remote_names: &[String],
+        remotes: &[Remote],
     ) -> Self {
-        let mut send_queues_rx = HashMap::with_capacity(remote_names.len());
-        let mut send_queues = Vec::with_capacity(remote_names.len());
+        let mut send_queues_rx = HashMap::with_capacity(remotes.len());
+        let mut send_queues = Vec::with_capacity(remotes.len());
 
-        for name in remote_names.iter() {
-            let (tx, rx) = flume::bounded::<Message>(queue_size);
+        for name in remotes.iter().map(|x| x.name.clone()) {
+            let (tx, rx) = flume::bounded::<ExchangeContent>(queue_size);
             send_queues_rx.insert(name.clone(), rx);
             send_queues.push(tx);
         }
@@ -59,7 +55,7 @@ impl ExchangeServer {
         let server_task = rt.spawn(async move {
             println!("Starting Server future");
             Server::builder()
-                .add_service(api::network_exchange_server::NetworkExchangeServer::new(
+                .add_service(super::api::network_exchange_server::NetworkExchangeServer::new(
                     inner_server,
                 ))
                 .serve_with_shutdown(addr, async { shutdown_rx.recv_async().await.unwrap() })
@@ -69,9 +65,9 @@ impl ExchangeServer {
         });
 
         Self {
-            server_task,
             send_queues,
             shutdown_tx,
+            _server_task: server_task,
         }
     }
 
@@ -83,17 +79,17 @@ impl ExchangeServer {
     ///
     /// # Panics
     /// If the internal server has crashed
-    pub fn send(&self, msg: Message, idx: usize) -> Option<()> {
-        assert!(!self.server_task.is_finished());
-
-        // TODO: panics if self.send_queues.len() == 0
-        // SAFETY: We can unwrap, because we wrapped the index
+    pub fn send(&self, msg: ExchangeContent, idx: usize) -> Option<()> {
+        // asserting here as otherwise you can get really unintuitive errors
+        // trying to send into the queue
+        assert!(!self._server_task.is_finished());
         self.send_queues
             .get(idx)?
             .send(msg)
             .expect("GRPC Server terminated");
         Some(())
     }
+
 }
 
 impl Drop for ExchangeServer {
@@ -118,13 +114,13 @@ impl Drop for ExchangeServer {
     }
 }
 
-pub struct InnerExchangeServer<T> {
-    send_queues: HashMap<String, Receiver<T>>,
+pub struct InnerExchangeServer {
+    send_queues: HashMap<String, Receiver<ExchangeContent>>,
 }
 
 #[tonic::async_trait]
-impl NetworkExchange for InnerExchangeServer<(Timestamp, Option<Vec<u8>>)> {
-    type SimpleExchangeStream = Pin<Box<dyn Stream<Item = Result<WrapperResponse, Status>> + Send>>;
+impl NetworkExchange for InnerExchangeServer {
+    type SimpleExchangeStream = Pin<Box<dyn Stream<Item = Result<ExchangeMessage, Status>> + Send>>;
 
     async fn simple_exchange(
         &self,
@@ -143,17 +139,12 @@ impl NetworkExchange for InnerExchangeServer<(Timestamp, Option<Vec<u8>>)> {
         }
         let recv = borrowed_recv.to_owned();
 
-        let (tx, rx_sync) = flume::bounded::<Result<WrapperResponse, Status>>(1);
+        let (tx, rx_sync) = flume::bounded::<Result<ExchangeMessage, Status>>(1);
         let rx = rx_sync.into_stream();
         tokio::spawn(async move {
             // let mut application_stream = recv.re();
             while let Ok(item) = recv.recv_async().await {
-                let msg = Ok(WrapperResponse {
-                    frontier: item.0.into(),
-                    encoded: item.1,
-                });
-
-                match tx.send_async(msg).await {
+                match tx.send_async(Ok(ExchangeMessage { exchange_content: Some(item) })).await {
                     Ok(_) => {
                         // item (server response) was queued to be send to client
                     }
@@ -170,12 +161,12 @@ impl NetworkExchange for InnerExchangeServer<(Timestamp, Option<Vec<u8>>)> {
     }
 }
 
-use api::network_exchange_client::NetworkExchangeClient;
+use super::api::network_exchange_client::NetworkExchangeClient;
 use tonic::transport::Uri;
 
 pub struct ExchangeClient {
-    recv_queue_rx: Receiver<Message>,
-    client_task: tokio::task::JoinHandle<()>,
+    recv_queue_rx: Receiver<ExchangeContent>,
+    _client_task: tokio::task::JoinHandle<()>,
 }
 
 impl ExchangeClient {
@@ -188,7 +179,7 @@ impl ExchangeClient {
         queue_size: usize,
         client_id: String,
     ) -> Self {
-        let (recv_queue_tx, recv_queue_rx) = flume::bounded::<Message>(queue_size);
+        let (recv_queue_tx, recv_queue_rx) = flume::bounded::<ExchangeContent>(queue_size);
 
         // try connecting to a remote endpoint
         let mut maybe_client = None;
@@ -214,7 +205,7 @@ impl ExchangeClient {
         }
         let mut client = maybe_client.expect("Could not establish connection");
         // start receiving updates
-        let client_task = rt.spawn(async move {
+        let _client_task = rt.spawn(async move {
             // TODO: Reconnection logic
             let mut stream = client
                 .simple_exchange(SubscribeRequest {
@@ -225,24 +216,26 @@ impl ExchangeClient {
                 .unwrap()
                 .into_inner();
             while let Some(msg) = stream.next().await {
-                match msg {
-                    Ok(m) => recv_queue_tx
-                        .send_async((Timestamp::new(m.frontier), m.encoded))
+                match msg.map(|x| x.exchange_content) {
+                    Ok(Some(m)) => 
+                    recv_queue_tx
+                        .send_async(m)
                         .await
                         .unwrap(),
-                    Err(e) => panic!("Unimplemented client excepion: {}", e),
+                    Ok(None) => (),
+                    Err(e) => panic!("Unhandled client exception: {}", e),
                 }
             }
         });
 
         ExchangeClient {
             recv_queue_rx,
-            client_task,
+            _client_task,
         }
     }
 
     /// Retrieve all messages received since last calling this method
-    pub fn recv_all(&self) -> impl Iterator<Item = Message> + '_ {
+    pub fn recv_all(&self) -> impl Iterator<Item=ExchangeContent> + '_ {
         self.recv_queue_rx.drain()
     }
 }

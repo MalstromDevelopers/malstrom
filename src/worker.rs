@@ -1,27 +1,25 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
-use crate::snapshot::backend::{NoState, PersistentState, PersistenceBackend};
-use crate::snapshot::SnapshotController;
+use crate::snapshot::{SnapshotController, PersistenceBackend};
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
 };
-pub struct Worker<P: PersistentState> {
-    operators: Vec<(FrontieredOperator<P>, P)>,
+pub struct Worker<P, S> {
+    operators: Vec<FrontieredOperator<P>>,
     probes: Vec<Probe>,
-    snapshot_controller: Box<dyn SnapshotController>,
-    persistence_backend: Box<dyn PersistenceBackend<P>>
+    snapshot_controller: S,
 }
-impl<P> Worker<P>
+impl<P, S> Worker<P, S>
 where
-    P: PersistentState,
+    P: PersistenceBackend,
+    S: SnapshotController<P> + 'static
 {
-    pub fn new(snapshot_controller: impl SnapshotController + 'static, persistence_backend: impl PersistenceBackend<P>) -> Worker<P> {
+    pub fn new(snapshot_controller: S) -> Worker<P, S> {
         Worker {
             operators: Vec::new(),
             probes: Vec::new(),
-            snapshot_controller: Box::new(snapshot_controller),
-            persistence_backend: Box::new(persistence_backend)
+            snapshot_controller: snapshot_controller,
         }
     }
 
@@ -31,8 +29,7 @@ where
                 op.add_upstream_probe(p.clone())
             }
             self.probes.push(op.get_probe());
-            let persistent_state = self.persistence_backend.get(self.operators.len());
-            self.operators.push((op, persistent_state));
+            self.operators.push(op);
         }
     }
 
@@ -41,19 +38,25 @@ where
     }
 
     pub fn step(&mut self) {
-        for (op, p_state) in self.operators.iter_mut().rev() {
-            op.step(p_state);
+        for (i, op) in self.operators.iter_mut().enumerate().rev() {
+            op.step(i);
             while op.has_queued_work() {
-                op.step(p_state);
+                op.step(i);
             }
         }
         self.snapshot_controller.evaluate();
     }
 
+    pub fn restore_state(&mut self) {
+        // instruct operators to restore state
+        // on next schedule
+        self.snapshot_controller.load_state();
+    }
+
     /// Unions N streams with identical output types into a single stream
-    pub fn union_n<const N: usize, Output: Data>(
+    pub fn union<Output: Data>(
         &mut self,
-        streams: [JetStreamBuilder<Output, P>; N],
+        streams: Vec<JetStreamBuilder<Output, P>>,
     ) -> JetStreamBuilder<Output, P> {
         // this is the operator which reveives the union stream
         let mut unioned = pass_through_operator();

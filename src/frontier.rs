@@ -1,6 +1,4 @@
-use bincode::{Decode, Encode};
 use thiserror::Error;
-
 use crate::channels::watch;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -57,17 +55,10 @@ impl Frontier {
         self.actual.read()
     }
 
-    pub fn advance_to(&mut self, desired: Timestamp) -> Result<(), FrontierError> {
-        match desired < self.actual.read() {
-            true => Err(FrontierError::DesiredLessThanActual),
-            false => {
-                self.desired = desired;
-                self.update();
-                Ok(())
-            }
-        }
+    pub fn advance_to(&mut self, desired: Timestamp) -> () {
+        self.desired = desired;
+        self.update();
     }
-
     fn update(&mut self) {
         match self.upstreams.iter().map(|x| x.read()).min() {
             Some(m) => self.actual.write(m.min(self.desired)),
@@ -101,24 +92,10 @@ impl<'g> FrontierHandle<'g> {
         FrontierHandle { frontier }
     }
 
-    pub fn advance_to(&mut self, desired: Timestamp) -> Result<(), FrontierError> {
+    pub fn advance_to(&mut self, desired: Timestamp) -> () {
         self.frontier.advance_to(desired)
     }
     pub fn get_actual(&self) -> Timestamp {
         self.frontier.get_actual()
-    }
-
-    /// Get the minimum frontier of the upstream operators
-    /// This is essentially the same as asking "What is the oldest
-    /// message I still need to be able to handle"
-    ///
-    /// If there are no upstreams, this will be Timestamp::MAX
-    pub fn get_upstream_actual(&self) -> Timestamp {
-        self.frontier
-            .upstreams
-            .iter()
-            .map(|x| x.read())
-            .min()
-            .unwrap_or(Timestamp::MAX)
     }
 }

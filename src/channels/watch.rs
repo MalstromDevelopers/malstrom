@@ -113,6 +113,7 @@ mod tests {
         assert_eq!(rx_2.read(), 1);
     }
 
+    #[test]
     fn test_subscribe() {
         let (tx, _) = channel(0);
         let rx = tx.subscribe();

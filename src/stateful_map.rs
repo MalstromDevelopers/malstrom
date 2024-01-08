@@ -1,14 +1,16 @@
+use bincode::Encode;
+
 use crate::{
     frontier::FrontierHandle,
-    snapshot::{backend::{PersistentState, State}, barrier::BarrierData},
+    snapshot::{PersistenceBackend, barrier::BarrierData},
     stream::{
         jetstream::{Data, JetStreamBuilder},
         operator::StandardOperator,
-    },
+    }, channels::selective_broadcast::Receiver,
 };
 
-pub trait StatefulMap<I, P: PersistentState> {
-    fn stateful_map<O: Data, S: State + 'static>(
+pub trait StatefulMap<I, P: PersistenceBackend> {
+    fn stateful_map<O: Data, S: 'static>(
         self,
         mapper: impl FnMut(I, &mut FrontierHandle, &mut S) -> O + 'static,
     ) -> JetStreamBuilder<O, P>;
@@ -17,23 +19,31 @@ pub trait StatefulMap<I, P: PersistentState> {
 impl<I, P> StatefulMap<I, P> for JetStreamBuilder<I, P>
 where
     I: Data,
-    P: PersistentState,
+    P: PersistenceBackend,
 {
-    fn stateful_map<O: Data, S: State>(
+    fn stateful_map<O: Data, S: 'static>(
         self,
         mut mapper: impl FnMut(I, &mut FrontierHandle, &mut S) -> O + 'static,
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
-        let operator = StandardOperator::new(move |input, output, frontier, persistence_backend: &mut P| {
-            let st = state.get_or_insert_with(|| persistence_backend.load().unwrap_or_default());
+        let operator = StandardOperator::new(move |input: &mut Receiver<I, P>, output, frontier, operator_id: usize| {
             match input.recv() {
-                Some(BarrierData::Barrier(b)) => {
-                    persistence_backend.persist(frontier.get_actual(), st, b);
+                Some(BarrierData::Load(l)) => {
+                    let (time, loaded_state) = l.load(operator_id);
+                    frontier.advance_to(time);
+                    state = Some(loaded_state);
+                }
+                Some(BarrierData::Barrier(mut b)) => {
+                    if let Some(st) = state.as_ref() {
+                        b.persist(frontier.get_actual(), &st, operator_id);
+                    }
                     output.send(BarrierData::Barrier(b));
                 },
                 Some(BarrierData::Data(d)) => {
-                    let result = mapper(d, frontier, st);
-                    output.send(BarrierData::Data(result));
+                    if let Some(st) = state.as_mut() {
+                        let result = mapper(d, frontier, st);
+                        output.send(BarrierData::Data(result));
+                    }
                 },
                 None => (),
             }
