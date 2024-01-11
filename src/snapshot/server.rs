@@ -1,3 +1,4 @@
+use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 
 use nng::options::protocol::reqrep;
@@ -9,7 +10,7 @@ use tokio::sync::{watch, RwLock};
 use tracing::info;
 
 use self::api::snapshot_server::Snapshot;
-use self::api::snapshot_client::SnapshotClient;
+use self::api::snapshot_client::SnapshotClient as GrpcClient;
 use self::api::*;
 
 /// Receiving end of snapshot communication
@@ -27,8 +28,6 @@ enum ComsMessage {
 struct SnapshotServer {
     output_tx: flume::Sender<ComsMessage>,
 }
-
-impl 
 
 #[tonic::async_trait]
 impl Snapshot for SnapshotServer {
@@ -70,4 +69,43 @@ impl Snapshot for SnapshotServer {
             .map_err(|_| Status::internal("Internal communication error"))?;
         Ok(Response::new(CommitSnapshotResponse {}))
     }
+}
+
+enum ClientOp {
+    Load(u64),
+    Snap(u64),
+    Commit(String, u64)
+}
+
+struct SnapshotClient { 
+    _rt: Handle,
+    grpc_client: GrpcClient<tonic::transport::Channel>,
+    com: flume::Sender<ClientOp>
+}
+
+impl SnapshotClient {
+
+    pub fn new_start() -> Self {
+        todo!()
+    }
+    
+    /// Instruct all members of the cluster to load this epoch
+    fn load_snapshot(&self, snapshot_epoch: u64, remotes: &[Uri]) -> () {
+
+        for r in remotes.iter() {
+            let result: Result<(), _> = self._rt.block_on(async {
+                let client = GrpcClient::connect(r.clone()).await?;
+                client.load_snapshot(LoadSnapshotRequest{snapshot_epoch}).await?;
+                Ok(())
+            });
+        }
+
+    }
+
+    /// Instruct all members of the cluster to start a snapshot
+    fn start_snapshot(&self, snapshot_epoch: u64) -> () {}
+
+    /// Commit a snapshot to the leader
+    fn commit_snapshot(&self, name: &str, snapshot_epoch: u64) -> () {}
+
 }
