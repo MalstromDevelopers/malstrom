@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::channels::watch;
+use thiserror::Error;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct Timestamp(u64);

@@ -18,7 +18,7 @@ impl<O, P, S> StatefulSource<O, P, S> for JetStreamBuilder<NoData, P>
 where
     O: Data,
     P: PersistenceBackend,
-    S: 'static
+    S: Default + 'static,
 {
     fn stateful_source(
         mut source_fn: impl FnMut(&mut FrontierHandle, &mut S) -> Option<O> + 'static,
@@ -31,7 +31,7 @@ where
                   operator_id: usize| {
                 match input.recv() {
                     Some(BarrierData::Load(l)) => {
-                        let (time, loaded_state) = l.load(operator_id);
+                        let (time, loaded_state) = l.load(operator_id).unwrap_or_default();
                         frontier.advance_to(time);
                         state = Some(loaded_state);
                         output.send(BarrierData::Load(l))

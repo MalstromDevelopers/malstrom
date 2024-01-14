@@ -1,8 +1,8 @@
+use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 use crate::{
     channels::selective_broadcast::{self, Sender},
     snapshot::PersistenceBackend,
 };
-use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
@@ -51,7 +51,7 @@ where
     O: Data + 'static,
     P: PersistenceBackend + 'static,
 {
-    pub fn from_operator<I: 'static,>(
+    pub fn from_operator<I: 'static>(
         operator: StandardOperator<I, O, P>,
     ) -> JetStreamBuilder<O, P> {
         JetStreamBuilder {
@@ -86,7 +86,7 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<O2: Data + 'static,>(
+    pub fn then<O2: Data + 'static>(
         mut self,
         mut operator: StandardOperator<O, O2, P>,
     ) -> JetStreamBuilder<O2, P> {

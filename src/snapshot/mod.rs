@@ -1,14 +1,18 @@
 pub mod barrier;
-pub mod configmap;
+pub mod controller;
 mod server;
-use crate::{frontier::Timestamp, channels::selective_broadcast::{Sender, Receiver}, stream::jetstream::NoData};
+use crate::{
+    channels::selective_broadcast::{Receiver, Sender},
+    frontier::Timestamp,
+    stream::jetstream::NoData,
+};
 
 pub trait SnapshotController<P: PersistenceBackend> {
     fn setup(&mut self, roots: Vec<Sender<NoData, P>>, leafs: Vec<Receiver<NoData, P>>) -> ();
 
     /// this method is called by the worker to schedule the snapshot controller
     fn evaluate(&mut self) -> ();
-    
+
     /// if this method is called the SnapshotController should send
     /// a load state instruction along the dataflow channels
     fn load_state(&mut self) -> ();
@@ -17,10 +21,12 @@ pub trait SnapshotController<P: PersistenceBackend> {
 #[derive(Default)]
 pub struct NoSnapshotController;
 
-impl<P> SnapshotController<P> for NoSnapshotController where P: PersistenceBackend{
-
+impl<P> SnapshotController<P> for NoSnapshotController
+where
+    P: PersistenceBackend,
+{
     fn setup(&mut self, _roots: Vec<Sender<NoData, P>>, _leafs: Vec<Receiver<NoData, P>>) -> () {
-       () 
+        ()
     }
 
     fn evaluate(&mut self) -> () {
@@ -32,6 +38,9 @@ impl<P> SnapshotController<P> for NoSnapshotController where P: PersistenceBacke
     }
 }
 pub trait PersistenceBackend: Clone + 'static {
-    fn load<S>(&self, operator_id: usize) -> (Timestamp, S);
+    fn new_latest() -> Self;
+    fn new_for_epoch(snapshot_epoch: &u64) -> Self;
+    fn get_epoch(&self) -> u64;
+    fn load<S>(&self, operator_id: usize) -> Option<(Timestamp, S)>;
     fn persist<S>(&mut self, frontier: Timestamp, state: &S, operator_id: usize) -> ();
 }

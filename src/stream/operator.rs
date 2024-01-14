@@ -23,7 +23,7 @@ pub trait AppendableOperator<O, P: PersistenceBackend> {
 pub fn pass_through_operator<T: Data, P: PersistenceBackend>() -> StandardOperator<T, T, P> {
     StandardOperator::new(|input, output, frontier, _| {
         frontier.advance_to(Timestamp::MAX);
-        if let Some(x) = input.recv()  {
+        if let Some(x) = input.recv() {
             output.send(x)
         }
     })
@@ -33,21 +33,29 @@ pub fn pass_through_operator<T: Data, P: PersistenceBackend>() -> StandardOperat
 pub struct StandardOperator<I, O, P: PersistenceBackend> {
     input: Receiver<I, P>,
     mapper: Box<dyn Mapper<I, O, P>>,
-    output: Sender<O, P>
+    output: Sender<O, P>,
 }
 
-pub trait Mapper<I, O, P>: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static {}
-impl<I, O, P, T: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static> Mapper<I, O, P> for T {}
+pub trait Mapper<I, O, P>:
+    FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static
+{
+}
+impl<
+        I,
+        O,
+        P,
+        T: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static,
+    > Mapper<I, O, P> for T
+{
+}
 
 impl<I, O, P> StandardOperator<I, O, P>
 where
     I: Data,
     O: Data,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
-    pub fn new(
-        mapper: impl Mapper<I, O, P>,
-    ) -> Self {
+    pub fn new(mapper: impl Mapper<I, O, P>) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
         Self {
@@ -102,12 +110,13 @@ where
     O: Clone,
     P: PersistenceBackend,
 {
-    fn step(
-        &mut self,
-        frontier_handle: &mut FrontierHandle,
-        operator_id: usize,
-    ) {
-        (self.mapper)(&mut self.input, &mut self.output, frontier_handle, operator_id);
+    fn step(&mut self, frontier_handle: &mut FrontierHandle, operator_id: usize) {
+        (self.mapper)(
+            &mut self.input,
+            &mut self.output,
+            frontier_handle,
+            operator_id,
+        );
     }
 
     fn has_queued_work(&self) -> bool {
@@ -145,8 +154,7 @@ where
 
     fn step(&mut self, operator_id: usize) {
         let mut handle = FrontierHandle::new(&mut self.frontier);
-        self.operator
-            .step(&mut handle, operator_id)
+        self.operator.step(&mut handle, operator_id)
     }
 
     fn has_queued_work(&self) -> bool {
@@ -162,11 +170,7 @@ pub trait Operator<P: PersistenceBackend> {
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its input and writes
     /// to its output
-    fn step(
-        &mut self,
-        frontiers: &mut FrontierHandle,
-        operator_id: usize,
-    );
+    fn step(&mut self, frontiers: &mut FrontierHandle, operator_id: usize);
 
     /// still not happy with this function name
     fn has_queued_work(&self) -> bool;

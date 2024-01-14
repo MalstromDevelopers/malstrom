@@ -1,16 +1,17 @@
 use bincode::Encode;
 
 use crate::{
+    channels::selective_broadcast::Receiver,
     frontier::FrontierHandle,
-    snapshot::{PersistenceBackend, barrier::BarrierData},
+    snapshot::{barrier::BarrierData, PersistenceBackend},
     stream::{
         jetstream::{Data, JetStreamBuilder},
         operator::StandardOperator,
-    }, channels::selective_broadcast::Receiver,
+    },
 };
 
 pub trait StatefulMap<I, P: PersistenceBackend> {
-    fn stateful_map<O: Data, S: 'static>(
+    fn stateful_map<O: Data, S: Default + 'static>(
         self,
         mapper: impl FnMut(I, &mut FrontierHandle, &mut S) -> O + 'static,
     ) -> JetStreamBuilder<O, P>;
@@ -21,15 +22,17 @@ where
     I: Data,
     P: PersistenceBackend,
 {
-    fn stateful_map<O: Data, S: 'static>(
+    fn stateful_map<O: Data, S: Default + 'static>(
         self,
         mut mapper: impl FnMut(I, &mut FrontierHandle, &mut S) -> O + 'static,
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
-        let operator = StandardOperator::new(move |input: &mut Receiver<I, P>, output, frontier, operator_id: usize| {
-            match input.recv() {
+        let operator = StandardOperator::new(
+            move |input: &mut Receiver<I, P>, output, frontier, operator_id: usize| match input
+                .recv()
+            {
                 Some(BarrierData::Load(l)) => {
-                    let (time, loaded_state) = l.load(operator_id);
+                    let (time, loaded_state) = l.load(operator_id).unwrap_or_default();
                     frontier.advance_to(time);
                     state = Some(loaded_state);
                 }
@@ -38,16 +41,16 @@ where
                         b.persist(frontier.get_actual(), &st, operator_id);
                     }
                     output.send(BarrierData::Barrier(b));
-                },
+                }
                 Some(BarrierData::Data(d)) => {
                     if let Some(st) = state.as_mut() {
                         let result = mapper(d, frontier, st);
                         output.send(BarrierData::Data(result));
                     }
-                },
+                }
                 None => (),
-            }
-        });
+            },
+        );
         self.then(operator)
     }
 }

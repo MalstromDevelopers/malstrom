@@ -1,9 +1,9 @@
-/// Implementation of the GRPC layer for the simple network exchange
-use anyhow::Context;
-use super::Remote;
 use super::api::exchange_message::ExchangeContent;
 use super::api::network_exchange_server::NetworkExchange;
-use super::api::{SubscribeRequest, ExchangeMessage};
+use super::api::{ExchangeMessage, SubscribeRequest};
+use super::Remote;
+/// Implementation of the GRPC layer for the simple network exchange
+use anyhow::Context;
 use flume::{Receiver, Sender};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,7 +14,6 @@ use tokio::task::JoinHandle;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, info, instrument, warn};
-
 
 pub struct ExchangeServer {
     send_queues: Vec<Sender<ExchangeContent>>,
@@ -31,12 +30,7 @@ impl ExchangeServer {
     /// can hold.
     /// If a queue is full, trying to send via the sender becomes a blocking
     /// operation.
-    pub fn new_run(
-        rt: &Handle,
-        addr: SocketAddr,
-        queue_size: usize,
-        remotes: &[Remote],
-    ) -> Self {
+    pub fn new_run(rt: &Handle, addr: SocketAddr, queue_size: usize, remotes: &[Remote]) -> Self {
         let mut send_queues_rx = HashMap::with_capacity(remotes.len());
         let mut send_queues = Vec::with_capacity(remotes.len());
 
@@ -55,9 +49,9 @@ impl ExchangeServer {
         let server_task = rt.spawn(async move {
             println!("Starting Server future");
             Server::builder()
-                .add_service(super::api::network_exchange_server::NetworkExchangeServer::new(
-                    inner_server,
-                ))
+                .add_service(
+                    super::api::network_exchange_server::NetworkExchangeServer::new(inner_server),
+                )
                 .serve_with_shutdown(addr, async { shutdown_rx.recv_async().await.unwrap() })
                 .await
                 .context("GRPC Server terminated")
@@ -89,7 +83,6 @@ impl ExchangeServer {
             .expect("GRPC Server terminated");
         Some(())
     }
-
 }
 
 impl Drop for ExchangeServer {
@@ -144,7 +137,12 @@ impl NetworkExchange for InnerExchangeServer {
         tokio::spawn(async move {
             // let mut application_stream = recv.re();
             while let Ok(item) = recv.recv_async().await {
-                match tx.send_async(Ok(ExchangeMessage { exchange_content: Some(item) })).await {
+                match tx
+                    .send_async(Ok(ExchangeMessage {
+                        exchange_content: Some(item),
+                    }))
+                    .await
+                {
                     Ok(_) => {
                         // item (server response) was queued to be send to client
                     }
@@ -217,11 +215,7 @@ impl ExchangeClient {
                 .into_inner();
             while let Some(msg) = stream.next().await {
                 match msg.map(|x| x.exchange_content) {
-                    Ok(Some(m)) => 
-                    recv_queue_tx
-                        .send_async(m)
-                        .await
-                        .unwrap(),
+                    Ok(Some(m)) => recv_queue_tx.send_async(m).await.unwrap(),
                     Ok(None) => (),
                     Err(e) => panic!("Unhandled client exception: {}", e),
                 }
@@ -235,7 +229,7 @@ impl ExchangeClient {
     }
 
     /// Retrieve all messages received since last calling this method
-    pub fn recv_all(&self) -> impl Iterator<Item=ExchangeContent> + '_ {
+    pub fn recv_all(&self) -> impl Iterator<Item = ExchangeContent> + '_ {
         self.recv_queue_rx.drain()
     }
 }

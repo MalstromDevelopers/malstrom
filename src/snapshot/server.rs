@@ -9,24 +9,26 @@ use tonic::{Request, Response, Status};
 use tokio::sync::{watch, RwLock};
 use tracing::info;
 
-use self::api::snapshot_server::Snapshot;
+use crate::snapshot::controller::ComsMessage;
+
 use self::api::snapshot_client::SnapshotClient as GrpcClient;
+use self::api::snapshot_server::Snapshot;
 use self::api::*;
 
 /// Receiving end of snapshot communication
 
-mod api {
+pub mod api {
     tonic::include_proto!("jetstream.snapshot");
 }
 
-enum ComsMessage {
-    StartSnapshot(u64),
-    LoadSnapshot(u64),
-    CommitSnapshot(String, u64),
+pub struct SnapshotServer {
+    output_tx: flume::Sender<ComsMessage>,
 }
 
-struct SnapshotServer {
-    output_tx: flume::Sender<ComsMessage>,
+impl SnapshotServer {
+    pub fn new(output_tx: flume::Sender<ComsMessage>) -> Self {
+        Self { output_tx }
+    }
 }
 
 #[tonic::async_trait]
@@ -71,41 +73,87 @@ impl Snapshot for SnapshotServer {
     }
 }
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SendError {
+    #[error("Connection Error")]
+    TransportError(#[from] tonic::transport::Error),
+    #[error("Request returned non-ok status")]
+    StatusError(#[from] tonic::Status),
+    // You can add more variants as needed
+}
+
 enum ClientOp {
     Load(u64),
     Snap(u64),
-    Commit(String, u64)
+    Commit(String, u64),
 }
 
-struct SnapshotClient { 
+pub struct SnapshotClient {
     _rt: Handle,
-    grpc_client: GrpcClient<tonic::transport::Channel>,
-    com: flume::Sender<ClientOp>
 }
 
 impl SnapshotClient {
-
-    pub fn new_start() -> Self {
-        todo!()
+    pub fn new(rt: Handle) -> Self {
+        Self { _rt: rt }
     }
-    
-    /// Instruct all members of the cluster to load this epoch
-    fn load_snapshot(&self, snapshot_epoch: u64, remotes: &[Uri]) -> () {
 
+    /// Instruct all members of the cluster to load this epoch
+    pub fn load_snapshot(&self, snapshot_epoch: u64, remotes: &[Uri]) -> Result<(), SendError> {
         for r in remotes.iter() {
-            let result: Result<(), _> = self._rt.block_on(async {
-                let client = GrpcClient::connect(r.clone()).await?;
-                client.load_snapshot(LoadSnapshotRequest{snapshot_epoch}).await?;
+            let result: Result<(), SendError> = self._rt.block_on(async {
+                let mut client = GrpcClient::connect(r.clone())
+                    .await
+                    .map_err(|x| SendError::from(x))?;
+                client
+                    .load_snapshot(LoadSnapshotRequest { snapshot_epoch })
+                    .await
+                    .map_err(|x| SendError::from(x))?;
                 Ok(())
             });
+            result?
         }
-
+        Ok(())
     }
 
     /// Instruct all members of the cluster to start a snapshot
-    fn start_snapshot(&self, snapshot_epoch: u64) -> () {}
+    pub fn start_snapshot(&self, snapshot_epoch: u64, remotes: &[Uri]) -> Result<(), SendError> {
+        for r in remotes.iter() {
+            let result: Result<(), SendError> = self._rt.block_on(async {
+                let mut client = GrpcClient::connect(r.clone())
+                    .await
+                    .map_err(|x| SendError::from(x))?;
+                client
+                    .start_snapshot(StartSnapshotRequest { snapshot_epoch })
+                    .await
+                    .map_err(|x| SendError::from(x))?;
+                Ok(())
+            });
+            result?
+        }
+        Ok(())
+    }
 
     /// Commit a snapshot to the leader
-    fn commit_snapshot(&self, name: &str, snapshot_epoch: u64) -> () {}
-
+    pub fn commit_snapshot(
+        &self,
+        worker_idx: u32,
+        snapshot_epoch: u64,
+        leader_uri: &Uri,
+    ) -> Result<(), SendError> {
+        self._rt.block_on(async {
+            let mut client = GrpcClient::connect(leader_uri.clone())
+                .await
+                .map_err(|x| SendError::from(x))?;
+            client
+                .commit_snapshot(CommitSnapshotRequest {
+                    from_name: worker_idx,
+                    snapshot_epoch,
+                })
+                .await
+                .map_err(|x| SendError::from(x))?;
+            Ok(())
+        })
+    }
 }

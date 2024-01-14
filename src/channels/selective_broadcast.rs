@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 /// Selective Broadcast:
 ///
 /// Selective Broadcast channels are MPMC channels, where a partitioning function is used
@@ -10,13 +12,9 @@ use itertools;
 
 use crate::snapshot::barrier::BarrierData;
 
-struct BarrierReceiver<T, P>(
-    crossbeam::channel::Receiver<BarrierData<T, P>>,
-    Option<P>,
-);
+struct BarrierReceiver<T, P>(crossbeam::channel::Receiver<BarrierData<T, P>>, Option<P>);
 
-impl<T, P> BarrierReceiver<T, P>
-{
+impl<T, P> BarrierReceiver<T, P> {
     fn new(rx: crossbeam::channel::Receiver<BarrierData<T, P>>) -> Self {
         Self(rx, None)
     }
@@ -63,22 +61,24 @@ pub fn link<T, P>(sender: &mut Sender<T, P>, receiver: &mut Receiver<T, P>) {
 }
 
 /// Selective Broadcast Sender
+#[derive(Clone)]
 pub struct Sender<T, P> {
     senders: Vec<crossbeam::channel::Sender<BarrierData<T, P>>>,
-    partitioner: Box<dyn Fn(&T, usize) -> Vec<usize>>,
+    partitioner: Rc<dyn Fn(&T, usize) -> Vec<usize>>,
 }
+
 /// Selective Broadcast Receiver
 pub struct Receiver<T, P>(Vec<BarrierReceiver<T, P>>);
 
 impl<T, P> Sender<T, P>
 where
     T: Clone,
-    P: Clone
+    P: Clone,
 {
     pub fn new_unlinked(partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static) -> Self {
         Self {
             senders: Vec::new(),
-            partitioner: Box::new(partitioner),
+            partitioner: Rc::new(partitioner),
         }
     }
 

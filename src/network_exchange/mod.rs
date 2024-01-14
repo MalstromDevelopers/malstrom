@@ -8,12 +8,6 @@ mod api {
     tonic::include_proto!("jetstream.network_exchange");
 }
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    net::SocketAddr,
-    ops::Range,
-};
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     snapshot::{PersistenceBackend, SnapshotController},
@@ -23,6 +17,12 @@ use crate::{
 };
 use bincode::{config::Configuration, Decode, Encode};
 use derive_new::new;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    net::SocketAddr,
+    ops::Range,
+};
 use tonic::transport::Uri;
 
 /// Data which can be exchanged via network
@@ -94,7 +94,7 @@ where
         let mut streams = Vec::with_capacity(remotes.len() + 1);
         // create sender (server)
         let mut sender =
-        send::ExchangeSender::new(runtime.handle().clone(), local_addr, &remotes, partitioner);
+            send::ExchangeSender::new(runtime.handle().clone(), local_addr, &remotes, partitioner);
         let send_op = StandardOperator::new(
             move |input: &mut Receiver<O, P>, output, frontier, operator_id| {
                 sender.schedule(input, output, frontier, operator_id)

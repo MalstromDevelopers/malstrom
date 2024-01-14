@@ -1,6 +1,6 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
-use crate::snapshot::{SnapshotController, PersistenceBackend};
+use crate::snapshot::{PersistenceBackend, SnapshotController};
 use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
@@ -13,7 +13,7 @@ pub struct Worker<P, S> {
 impl<P, S> Worker<P, S>
 where
     P: PersistenceBackend,
-    S: SnapshotController<P> + 'static
+    S: SnapshotController<P> + 'static,
 {
     pub fn new(snapshot_controller: S) -> Worker<P, S> {
         Worker {
