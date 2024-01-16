@@ -1,30 +1,33 @@
 use crate::channels::selective_broadcast;
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
+use crate::snapshot::controller::{start_snapshot_region, RegionHandle, end_snapshot_region};
 use crate::snapshot::{PersistenceBackend, SnapshotController};
-use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder};
+use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder, NoData};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
 };
-pub struct Worker<P, S> {
+pub struct Worker<P> {
     operators: Vec<FrontieredOperator<P>>,
     probes: Vec<Probe>,
-    snapshot_controller: S,
+    snapshot_handle: RegionHandle<P>
 }
-impl<P, S> Worker<P, S>
+impl<P> Worker<P>
 where
-    P: PersistenceBackend,
-    S: SnapshotController<P> + 'static,
+    P: PersistenceBackend
 {
-    pub fn new(snapshot_controller: S) -> Worker<P, S> {
-        Worker {
+    pub fn new(snapshot_timer: impl FnMut() -> bool + 'static) -> (Worker<P>, JetStreamBuilder<NoData, P>) {
+        let (new_stream, region_handle) = start_snapshot_region(snapshot_timer);
+        let worker = Worker {
             operators: Vec::new(),
             probes: Vec::new(),
-            snapshot_controller: snapshot_controller,
-        }
+            snapshot_handle: region_handle
+        };
+        (worker, new_stream)
     }
 
-    pub fn add_stream(&mut self, stream: JetStream<P>) {
-        for mut op in stream.into_operators().into_iter() {
+    pub fn add_stream<O: Data>(&mut self, stream: JetStreamBuilder<O, P>) {
+        let stream = end_snapshot_region(stream, self.snapshot_handle.clone());
+        for mut op in stream.build().into_operators().into_iter() {
             for p in self.probes.iter() {
                 op.add_upstream_probe(p.clone())
             }
@@ -44,13 +47,6 @@ where
                 op.step(i);
             }
         }
-        self.snapshot_controller.evaluate();
-    }
-
-    pub fn restore_state(&mut self) {
-        // instruct operators to restore state
-        // on next schedule
-        self.snapshot_controller.load_state();
     }
 
     /// Unions N streams with identical output types into a single stream
@@ -63,7 +59,7 @@ where
 
         for mut input_stream in streams.into_iter() {
             selective_broadcast::link(input_stream.get_output_mut(), unioned.get_input_mut());
-            self.add_stream(input_stream.build());
+            self.add_stream(input_stream);
         }
         JetStreamBuilder::from_operator(unioned)
     }
@@ -92,7 +88,7 @@ where
             })
             .collect();
 
-        self.add_stream(input.build());
+        self.add_stream(input);
 
         // SAFETY: We can unwrap because the vec was built from an iterator of size N
         // so the vec is guaranteed to fit

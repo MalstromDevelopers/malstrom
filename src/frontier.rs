@@ -1,3 +1,5 @@
+use std::ops::Add;
+
 use crate::channels::watch;
 use thiserror::Error;
 
@@ -15,6 +17,18 @@ impl Timestamp {
 impl Into<u64> for Timestamp {
     fn into(self) -> u64 {
         self.0
+    }
+}
+impl From<u64> for Timestamp {
+    fn from(num: u64) -> Self {
+        Self(num)
+    }
+}
+
+impl Add for Timestamp {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self(self.0 + other.0)
     }
 }
 

@@ -61,30 +61,29 @@ pub struct Remote {
     uri: Uri,
 }
 
-pub trait NetworkExchange<O, P, S> {
+pub trait NetworkExchange<O, P> {
     /// Network exchange operator, sends data via network to remote nodes
     fn network_exchange(
         self,
         local_name: String,
         local_addr: SocketAddr,
         remotes: Vec<Remote>,
-        worker: &mut Worker<P, S>,
+        worker: &mut Worker<P>,
         partitioner: impl FnMut(&O, usize) -> usize + 'static,
     ) -> Self;
 }
 
-impl<O, P, S> NetworkExchange<O, P, S> for JetStreamBuilder<O, P>
+impl<O, P> NetworkExchange<O, P> for JetStreamBuilder<O, P>
 where
     O: ExchangeData,
-    P: PersistenceBackend,
-    S: SnapshotController<P> + 'static,
+    P: PersistenceBackend
 {
     fn network_exchange(
         self,
         local_name: String,
         local_addr: SocketAddr,
         remotes: Vec<Remote>,
-        worker: &mut Worker<P, S>,
+        worker: &mut Worker<P>,
         partitioner: impl FnMut(&O, usize) -> usize + 'static,
     ) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -52,7 +52,8 @@ struct ConfigMap {
 }
 
 fn get_configmap() -> anyhow::Result<ConfigMap> {
-    let config_path = Path::new("/etc/jetstream/snapshot/config.yaml");
+    let path_raw = std::env::var("JETSTREAM_SNAPSHOT_CONFIG").unwrap_or("/etc/jetstream/snapshot/config.yaml".into());
+    let config_path = Path::new(&path_raw);
     let content = std::fs::read_to_string(config_path)?;
     let config: ConfigMap = serde_yaml::from_str(&content)?;
     Ok(config)
@@ -72,7 +73,7 @@ pub enum ComsMessage {
 }
 
 #[derive(Clone)]
-struct RegionHandle<P> {
+pub struct RegionHandle<P> {
     sender: Sender<(), P>
 }
 
@@ -81,9 +82,8 @@ struct ControllerState {
     commited_snapshots: IndexMap<u32, u64>,
 }
 
-pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
+pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
-    stream: JetStreamBuilder<O, P>,
 ) -> (JetStreamBuilder<O, P>, RegionHandle<P>) {
     let config = get_configmap().expect("Failed to get snapshot config");
 
@@ -147,6 +147,7 @@ pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
             runtime.enter();
             
             if state.is_none() && worker_idx == 0 {
+                println!("Loading latest state");
                 // initial startup, send load command to all if leader
                 let backend = P::new_latest();
                 let latest = backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default());
@@ -154,17 +155,19 @@ pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
                 // load last committed state
                 let backend = P::new_for_epoch(last_commited);
                 state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default()));
-                grpc_client.load_snapshot(*last_commited, &remotes).unwrap()
+                output.send(BarrierData::Load(backend));
+                grpc_client.load_snapshot(*last_commited, &remotes).unwrap();
             }
             
             // PANIC: Can unwrap here because we loaded the state before
             let s = state.as_mut().unwrap();
             if !snapshot_in_progress && worker_idx == 0 && timer() {
                 let snapshot_epoch = s.commited_snapshots.values().min().unwrap_or(&0) + 1;
+                println!("Starting new snapshot at epoch {snapshot_epoch}");
                 let mut backend = P::new_for_epoch(&snapshot_epoch);
                 backend.persist(frontier.get_actual(), &s, operator_id);
 
-                grpc_client.start_snapshot(snapshot_epoch, &remotes);
+                grpc_client.start_snapshot(snapshot_epoch, &remotes).unwrap();
                 output.send(BarrierData::Barrier(backend));
                 snapshot_in_progress = true;
             }
@@ -176,6 +179,8 @@ pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
                 snapshot_in_progress = match backchannel_rx.recv() {
                     Some(BarrierData::Barrier(b)) => {
                         state.as_mut().unwrap().commited_snapshots.insert(worker_idx, b.get_epoch());
+                        let epoch = b.get_epoch();
+                        println!("Completed snapshot at {epoch}");
                         false
                     },
                     _ => true
@@ -191,7 +196,7 @@ pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
                     output.send(BarrierData::Barrier(backend));
                 }
                 Some(ComsMessage::LoadSnapshot(i)) => {
-                    let mut backend = P::new_for_epoch(&i);
+                    let backend = P::new_for_epoch(&i);
                     state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default()));
                 }
                 Some(ComsMessage::CommitSnapshot(name, epoch)) => {
@@ -202,15 +207,15 @@ pub fn region_start<O: Data, S: Default, P: PersistenceBackend>(
             }
         });
 
-    (stream.then(op), RegionHandle{sender: backchannel_tx})
+    (JetStreamBuilder::from_operator(op), RegionHandle{sender: backchannel_tx})
 }
 
-pub fn region_end<O: Data, P: PersistenceBackend>(
+pub fn end_snapshot_region<O: Data, P: PersistenceBackend>(
     mut stream: JetStreamBuilder<O, P>,
     mut region_handle: RegionHandle<P>
 ) -> JetStreamBuilder<O, P> {
     let op = StandardOperator::new(
-        move |input: &mut Receiver<O, P>, output, frontier: &mut FrontierHandle, operator_id: usize| {
+        move |input: &mut Receiver<O, P>, output, frontier: &mut FrontierHandle, _operator_id: usize| {
             frontier.advance_to(Timestamp::MAX);
             match input.recv() {
                 Some(BarrierData::Barrier(b)) => region_handle.sender.send(BarrierData::Barrier(b)),

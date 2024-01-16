@@ -1,0 +1,3 @@
+listen_port: 29091
+statefulset_name: jetstream
+replica_count: 1

@@ -44,3 +44,27 @@ pub trait PersistenceBackend: Clone + 'static {
     fn load<S>(&self, operator_id: usize) -> Option<(Timestamp, S)>;
     fn persist<S>(&mut self, frontier: Timestamp, state: &S, operator_id: usize) -> ();
 }
+
+#[derive(Default, Clone)]
+pub struct NoPersistenceBackend{epoch: u64}
+impl PersistenceBackend for NoPersistenceBackend {
+    fn new_latest() -> Self {
+        NoPersistenceBackend::default()
+    }
+
+    fn new_for_epoch(snapshot_epoch: &u64) -> Self {
+        NoPersistenceBackend{epoch: snapshot_epoch.clone()}
+    }
+
+    fn get_epoch(&self) -> u64 {
+        self.epoch.clone()
+    }
+
+    fn load<S>(&self, operator_id: usize) -> Option<(Timestamp, S)> {
+        None
+    }
+
+    fn persist<S>(&mut self, frontier: Timestamp, state: &S, operator_id: usize) -> () {
+        ()
+    }
+}

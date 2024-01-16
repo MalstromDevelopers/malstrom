@@ -10,6 +10,7 @@ use crate::{
 
 pub trait StatefulSource<O: Data, P: PersistenceBackend, S> {
     fn stateful_source(
+        self,
         source_fn: impl FnMut(&mut FrontierHandle, &mut S) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P>;
 }
@@ -21,6 +22,7 @@ where
     S: Default + 'static,
 {
     fn stateful_source(
+        self,
         mut source_fn: impl FnMut(&mut FrontierHandle, &mut S) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
@@ -52,12 +54,13 @@ where
                 }
             },
         );
-        JetStreamBuilder::from_operator(operator)
+        self.then(operator)
     }
 }
 
 pub trait PollSource<O: Data, P: PersistenceBackend> {
     fn poll_source(
+        self,
         source_fn: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P>;
 }
@@ -68,8 +71,9 @@ where
     P: PersistenceBackend,
 {
     fn poll_source(
+        self,
         mut source_fn: impl FnMut(&mut FrontierHandle) -> Option<O> + 'static,
     ) -> JetStreamBuilder<O, P> {
-        JetStreamBuilder::stateful_source(move |f, _state: &mut ()| source_fn(f))
+        self.stateful_source(move |f, _state: &mut ()| source_fn(f))
     }
 }
