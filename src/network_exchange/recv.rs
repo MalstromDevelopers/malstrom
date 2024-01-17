@@ -51,7 +51,7 @@ where
         output: &mut Sender<O, P>,
         frontier: &mut FrontierHandle,
         operator_id: usize,
-    ) -> () {
+    ) {
         if self.local_barrier.is_none() {
             self.local_barrier = match input.recv() {
                 Some(BarrierData::Barrier(b)) => Some(b),
@@ -76,7 +76,7 @@ where
                         break;
                     }
                     ExchangeContent::Frontier(x) => {
-                        let _ = frontier.advance_to(Timestamp::new(x));
+                        frontier.advance_to(Timestamp::new(x));
                     }
                     ExchangeContent::Data(d) => {
                         let decoded: O = bincode::decode_from_slice(&d, CONFIG)

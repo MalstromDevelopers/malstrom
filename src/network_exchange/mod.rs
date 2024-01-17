@@ -50,9 +50,7 @@ pub fn rendezvous_hash<T: Hash>(value: &T, range: Range<usize>) -> Option<usize>
             (hasher.finish(), i)
         })
         // max by hash
-        .max_by_key(|x| x.0)
-        // return index
-        .and_then(|x| Some(x.1))
+        .max_by_key(|x| x.0).map(|x| x.1)
 }
 
 #[derive(new, Clone)]

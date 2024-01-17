@@ -1,45 +1,33 @@
-use std::marker::PhantomData;
+
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
+
 /// A snapshot controller that uses K8S configmaps as a synchronization mechanism
 /// to time snapshots
 use std::{
-    any::Any,
-    collections::{BTreeMap, HashMap},
-    error::Error,
     net::IpAddr,
-    num::ParseIntError,
 };
 
 use anyhow::Context;
 use indexmap::IndexMap;
-use kube::{
-    api::PatchParams,
-    runtime::{watcher, WatchStreamExt},
-    Api, Client,
-};
+
 use serde::{Serialize, Deserialize};
-use tokio::{
-    runtime::{Handle, Runtime},
-    task::JoinHandle,
-};
+
 use tokio_stream::StreamExt;
 use tonic::transport::Uri;
-use tracing::error;
-use url::Url;
+
+
 
 use crate::frontier::{FrontierHandle, Timestamp};
-use crate::stateful_map::StatefulMap;
+
 use crate::{
-    channels::selective_broadcast::{self, full_broadcast, Receiver, Sender},
-    snapshot::server::api,
+    channels::selective_broadcast::{self, Receiver, Sender},
     stream::{
-        jetstream::{Data, JetStreamBuilder, NoData},
-        operator::{pass_through_operator, StandardOperator},
+        jetstream::{Data, JetStreamBuilder},
+        operator::{StandardOperator},
     },
 };
 
-use super::{barrier::BarrierData, server::SnapshotServer, PersistenceBackend, SnapshotController};
+use super::{barrier::BarrierData, server::SnapshotServer, PersistenceBackend};
 use super::server::SnapshotClient;
 
 use std::path::Path;
@@ -150,11 +138,11 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 println!("Loading latest state");
                 // initial startup, send load command to all if leader
                 let backend = P::new_latest();
-                let latest = backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default());
+                let latest = backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default);
                 let last_commited = latest.commited_snapshots.values().min().unwrap_or(&0);
                 // load last committed state
                 let backend = P::new_for_epoch(last_commited);
-                state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default()));
+                state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default));
                 output.send(BarrierData::Load(backend));
                 grpc_client.load_snapshot(*last_commited, &remotes).unwrap();
             }
@@ -197,7 +185,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 }
                 Some(ComsMessage::LoadSnapshot(i)) => {
                     let backend = P::new_for_epoch(&i);
-                    state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(|| ControllerState::default()));
+                    state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default));
                 }
                 Some(ComsMessage::CommitSnapshot(name, epoch)) => {
                     // TODO handle this more elegantly than unwrap
@@ -211,7 +199,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
 }
 
 pub fn end_snapshot_region<O: Data, P: PersistenceBackend>(
-    mut stream: JetStreamBuilder<O, P>,
+    stream: JetStreamBuilder<O, P>,
     mut region_handle: RegionHandle<P>
 ) -> JetStreamBuilder<O, P> {
     let op = StandardOperator::new(

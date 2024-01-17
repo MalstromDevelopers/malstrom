@@ -85,13 +85,13 @@ where
     /// Send a value into this channel. The value will be distributed to receiver
     /// as per the result of the partitioning function
     pub fn send(&mut self, msg: BarrierData<T, P>) {
-        if self.senders.len() == 0 {
+        if self.senders.is_empty() {
             return;
         }
         let recv_idxs = match &msg {
-            BarrierData::Data(x) => (self.partitioner)(&x, self.senders.len()),
-            BarrierData::Barrier(_) => (0..self.senders.len()).into_iter().collect(),
-            BarrierData::Load(_) => (0..self.senders.len()).into_iter().collect(),
+            BarrierData::Data(x) => (self.partitioner)(x, self.senders.len()),
+            BarrierData::Barrier(_) => (0..self.senders.len()).collect(),
+            BarrierData::Load(_) => (0..self.senders.len()).collect(),
         };
         let recv_idxs_len = recv_idxs.len();
         // repeat_n will clone for every iteration except the last

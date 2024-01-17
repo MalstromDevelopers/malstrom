@@ -14,9 +14,9 @@ impl Timestamp {
     }
 }
 
-impl Into<u64> for Timestamp {
-    fn into(self) -> u64 {
-        self.0
+impl From<Timestamp> for u64 {
+    fn from(val: Timestamp) -> Self {
+        val.0
     }
 }
 impl From<u64> for Timestamp {
@@ -61,7 +61,7 @@ pub struct Frontier {
 }
 
 impl Frontier {
-    pub fn add_upstream_probe(&mut self, probe: Probe) -> () {
+    pub fn add_upstream_probe(&mut self, probe: Probe) {
         self.upstreams.push(probe)
     }
 
@@ -69,7 +69,7 @@ impl Frontier {
         self.actual.read()
     }
 
-    pub fn advance_to(&mut self, desired: Timestamp) -> () {
+    pub fn advance_to(&mut self, desired: Timestamp) {
         self.desired = desired;
         self.update();
     }
@@ -106,7 +106,7 @@ impl<'g> FrontierHandle<'g> {
         FrontierHandle { frontier }
     }
 
-    pub fn advance_to(&mut self, desired: Timestamp) -> () {
+    pub fn advance_to(&mut self, desired: Timestamp) {
         self.frontier.advance_to(desired)
     }
     pub fn get_actual(&self) -> Timestamp {

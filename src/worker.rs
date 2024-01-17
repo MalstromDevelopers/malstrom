@@ -1,8 +1,8 @@
-use crate::channels::selective_broadcast::{self, full_broadcast};
+use crate::channels::selective_broadcast::{self};
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
 use crate::snapshot::controller::{start_snapshot_region, RegionHandle, end_snapshot_region};
-use crate::snapshot::{PersistenceBackend, SnapshotController};
-use crate::stream::jetstream::{Data, JetStream, JetStreamBuilder, NoData};
+use crate::snapshot::{PersistenceBackend};
+use crate::stream::jetstream::{Data, JetStreamBuilder, NoData};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
 };
@@ -18,13 +18,13 @@ where
 {
     pub fn new(snapshot_timer: impl FnMut() -> bool + 'static) -> Worker<P> {
         let (snapshot_op, region_handle) = start_snapshot_region(snapshot_timer);
-        let worker = Worker {
+        
+        Worker {
             operators: Vec::new(),
             probes: Vec::new(),
             root_stream: JetStreamBuilder::from_operator(snapshot_op),
             snapshot_handle: region_handle
-        };
-        worker
+        }
     }
 
     pub fn new_stream(&mut self) -> JetStreamBuilder<NoData, P> {
@@ -66,7 +66,7 @@ where
     ) -> [JetStreamBuilder<Output, P>; N] {
         let partition_op = StandardOperator::new_with_partitioning(
             |input, output, frontier: &mut FrontierHandle, _| {
-                let _ = frontier.advance_to(Timestamp::MAX);
+                frontier.advance_to(Timestamp::MAX);
                 if let Some(x) = input.recv() {
                     output.send(x)
                 }
@@ -91,7 +91,7 @@ where
     }
 
     pub fn build(self) -> RuntimeWorker<P> {
-        let operators = self.root_stream.build().into_operators().into_iter().chain(self.operators.into_iter()).collect();
+        let operators = self.root_stream.build().into_operators().into_iter().chain(self.operators).collect();
         // NOTE: The root operator has no frontier and gets no probe
         RuntimeWorker{
             operators,

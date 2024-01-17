@@ -37,14 +37,14 @@ pub struct StandardOperator<I, O, P: PersistenceBackend> {
 }
 
 pub trait Mapper<I, O, P>:
-    FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static
+    FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) + 'static
 {
 }
 impl<
         I,
         O,
         P,
-        T: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) -> () + 'static,
+        T: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle, usize) + 'static,
     > Mapper<I, O, P> for T
 {
 }
@@ -140,7 +140,7 @@ where
         }
     }
 
-    pub fn add_upstream_probe(&mut self, probe: Probe) -> () {
+    pub fn add_upstream_probe(&mut self, probe: Probe) {
         self.frontier.add_upstream_probe(probe)
     }
 }

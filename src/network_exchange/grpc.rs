@@ -207,7 +207,7 @@ impl ExchangeClient {
             // TODO: Reconnection logic
             let mut stream = client
                 .simple_exchange(SubscribeRequest {
-                    client_id: client_id,
+                    client_id,
                 })
                 .await
                 .context(format!("Failed to subscribe to {remote_addr:?}"))

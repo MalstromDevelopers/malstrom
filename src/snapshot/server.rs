@@ -1,12 +1,12 @@
-use std::os::unix::net::SocketAddr;
-use std::sync::Arc;
 
-use nng::options::protocol::reqrep;
+
+
+
 use tokio::runtime::Handle;
 use tonic::transport::Uri;
 use tonic::{Request, Response, Status};
 
-use tokio::sync::{watch, RwLock};
+
 use tracing::info;
 
 use crate::snapshot::controller::ComsMessage;
@@ -105,11 +105,11 @@ impl SnapshotClient {
             let result: Result<(), SendError> = self._rt.block_on(async {
                 let mut client = GrpcClient::connect(r.clone())
                     .await
-                    .map_err(|x| SendError::from(x))?;
+                    .map_err(SendError::from)?;
                 client
                     .load_snapshot(LoadSnapshotRequest { snapshot_epoch })
                     .await
-                    .map_err(|x| SendError::from(x))?;
+                    .map_err(SendError::from)?;
                 Ok(())
             });
             result?
@@ -123,11 +123,11 @@ impl SnapshotClient {
             let result: Result<(), SendError> = self._rt.block_on(async {
                 let mut client = GrpcClient::connect(r.clone())
                     .await
-                    .map_err(|x| SendError::from(x))?;
+                    .map_err(SendError::from)?;
                 client
                     .start_snapshot(StartSnapshotRequest { snapshot_epoch })
                     .await
-                    .map_err(|x| SendError::from(x))?;
+                    .map_err(SendError::from)?;
                 Ok(())
             });
             result?
@@ -145,14 +145,14 @@ impl SnapshotClient {
         self._rt.block_on(async {
             let mut client = GrpcClient::connect(leader_uri.clone())
                 .await
-                .map_err(|x| SendError::from(x))?;
+                .map_err(SendError::from)?;
             client
                 .commit_snapshot(CommitSnapshotRequest {
                     from_name: worker_idx,
                     snapshot_epoch,
                 })
                 .await
-                .map_err(|x| SendError::from(x))?;
+                .map_err(SendError::from)?;
             Ok(())
         })
     }

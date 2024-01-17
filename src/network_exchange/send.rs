@@ -56,8 +56,8 @@ where
         output: &mut Sender<O, P>,
         frontier: &mut FrontierHandle,
         operator_id: usize,
-    ) -> () {
-        let _ = frontier.advance_to(Timestamp::MAX);
+    ) {
+        frontier.advance_to(Timestamp::MAX);
         let now = Instant::now();
         if now.duration_since(self.last_heartbeat) > HEARTBEAT_INTERVAL {
             // send progress update
