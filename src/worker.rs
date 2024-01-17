@@ -1,7 +1,7 @@
 use crate::channels::selective_broadcast::{self};
 use crate::frontier::{FrontierHandle, Probe, Timestamp};
 use crate::snapshot::controller::{start_snapshot_region, RegionHandle, end_snapshot_region};
-use crate::snapshot::{PersistenceBackend};
+use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::{Data, JetStreamBuilder, NoData};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,

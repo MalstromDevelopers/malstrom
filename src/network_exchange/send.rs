@@ -28,7 +28,7 @@ pub struct ExchangeSender<F, O> {
     _data_type: PhantomData<O>,
 }
 
-impl<'a, 'b, F, O> ExchangeSender<F, O>
+impl<F, O> ExchangeSender<F, O>
 where
     F: FnMut(&O, usize) -> usize,
     O: ExchangeData,

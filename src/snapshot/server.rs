@@ -84,12 +84,6 @@ pub enum SendError {
     // You can add more variants as needed
 }
 
-enum ClientOp {
-    Load(u64),
-    Snap(u64),
-    Commit(String, u64),
-}
-
 pub struct SnapshotClient {
     _rt: Handle,
 }

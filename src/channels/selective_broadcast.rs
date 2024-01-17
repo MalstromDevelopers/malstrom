@@ -63,7 +63,11 @@ pub fn link<T, P>(sender: &mut Sender<T, P>, receiver: &mut Receiver<T, P>) {
 /// Selective Broadcast Sender
 #[derive(Clone)]
 pub struct Sender<T, P> {
+    // TOOD: We only have the partitioner in the Box to allow cloning
+    // Which is only really needed in the snapshot conroller
+    // Check if we can solve that another way
     senders: Vec<crossbeam::channel::Sender<BarrierData<T, P>>>,
+    #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn Fn(&T, usize) -> Vec<usize>>,
 }
 

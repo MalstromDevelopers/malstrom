@@ -3,16 +3,12 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 /// A snapshot controller that uses K8S configmaps as a synchronization mechanism
 /// to time snapshots
-use std::{
-    net::IpAddr,
-};
+use std::net::IpAddr;
 
 use anyhow::Context;
 use indexmap::IndexMap;
 
 use serde::{Serialize, Deserialize};
-
-use tokio_stream::StreamExt;
 use tonic::transport::Uri;
 
 
@@ -23,7 +19,7 @@ use crate::{
     channels::selective_broadcast::{self, Receiver, Sender},
     stream::{
         jetstream::{Data, JetStreamBuilder},
-        operator::{StandardOperator},
+        operator::StandardOperator,
     },
 };
 
@@ -34,9 +30,10 @@ use std::path::Path;
 
 #[derive(Serialize, Deserialize)]
 struct ConfigMap {
-    listen_port: u16,
+    snapshot_svc_port: u16,
     statefulset_name: String,
-    replica_count: u32
+    replica_count: u32,
+    snapshot_leader_uri: String
 }
 
 fn get_configmap() -> anyhow::Result<ConfigMap> {
@@ -74,6 +71,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
 ) -> (StandardOperator<O, O, P>, RegionHandle<P>) {
     let config = get_configmap().expect("Failed to get snapshot config");
+    let leader_uri = Uri::try_from(config.snapshot_leader_uri).expect("Invalid leader URI");
 
     // start the server handling incoming requests
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -82,7 +80,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
         .expect("Error creating tokio runtime");
     let (server_tx, server_rx) = flume::unbounded();
 
-    let port = config.listen_port;
+    let port = config.snapshot_svc_port;
     let server = SnapshotServer::new(server_tx);
     let uri = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
     let _server_task = runtime.spawn(async move {
@@ -132,17 +130,17 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
             };
             // we need to reference these here, so they don't get dropped
             assert!(!_server_task.is_finished());
-            runtime.enter();
+            let _ = runtime.enter();
             
             if state.is_none() && worker_idx == 0 {
                 println!("Loading latest state");
                 // initial startup, send load command to all if leader
                 let backend = P::new_latest();
-                let latest = backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default);
+                let latest: ControllerState = backend.load(operator_id).map(|x| x.1).unwrap_or_default();
                 let last_commited = latest.commited_snapshots.values().min().unwrap_or(&0);
                 // load last committed state
                 let backend = P::new_for_epoch(last_commited);
-                state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default));
+                state = backend.load(operator_id).map(|x| x.1).unwrap_or_default();
                 output.send(BarrierData::Load(backend));
                 grpc_client.load_snapshot(*last_commited, &remotes).unwrap();
             }
@@ -169,6 +167,9 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                         state.as_mut().unwrap().commited_snapshots.insert(worker_idx, b.get_epoch());
                         let epoch = b.get_epoch();
                         println!("Completed snapshot at {epoch}");
+                        if worker_idx != 0 {
+                            grpc_client.commit_snapshot(worker_idx, epoch, &leader_uri).unwrap();
+                        }
                         false
                     },
                     _ => true
@@ -185,7 +186,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 }
                 Some(ComsMessage::LoadSnapshot(i)) => {
                     let backend = P::new_for_epoch(&i);
-                    state.insert(backend.load(operator_id).map(|x| x.1).unwrap_or_else(ControllerState::default));
+                    state = backend.load(operator_id).map(|x| x.1).unwrap_or_default();
                 }
                 Some(ComsMessage::CommitSnapshot(name, epoch)) => {
                     // TODO handle this more elegantly than unwrap
