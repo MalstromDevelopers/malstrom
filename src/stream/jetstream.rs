@@ -51,7 +51,7 @@ where
     O: Data + 'static,
     P: PersistenceBackend + 'static,
 {
-    pub fn from_operator<I: 'static>(
+    pub(crate) fn from_operator<I: 'static>(
         operator: StandardOperator<I, O, P>,
     ) -> JetStreamBuilder<O, P> {
         JetStreamBuilder {

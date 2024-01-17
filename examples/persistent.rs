@@ -19,8 +19,8 @@ fn main() {
             false
         }
     };
-    let (mut worker, stream) = Worker::<NoPersistenceBackend>::new(snapshot_timer);
-    let stream = stream.poll_source(|f| {
+    let mut worker = Worker::<NoPersistenceBackend>::new(snapshot_timer);
+    let stream = worker.new_stream().poll_source(|f| {
         f.advance_to(f.get_actual() + Timestamp::from(1));
         Some(rand::random::<i64>())
     }).stateful_map(|input, f, state: &mut u64| {
@@ -32,7 +32,8 @@ fn main() {
         input
     });
     worker.add_stream(stream);
+    let mut runtime = worker.build();
     loop {
-        worker.step()
+        runtime.step()
     }
 }

@@ -84,7 +84,7 @@ struct ControllerState {
 
 pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
-) -> (JetStreamBuilder<O, P>, RegionHandle<P>) {
+) -> (StandardOperator<O, O, P>, RegionHandle<P>) {
     let config = get_configmap().expect("Failed to get snapshot config");
 
     // start the server handling incoming requests
@@ -207,7 +207,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
             }
         });
 
-    (JetStreamBuilder::from_operator(op), RegionHandle{sender: backchannel_tx})
+    (op, RegionHandle{sender: backchannel_tx})
 }
 
 pub fn end_snapshot_region<O: Data, P: PersistenceBackend>(

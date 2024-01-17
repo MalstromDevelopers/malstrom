@@ -10,7 +10,7 @@ mod api {
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    snapshot::{PersistenceBackend, SnapshotController},
+    snapshot::PersistenceBackend,
     stream::jetstream::{Data, JetStreamBuilder},
     stream::operator::StandardOperator,
     worker::Worker,
