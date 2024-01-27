@@ -206,9 +206,7 @@ impl ExchangeClient {
         let _client_task = rt.spawn(async move {
             // TODO: Reconnection logic
             let mut stream = client
-                .simple_exchange(SubscribeRequest {
-                    client_id,
-                })
+                .simple_exchange(SubscribeRequest { client_id })
                 .await
                 .context(format!("Failed to subscribe to {remote_addr:?}"))
                 .unwrap()

@@ -1,0 +1,19 @@
+syntax = "proto3";
+package postbox;
+
+service GenericCommunication {
+    // Each worker subscribes to updates from each other worker
+    // By sending an ExchangeSubscribe message. In turn it will receive
+    // an unbounded stream of ExchangeMessages
+    rpc GenericExchange(stream ExchangeMessage) returns (ExchangeResponse) {}
+}
+
+message ExchangeResponse {
+}
+
+message ExchangeMessage {
+    // And this message is for this operator
+    uint32 operator_id = 1;
+    // and this is the content
+    bytes data = 2;
+}

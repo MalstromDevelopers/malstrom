@@ -17,3 +17,6 @@ pub enum StreamError {
     #[error("Attempted an operation across workers")]
     DifferentWorker,
 }
+
+type OperatorId = u32;
+type WorkerId = u32;

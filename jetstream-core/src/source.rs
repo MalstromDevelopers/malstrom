@@ -27,28 +27,25 @@ where
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
         let operator = StandardOperator::new(
-            move |input: &mut Receiver<NoData, P>,
-                  output: &mut Sender<O, P>,
-                  frontier: &mut FrontierHandle,
-                  operator_id: usize| {
-                match input.recv() {
-                    Some(BarrierData::Load(l)) => {
-                        let (time, loaded_state) = l.load(operator_id).unwrap_or_default();
-                        frontier.advance_to(time);
-                        state = Some(loaded_state);
-                        output.send(BarrierData::Load(l))
+            move |input: &mut Receiver<NoData, P>, output: &mut Sender<O, P>, ctx| match input
+                .recv()
+            {
+                Some(BarrierData::Load(l)) => {
+                    let (time, loaded_state) = l.load(ctx.operator_id).unwrap_or_default();
+                    ctx.frontier.advance_to(time);
+                    state = Some(loaded_state);
+                    output.send(BarrierData::Load(l))
+                }
+                Some(BarrierData::Barrier(mut b)) => {
+                    if let Some(st) = state.as_ref() {
+                        b.persist(ctx.frontier.get_actual(), st, ctx.operator_id)
                     }
-                    Some(BarrierData::Barrier(mut b)) => {
-                        if let Some(st) = state.as_ref() {
-                            b.persist(frontier.get_actual(), st, operator_id)
-                        }
-                        output.send(BarrierData::Barrier(b))
-                    }
-                    _ => {
-                        if let Some(st) = state.as_mut() {
-                            if let Some(x) = source_fn(frontier, st) {
-                                output.send(BarrierData::Data(x))
-                            }
+                    output.send(BarrierData::Barrier(b))
+                }
+                _ => {
+                    if let Some(st) = state.as_mut() {
+                        if let Some(x) = source_fn(&mut ctx.frontier, st) {
+                            output.send(BarrierData::Data(x))
                         }
                     }
                 }

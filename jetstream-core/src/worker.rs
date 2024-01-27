@@ -1,11 +1,14 @@
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
 use crate::channels::selective_broadcast::{self};
-use crate::frontier::{FrontierHandle, Probe, Timestamp};
-use crate::snapshot::controller::{start_snapshot_region, RegionHandle, end_snapshot_region};
+use crate::frontier::{Probe, Timestamp};
+use crate::snapshot::controller::{end_snapshot_region, start_snapshot_region, RegionHandle};
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::{Data, JetStreamBuilder, NoData};
 use crate::stream::operator::{
-    pass_through_operator, FrontieredOperator, RuntimeFrontieredOperator, StandardOperator,
+    pass_through_operator, FrontieredOperator, RunnableOperator, StandardOperator,
 };
+
 pub struct Worker<P> {
     operators: Vec<FrontieredOperator<P>>,
     probes: Vec<Probe>,
@@ -14,16 +17,16 @@ pub struct Worker<P> {
 }
 impl<P> Worker<P>
 where
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     pub fn new(snapshot_timer: impl FnMut() -> bool + 'static) -> Worker<P> {
         let (snapshot_op, region_handle) = start_snapshot_region(snapshot_timer);
-        
+
         Worker {
             operators: Vec::new(),
             probes: Vec::new(),
             root_stream: JetStreamBuilder::from_operator(snapshot_op),
-            snapshot_handle: region_handle
+            snapshot_handle: region_handle,
         }
     }
 
@@ -65,8 +68,8 @@ where
         partitioner: impl Fn(&Output, usize) -> Vec<usize> + 'static,
     ) -> [JetStreamBuilder<Output, P>; N] {
         let partition_op = StandardOperator::new_with_partitioning(
-            |input, output, frontier: &mut FrontierHandle, _| {
-                frontier.advance_to(Timestamp::MAX);
+            |input, output, ctx| {
+                ctx.frontier.advance_to(Timestamp::MAX);
                 if let Some(x) = input.recv() {
                     output.send(x)
                 }
@@ -90,31 +93,61 @@ where
         unsafe { new_streams.try_into().unwrap_unchecked() }
     }
 
-    pub fn build(self) -> RuntimeWorker<P> {
-        let operators = self.root_stream.build().into_operators().into_iter().chain(self.operators).collect();
+    pub fn build(self) -> Result<RuntimeWorker<P>, postbox::BuildError> {
+        // TODO: make all of this configurable
+        let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 29091));
+        let operator_ids = (0..self.operators.len())
+            .map(|x| x.try_into().unwrap())
+            .collect();
+        // TODO: Get the peer addresses from K8S
+        // should be "podname.sts-name"
+        let peers = Vec::new();
+        let communication_backend =
+            postbox::BackendBuilder::new(listen_addr, peers, operator_ids, 128);
+
+        let operators = self
+            .root_stream
+            .build()
+            .into_operators()
+            .into_iter()
+            .chain(self.operators)
+            .enumerate()
+            .map(|(i, x)| {
+                x.build(
+                    i.try_into().unwrap(),
+                    communication_backend
+                        .for_operator(&i.try_into().unwrap())
+                        .unwrap(),
+                )
+            })
+            .collect();
         // NOTE: The root operator has no frontier and gets no probe
-        RuntimeWorker{
+        Ok(RuntimeWorker {
             operators,
-            probes: self.probes
-        }
+            probes: self.probes,
+            communication: communication_backend.connect()?,
+        })
     }
 }
 
 pub struct RuntimeWorker<P> {
-    operators: Vec<FrontieredOperator<P>>,
+    operators: Vec<RunnableOperator<P>>,
     probes: Vec<Probe>,
+    communication: postbox::CommunicationBackend,
 }
-impl<P> RuntimeWorker<P> where P: PersistenceBackend {
-
+impl<P> RuntimeWorker<P>
+where
+    P: PersistenceBackend,
+{
     pub fn get_frontier(&self) -> Option<Timestamp> {
         self.probes.last().map(|x| x.read())
     }
 
     pub fn step(&mut self) {
-        for (i, op) in self.operators.iter_mut().enumerate().rev() {
-            op.step(i);
+        for op in self.operators.iter_mut().rev() {
+            op.step();
             while op.has_queued_work() {
-                op.step(i);
+                op.step();
             }
         }
     }

@@ -9,11 +9,7 @@ mod api {
 }
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    snapshot::PersistenceBackend,
-    stream::jetstream::{Data, JetStreamBuilder},
-    stream::operator::StandardOperator,
-    worker::Worker,
+    channels::selective_broadcast::{Receiver, Sender}, snapshot::PersistenceBackend, stream::jetstream::{Data, JetStreamBuilder}, stream::operator::StandardOperator, worker::Worker, WorkerId
 };
 use bincode::{config::Configuration, Decode, Encode};
 use derive_new::new;
@@ -50,7 +46,8 @@ pub fn rendezvous_hash<T: Hash>(value: &T, range: Range<usize>) -> Option<usize>
             (hasher.finish(), i)
         })
         // max by hash
-        .max_by_key(|x| x.0).map(|x| x.1)
+        .max_by_key(|x| x.0)
+        .map(|x| x.1)
 }
 
 #[derive(new, Clone)]
@@ -63,38 +60,48 @@ pub trait NetworkExchange<O, P> {
     /// Network exchange operator, sends data via network to remote nodes
     fn network_exchange(
         self,
-        local_name: String,
-        local_addr: SocketAddr,
-        remotes: Vec<Remote>,
-        worker: &mut Worker<P>,
-        partitioner: impl FnMut(&O, usize) -> usize + 'static,
+        partitioner: impl for<'a> FnMut(&O, &'a[WorkerId]) -> &'a[WorkerId] + 'static,
     ) -> Self;
 }
 
 impl<O, P> NetworkExchange<O, P> for JetStreamBuilder<O, P>
 where
     O: ExchangeData,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     fn network_exchange(
         self,
-        local_name: String,
-        local_addr: SocketAddr,
-        remotes: Vec<Remote>,
-        worker: &mut Worker<P>,
-        partitioner: impl FnMut(&O, usize) -> usize + 'static,
+        partitioner: impl for<'a> FnMut(&O, &'a[WorkerId]) -> &'a[WorkerId] + 'static,
     ) -> Self {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Error creating tokio runtime");
-        let mut streams = Vec::with_capacity(remotes.len() + 1);
-        // create sender (server)
-        let mut sender =
-            send::ExchangeSender::new(runtime.handle().clone(), local_addr, &remotes, partitioner);
         let send_op = StandardOperator::new(
-            move |input: &mut Receiver<O, P>, output, frontier, operator_id| {
-                sender.schedule(input, output, frontier, operator_id)
+            move |input: &mut Receiver<O, P>, output, ctx| {
+                match input.recv() {
+                    Some(BarrierData::Load(p)) => {
+                        frontier.advance_to(p.load::<()>(operator_id).unwrap_or_default().0);
+                        output.send(BarrierData::Load(p))
+                    }
+                    Some(BarrierData::Barrier(mut b)) => {
+                        // persist frontier
+                        b.persist(frontier.get_actual(), &(), operator_id);
+                        for i in 0..self.remote_count {
+                            self.server
+                                .send(ExchangeContent::Barrier(super::api::Barrier {}), i);
+                        }
+                        output.send(BarrierData::Barrier(b))
+                    }
+                    Some(BarrierData::Data(d)) => {
+                        // send data and progress
+                        let idx = (self.partitioner)(&d, self.remote_count + 1);
+                        if idx == 0 {
+                            output.send(BarrierData::Data(d));
+                        } else {
+                            let encoded = encode_to_vec(d, CONFIG).expect("Encoding error");
+                            self.server
+                                .send(ExchangeContent::Data(encoded), idx - 1)
+                                .expect("Out of range partition");
+                        }
+                    }
+                    None => (),
             },
         );
         streams.push(self.then(send_op));
@@ -106,8 +113,8 @@ where
                 runtime.handle().clone(),
             );
             streams.push(JetStreamBuilder::from_operator(StandardOperator::new(
-                move |input, output: &mut Sender<O, P>, frontier, operator_id| {
-                    recv_client.schedule(input, output, frontier, operator_id)
+                move |input, output: &mut Sender<O, P>, ctx| {
+                    recv_client.schedule(input, output, ctx)
                 },
             )))
         }

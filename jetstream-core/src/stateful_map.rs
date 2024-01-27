@@ -1,5 +1,3 @@
-
-
 use crate::{
     channels::selective_broadcast::Receiver,
     frontier::FrontierHandle,
@@ -27,30 +25,28 @@ where
         mut mapper: impl FnMut(I, &mut FrontierHandle, &mut S) -> O + 'static,
     ) -> JetStreamBuilder<O, P> {
         let mut state: Option<S> = None;
-        let operator = StandardOperator::new(
-            move |input: &mut Receiver<I, P>, output, frontier, operator_id: usize| match input
-                .recv()
-            {
+        let operator = StandardOperator::new(move |input: &mut Receiver<I, P>, output, ctx| {
+            match input.recv() {
                 Some(BarrierData::Load(l)) => {
-                    let (time, loaded_state) = l.load(operator_id).unwrap_or_default();
-                    frontier.advance_to(time);
+                    let (time, loaded_state) = l.load(ctx.operator_id).unwrap_or_default();
+                    ctx.frontier.advance_to(time);
                     state = Some(loaded_state);
                 }
                 Some(BarrierData::Barrier(mut b)) => {
                     if let Some(st) = state.as_ref() {
-                        b.persist(frontier.get_actual(), &st, operator_id);
+                        b.persist(ctx.frontier.get_actual(), &st, ctx.operator_id);
                     }
                     output.send(BarrierData::Barrier(b));
                 }
                 Some(BarrierData::Data(d)) => {
                     if let Some(st) = state.as_mut() {
-                        let result = mapper(d, frontier, st);
+                        let result = mapper(d, &mut ctx.frontier, st);
                         output.send(BarrierData::Data(result));
                     }
                 }
                 None => (),
-            },
-        );
+            }
+        });
         self.then(operator)
     }
 }
