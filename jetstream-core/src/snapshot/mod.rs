@@ -1,6 +1,5 @@
 pub mod barrier;
 pub mod controller;
-mod server;
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     frontier::Timestamp,

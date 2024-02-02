@@ -8,6 +8,7 @@ use crate::stream::jetstream::{Data, JetStreamBuilder, NoData};
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RunnableOperator, StandardOperator,
 };
+use crate::WorkerId;
 
 pub struct Worker<P> {
     operators: Vec<FrontieredOperator<P>>,
@@ -94,14 +95,16 @@ where
     }
 
     pub fn build(self) -> Result<RuntimeWorker<P>, postbox::BuildError> {
+        let config = &crate::config::CONFIG;
+
         // TODO: make all of this configurable
-        let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 29091));
+        let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
         let operator_ids = (0..self.operators.len())
             .map(|x| x.try_into().unwrap())
             .collect();
         // TODO: Get the peer addresses from K8S
         // should be "podname.sts-name"
-        let peers = Vec::new();
+        let peers = config.get_k8s_peer_uris();
         let communication_backend =
             postbox::BackendBuilder::new(listen_addr, peers, operator_ids, 128);
 
@@ -114,6 +117,7 @@ where
             .enumerate()
             .map(|(i, x)| {
                 x.build(
+                    config.worker_id,
                     i.try_into().unwrap(),
                     communication_backend
                         .for_operator(&i.try_into().unwrap())
@@ -123,6 +127,7 @@ where
             .collect();
         // NOTE: The root operator has no frontier and gets no probe
         Ok(RuntimeWorker {
+            worker_id: config.worker_id,
             operators,
             probes: self.probes,
             communication: communication_backend.connect()?,
@@ -131,6 +136,7 @@ where
 }
 
 pub struct RuntimeWorker<P> {
+    worker_id: WorkerId,
     operators: Vec<RunnableOperator<P>>,
     probes: Vec<Probe>,
     communication: postbox::CommunicationBackend,

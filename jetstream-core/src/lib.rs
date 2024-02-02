@@ -4,6 +4,7 @@ pub mod frontier;
 // pub mod inspect;
 // pub mod kafka;
 // pub mod map;
+pub mod config;
 pub mod network_exchange;
 pub mod snapshot;
 pub mod source;

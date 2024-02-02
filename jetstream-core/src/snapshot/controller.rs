@@ -5,7 +5,6 @@ use indexmap::IndexMap;
 
 use crate::frontier::Timestamp;
 use postbox::Message;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     channels::selective_broadcast::{self, Receiver, Sender},
@@ -16,32 +15,6 @@ use crate::{
 };
 
 use super::{barrier::BarrierData, PersistenceBackend};
-
-use std::path::Path;
-
-#[derive(Serialize, Deserialize)]
-struct ConfigMap {
-    snapshot_svc_port: u16,
-    statefulset_name: String,
-    replica_count: u32,
-    snapshot_leader_uri: String,
-}
-
-fn get_configmap() -> anyhow::Result<ConfigMap> {
-    let path_raw = std::env::var("JETSTREAM_SNAPSHOT_CONFIG")
-        .unwrap_or("/etc/jetstream/snapshot/config.yaml".into());
-    let config_path = Path::new(&path_raw);
-    let content = std::fs::read_to_string(config_path)?;
-    let config: ConfigMap = serde_yaml::from_str(&content)?;
-    Ok(config)
-}
-
-// TODO: Move this configuration to some central place
-fn get_worker_idx() -> anyhow::Result<u32> {
-    // see: https://kubernetes.io/docs/reference/labels-annotations-taints/#apps-kubernetes.io-pod-index
-    let idx: u32 = std::env::var("JETSTREAM_SNAPSHOT_POD_INDEX")?.parse()?;
-    Ok(idx)
-}
 
 #[derive(Encode, Decode)]
 pub enum ComsMessage {
@@ -63,15 +36,7 @@ struct ControllerState {
 pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
 ) -> (StandardOperator<O, O, P>, RegionHandle<P>) {
-    let config = get_configmap().expect("Failed to get snapshot config");
     let bincode_conf = bincode::config::standard();
-
-    // figure out addresses of remote workers
-    let worker_idx = get_worker_idx().unwrap();
-    let sts_name = config.statefulset_name;
-    let sts_cnt = config.replica_count;
-    let peers: Vec<u32> = (0..sts_cnt).filter(|x| *x != worker_idx).collect();
-
     // channel from leafs of region to root
     let mut backchannel_tx = Sender::<(), P>::new_unlinked(selective_broadcast::full_broadcast);
     let mut backchannel_rx = Receiver::new_unlinked();
@@ -81,6 +46,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     let mut snapshot_in_progress = false;
 
     let op = StandardOperator::new(move |input: &mut Receiver<O, P>, output, ctx| {
+        let peers = ctx.communication.get_peers();
         ctx.frontier.advance_to(Timestamp::MAX);
         match input.recv() {
             Some(BarrierData::Barrier(_)) => {
@@ -93,7 +59,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
             None => (),
         };
 
-        if state.is_none() && worker_idx == 0 {
+        if state.is_none() && ctx.worker_id == 0 {
             println!("Loading latest state");
             // initial startup, send load command to all if leader
             let backend = P::new_latest();
@@ -115,13 +81,13 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 bincode::encode_to_vec(ComsMessage::LoadSnapshot(*last_commited), bincode_conf)
                     .unwrap();
             for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication.send(p, Message::new(ctx.operator_id, m));
+                ctx.communication.send(p, Message::new(ctx.operator_id, m)).unwrap();
             }
         }
 
         // PANIC: Can unwrap here because we loaded the state before
         let s = state.as_mut().unwrap();
-        if !snapshot_in_progress && worker_idx == 0 && timer() {
+        if !snapshot_in_progress && ctx.worker_id == 0 && timer() {
             let snapshot_epoch = s.commited_snapshots.values().min().unwrap_or(&0) + 1;
             println!("Starting new snapshot at epoch {snapshot_epoch}");
             let mut backend = P::new_for_epoch(&snapshot_epoch);
@@ -132,7 +98,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 bincode::encode_to_vec(ComsMessage::StartSnapshot(snapshot_epoch), bincode_conf)
                     .unwrap();
             for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication.send(p, Message::new(ctx.operator_id, m));
+                ctx.communication.send(p, Message::new(ctx.operator_id, m)).unwrap();
             }
 
             output.send(BarrierData::Barrier(backend));
@@ -149,17 +115,17 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                         .as_mut()
                         .unwrap()
                         .commited_snapshots
-                        .insert(worker_idx, b.get_epoch());
+                        .insert(ctx.worker_id, b.get_epoch());
                     let epoch = b.get_epoch();
                     println!("Completed snapshot at {epoch}");
-                    if worker_idx != 0 {
+                    if ctx.worker_id != 0 {
                         let msg = bincode::encode_to_vec(
-                            ComsMessage::CommitSnapshot(worker_idx, epoch),
+                            ComsMessage::CommitSnapshot(ctx.worker_id, epoch),
                             bincode_conf,
                         )
                         .unwrap();
                         ctx.communication
-                            .send(&0, Message::new(ctx.operator_id, msg));
+                            .send(&0, Message::new(ctx.operator_id, msg)).unwrap();
                     }
                     false
                 }

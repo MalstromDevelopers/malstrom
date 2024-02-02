@@ -1,25 +1,20 @@
 /// Network Exchange Operator
 /// This operator can be used to send data over the network to other processing nodes
 /// executing the same dataflow graph
-mod grpc;
-mod recv;
-mod send;
-mod api {
-    tonic::include_proto!("jetstream.network_exchange");
-}
-
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, snapshot::PersistenceBackend, stream::jetstream::{Data, JetStreamBuilder}, stream::operator::StandardOperator, worker::Worker, WorkerId
+    channels::selective_broadcast::Receiver,
+    snapshot::{barrier::BarrierData, PersistenceBackend},
+    stream::jetstream::{Data, JetStreamBuilder},
+    stream::operator::StandardOperator,
+    WorkerId,
 };
 use bincode::{config::Configuration, Decode, Encode};
-use derive_new::new;
+use postbox::Message;
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashSet},
     hash::{Hash, Hasher},
-    net::SocketAddr,
     ops::Range,
 };
-use tonic::transport::Uri;
 
 /// Data which can be exchanged via network
 pub trait ExchangeData: Data + Encode + Decode {}
@@ -50,18 +45,17 @@ pub fn rendezvous_hash<T: Hash>(value: &T, range: Range<usize>) -> Option<usize>
         .map(|x| x.1)
 }
 
-#[derive(new, Clone)]
-pub struct Remote {
-    name: String,
-    uri: Uri,
+#[derive(Encode, Decode)]
+pub enum ExchangeMessage<T> {
+    BarrierAlign(WorkerId),
+    LoadAlign(WorkerId),
+    Data(T),
 }
 
 pub trait NetworkExchange<O, P> {
     /// Network exchange operator, sends data via network to remote nodes
-    fn network_exchange(
-        self,
-        partitioner: impl for<'a> FnMut(&O, &'a[WorkerId]) -> &'a[WorkerId] + 'static,
-    ) -> Self;
+    type ExMsg;
+    fn network_exchange(self, partitioner: impl FnMut(&O, usize) -> usize + 'static) -> Self;
 }
 
 impl<O, P> NetworkExchange<O, P> for JetStreamBuilder<O, P>
@@ -69,56 +63,93 @@ where
     O: ExchangeData,
     P: PersistenceBackend,
 {
-    fn network_exchange(
-        self,
-        partitioner: impl for<'a> FnMut(&O, &'a[WorkerId]) -> &'a[WorkerId] + 'static,
-    ) -> Self {
-        let send_op = StandardOperator::new(
-            move |input: &mut Receiver<O, P>, output, ctx| {
-                match input.recv() {
-                    Some(BarrierData::Load(p)) => {
-                        frontier.advance_to(p.load::<()>(operator_id).unwrap_or_default().0);
-                        output.send(BarrierData::Load(p))
-                    }
-                    Some(BarrierData::Barrier(mut b)) => {
-                        // persist frontier
-                        b.persist(frontier.get_actual(), &(), operator_id);
-                        for i in 0..self.remote_count {
-                            self.server
-                                .send(ExchangeContent::Barrier(super::api::Barrier {}), i);
-                        }
-                        output.send(BarrierData::Barrier(b))
-                    }
-                    Some(BarrierData::Data(d)) => {
-                        // send data and progress
-                        let idx = (self.partitioner)(&d, self.remote_count + 1);
-                        if idx == 0 {
-                            output.send(BarrierData::Data(d));
-                        } else {
-                            let encoded = encode_to_vec(d, CONFIG).expect("Encoding error");
-                            self.server
-                                .send(ExchangeContent::Data(encoded), idx - 1)
-                                .expect("Out of range partition");
-                        }
-                    }
-                    None => (),
-            },
-        );
-        streams.push(self.then(send_op));
-        // create all receivers (clients)
-        for r in remotes.iter() {
-            let mut recv_client = recv::ExchangeReceiver::<P>::new(
-                local_name.clone(),
-                r.clone(),
-                runtime.handle().clone(),
-            );
-            streams.push(JetStreamBuilder::from_operator(StandardOperator::new(
-                move |input, output: &mut Sender<O, P>, ctx| {
-                    recv_client.schedule(input, output, ctx)
-                },
-            )))
-        }
+    type ExMsg = ExchangeMessage<O>;
 
-        worker.union(streams)
+    fn network_exchange(self, mut partitioner: impl FnMut(&O, usize) -> usize + 'static) -> Self {
+        // we need to align these before forwarding
+        let mut received_barriers: (Option<P>, HashSet<WorkerId>) = (None, HashSet::new());
+        let mut received_loads: (Option<P>, HashSet<WorkerId>) = (None, HashSet::new());
+
+        let op = StandardOperator::new(move |input: &mut Receiver<O, P>, output, ctx| {
+            match input.recv() {
+                Some(BarrierData::Load(p)) => {
+                    ctx.frontier
+                        .advance_to(p.load::<()>(ctx.operator_id).unwrap_or_default().0);
+                    let _ = received_loads.0.insert(p);
+                    for w in ctx.communication.get_peers() {
+                        let msg =
+                            bincode::encode_to_vec(Self::ExMsg::LoadAlign(ctx.worker_id), CONFIG)
+                                .expect("Encoding error");
+                        ctx.communication
+                            .send(w, Message::new(ctx.operator_id, msg))
+                            .expect("Communication error");
+                    }
+                }
+                Some(BarrierData::Barrier(mut b)) => {
+                    // persist frontier
+                    b.persist(ctx.frontier.get_actual(), &(), ctx.operator_id);
+                    for w in ctx.communication.get_peers() {
+                        let msg = bincode::encode_to_vec(
+                            Self::ExMsg::BarrierAlign(ctx.worker_id),
+                            CONFIG,
+                        )
+                        .expect("Encoding error");
+                        ctx.communication
+                            .send(w, Message::new(ctx.operator_id, msg))
+                            .expect("Communication error");
+                    }
+                    let _ = received_barriers.0.insert(b);
+                }
+                Some(BarrierData::Data(d)) => {
+                    // send data and progress
+                    // + 1 for self
+                    let idx: u32 = partitioner(&d, ctx.communication.get_peers().len() + 1)
+                        .try_into()
+                        .unwrap();
+                    if idx == ctx.worker_id {
+                        output.send(BarrierData::Data(d));
+                    } else {
+                        let msg = bincode::encode_to_vec(Self::ExMsg::Data(d), CONFIG)
+                            .expect("Encoding error");
+                        ctx.communication
+                            .send(&idx, Message::new(ctx.operator_id, msg))
+                            .unwrap()
+                    }
+                }
+                None => (),
+            }
+            match ctx.communication.recv().unwrap() {
+                Some(x) => {
+                    let decode: Self::ExMsg = bincode::decode_from_slice(&x.data, CONFIG)
+                        .expect("Decoding error")
+                        .0;
+                    match decode {
+                        ExchangeMessage::Data(d) => output.send(BarrierData::Data(d)),
+                        ExchangeMessage::BarrierAlign(w) => {
+                            received_barriers.1.insert(w);
+                        }
+                        ExchangeMessage::LoadAlign(w) => {
+                            received_loads.1.insert(w);
+                        }
+                    }
+                }
+                None => (),
+            };
+            // synchronize barriers and loads
+            if received_barriers.1.len() >= ctx.communication.get_peers().len() {
+                if let Some(p) = received_barriers.0.take() {
+                    output.send(BarrierData::Barrier(p));
+                    received_barriers.1.drain();
+                }
+            }
+            if received_loads.1.len() >= ctx.communication.get_peers().len() {
+                if let Some(p) = received_loads.0.take() {
+                    output.send(BarrierData::Load(p));
+                    received_loads.1.drain();
+                }
+            }
+        });
+
+        self.then(op)
     }
 }

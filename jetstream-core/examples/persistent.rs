@@ -32,7 +32,7 @@ fn main() {
             input
         });
     worker.add_stream(stream);
-    let mut runtime = worker.build();
+    let mut runtime = worker.build().unwrap();
     loop {
         runtime.step()
     }
