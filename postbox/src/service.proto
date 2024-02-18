@@ -12,8 +12,7 @@ message ExchangeResponse {
 }
 
 message ExchangeMessage {
-    // And this message is for this operator
-    uint32 operator_id = 1;
-    // and this is the content
+    // TODO figure out how to use tonic without protobuf
+    bytes operator_id = 1;
     bytes data = 2;
 }

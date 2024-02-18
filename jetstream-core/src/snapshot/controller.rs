@@ -3,15 +3,12 @@
 use bincode::{Decode, Encode};
 use indexmap::IndexMap;
 
-use crate::frontier::Timestamp;
-use postbox::Message;
+use crate::Message;
+use crate::{frontier::Timestamp, NoData, NoKey};
 
 use crate::{
     channels::selective_broadcast::{self, Receiver, Sender},
-    stream::{
-        jetstream::{Data, JetStreamBuilder},
-        operator::StandardOperator,
-    },
+    stream::{jetstream::JetStreamBuilder, operator::StandardOperator},
 };
 
 use super::{barrier::BarrierData, PersistenceBackend};
@@ -25,7 +22,7 @@ pub enum ComsMessage {
 
 #[derive(Clone)]
 pub struct RegionHandle<P> {
-    sender: Sender<(), P>,
+    sender: crossbeam::channel::Sender<P>,
 }
 
 #[derive(Default)]
@@ -33,30 +30,27 @@ struct ControllerState {
     commited_snapshots: IndexMap<u32, u64>,
 }
 
-pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
+pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
-) -> (StandardOperator<O, O, P>, RegionHandle<P>) {
+) -> (StandardOperator<K, T, K, T, P>, RegionHandle<P>) {
     let bincode_conf = bincode::config::standard();
     // channel from leafs of region to root
-    let mut backchannel_tx = Sender::<(), P>::new_unlinked(selective_broadcast::full_broadcast);
-    let mut backchannel_rx = Receiver::new_unlinked();
-    selective_broadcast::link(&mut backchannel_tx, &mut backchannel_rx);
+    let (backchannel_tx, backchannel_rx) = crossbeam::channel::unbounded();
 
     let mut state: Option<ControllerState> = None;
     let mut snapshot_in_progress = false;
 
-    let op = StandardOperator::new(move |input: &mut Receiver<O, P>, output, ctx| {
+    let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
         let peers = ctx.communication.get_peers();
         ctx.frontier.advance_to(Timestamp::MAX);
         match input.recv() {
-            Some(BarrierData::Barrier(_)) => {
+            Some(Message::AbsBarrier(_)) => {
                 unimplemented!("Barriers must not cross persistance regions!")
             }
-            Some(BarrierData::Load(_)) => {
+            Some(Message::Load(_)) => {
                 unimplemented!("Loads must not cross persistance regions!")
             }
-            Some(BarrierData::Data(d)) => output.send(BarrierData::Data(d)),
-            None => (),
+            x => output.send(x),
         };
 
         if state.is_none() && ctx.worker_id == 0 {
@@ -81,7 +75,9 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 bincode::encode_to_vec(ComsMessage::LoadSnapshot(*last_commited), bincode_conf)
                     .unwrap();
             for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication.send(p, Message::new(ctx.operator_id, m)).unwrap();
+                ctx.communication
+                    .send(p, Message::new(ctx.operator_id, m))
+                    .unwrap();
             }
         }
 
@@ -98,7 +94,9 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                 bincode::encode_to_vec(ComsMessage::StartSnapshot(snapshot_epoch), bincode_conf)
                     .unwrap();
             for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication.send(p, Message::new(ctx.operator_id, m)).unwrap();
+                ctx.communication
+                    .send(p, Message::new(ctx.operator_id, m))
+                    .unwrap();
             }
 
             output.send(BarrierData::Barrier(backend));
@@ -110,7 +108,7 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
             // received it on all inputs, we now here that we are done with
             // the snapshot
             snapshot_in_progress = match backchannel_rx.recv() {
-                Some(BarrierData::Barrier(b)) => {
+                Some(b) => {
                     state
                         .as_mut()
                         .unwrap()
@@ -125,7 +123,8 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
                         )
                         .unwrap();
                         ctx.communication
-                            .send(&0, Message::new(ctx.operator_id, msg)).unwrap();
+                            .send(&0, Message::new(ctx.operator_id, msg))
+                            .unwrap();
                     }
                     false
                 }
@@ -174,16 +173,16 @@ pub fn start_snapshot_region<O: Data, P: PersistenceBackend>(
     )
 }
 
-pub fn end_snapshot_region<O: Data, P: PersistenceBackend>(
-    stream: JetStreamBuilder<O, P>,
+pub fn end_snapshot_region<K, T, P: PersistenceBackend>(
+    stream: JetStreamBuilder<K, T, P>,
     mut region_handle: RegionHandle<P>,
-) -> JetStreamBuilder<O, P> {
-    let op = StandardOperator::new(move |input: &mut Receiver<O, P>, output, ctx| {
+) -> JetStreamBuilder<K, T, P> {
+    let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
         ctx.frontier.advance_to(Timestamp::MAX);
         match input.recv() {
-            Some(BarrierData::Barrier(b)) => region_handle.sender.send(BarrierData::Barrier(b)),
-            Some(BarrierData::Data(d)) => output.send(BarrierData::Data(d)),
-            _ => (),
+            Some(Message::AbsBarrier(b)) => region_handle.sender.send(b).unwrap(),
+            Some(x) => output.send(x),
+            None => (),
         };
     });
     stream.then(op)

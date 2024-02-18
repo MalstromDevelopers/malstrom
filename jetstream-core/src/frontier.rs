@@ -1,9 +1,11 @@
 use std::ops::Add;
 
 use crate::channels::watch;
+use bincode::{Decode, Encode};
+use serde_derive::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 pub struct Timestamp(u64);
 
 impl Timestamp {

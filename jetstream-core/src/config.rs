@@ -1,4 +1,4 @@
-use crate::WorkerId;
+use crate::{Scale, WorkerId};
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use tonic::transport::Uri;
@@ -17,7 +17,7 @@ pub struct Config {
     // name of k8s statefulset
     pub sts_name: String,
     // total cluster size before any rescaling
-    pub initial_scale: u32,
+    pub initial_scale: Scale,
 }
 
 impl Config {

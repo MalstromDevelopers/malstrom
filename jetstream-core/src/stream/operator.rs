@@ -8,22 +8,22 @@ use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// which can be used at runtime
 use crate::frontier::{Frontier, FrontierHandle, Probe, Timestamp};
 use crate::snapshot::PersistenceBackend;
-use crate::{OperatorId, WorkerId};
+use crate::{OperatorId, OperatorPartitioner, WorkerId};
 
-use super::jetstream::Data;
+use crate::Data;
 
 /// An Operator which can have output added and can be turned
 /// into a FrontieredOperator
 /// This trait exists mainly for type erasure, so that the Jetstream
 /// need not know the input type of its last operator
-pub trait AppendableOperator<O, P: PersistenceBackend> {
-    fn get_output_mut(&mut self) -> &mut Sender<O, P>;
+pub trait AppendableOperator<K, T, P: PersistenceBackend> {
+    fn get_output_mut(&mut self) -> &mut Sender<K, T, P>;
 
     fn build(self: Box<Self>) -> FrontieredOperator<P>;
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<T: Data, P: PersistenceBackend>() -> StandardOperator<T, T, P> {
+pub fn pass_through_operator<K, T, P: PersistenceBackend>() -> StandardOperator<K, T, K, T, P> {
     StandardOperator::new(|input, output, ctx| {
         ctx.frontier.advance_to(Timestamp::MAX);
         if let Some(x) = input.recv() {
@@ -39,32 +39,39 @@ pub struct OperatorContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub frontier: FrontierHandle<'a>,
-    pub communication: &'a Postbox,
+    pub communication: &'a Postbox<WorkerId, OperatorId>,
 }
 
 /// A builder type to build generic operators
-pub struct StandardOperator<I, O, P: PersistenceBackend> {
-    input: Receiver<I, P>,
-    mapper: Box<dyn Mapper<I, O, P>>,
-    output: Sender<O, P>,
+pub struct StandardOperator<KI, TI, KO, TO, P: PersistenceBackend> {
+    input: Receiver<KI, TI, P>,
+    // TODO: get rid of the dynamic dispatch here
+    mapper: Box<dyn Mapper<KI, TI, KO, TO, P>>,
+    output: Sender<KO, TO, P>,
 }
 
-pub trait Mapper<I, O, P>:
-    FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut OperatorContext) + 'static
+pub trait Mapper<KI, TI, KO, TO, P>:
+    FnMut(&mut Receiver<KI, TI, P>, &mut Sender<KO, TO, P>, &mut OperatorContext) + 'static
 {
 }
-impl<I, O, P, T: FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut OperatorContext) + 'static>
-    Mapper<I, O, P> for T
+impl<
+        KI,
+        TI,
+        KO,
+        TO,
+        P,
+        T: FnMut(&mut Receiver<KI, TI, P>, &mut Sender<KO, TO, P>, &mut OperatorContext) + 'static,
+    > Mapper<KI, TI, KO, TO, P> for T
 {
 }
 
-impl<I, O, P> StandardOperator<I, O, P>
+impl<KI, TI, KO, TO, P> StandardOperator<KI, TI, KO, TO, P>
 where
-    I: Data,
-    O: Data,
+    //     I: Data,
+    //     O: Data,
     P: PersistenceBackend,
 {
-    pub fn new(mapper: impl Mapper<I, O, P>) -> Self {
+    pub fn new(mapper: impl Mapper<KI, TI, KO, TO, P>) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
         Self {
@@ -74,9 +81,9 @@ where
         }
     }
 
-    pub fn new_with_partitioning(
-        mapper: impl Mapper<I, O, P>,
-        partitioner: impl Fn(&O, usize) -> Vec<usize> + 'static,
+    pub fn new_with_output_partitioning(
+        mapper: impl Mapper<KI, TI, KO, TO, P>,
+        partitioner: impl OperatorPartitioner<KO, TO>,
     ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(partitioner);
@@ -87,18 +94,18 @@ where
         }
     }
 
-    pub fn get_input_mut(&mut self) -> &mut Receiver<I, P> {
+    pub fn get_input_mut(&mut self) -> &mut Receiver<KI, TI, P> {
         &mut self.input
     }
 }
 
-impl<I, O, P> AppendableOperator<O, P> for StandardOperator<I, O, P>
+impl<KI, TI, KO, TO, P> AppendableOperator<KO, TO, P> for StandardOperator<KI, TI, KO, TO, P>
 where
-    I: 'static,
-    O: Data + 'static,
+    //     I: 'static,
+    //     O: Data + 'static,
     P: PersistenceBackend,
 {
-    fn get_output_mut(&mut self) -> &mut Sender<O, P> {
+    fn get_output_mut(&mut self) -> &mut Sender<KO, TO, P> {
         &mut self.output
     }
 
@@ -114,9 +121,9 @@ where
 //     mapper: Box<dyn FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle)>,
 //     output: Sender<O, P>,
 // }
-impl<I, O, P> Operator<P> for StandardOperator<I, O, P>
+impl<KI, TI, KO, TO, P> Operator<P> for StandardOperator<KI, TI, KO, TO, P>
 where
-    O: Clone,
+    //     O: Clone,
     P: PersistenceBackend,
 {
     fn step(&mut self, context: &mut OperatorContext) {
@@ -137,12 +144,12 @@ impl<P> FrontieredOperator<P>
 where
     P: PersistenceBackend,
 {
-    fn new<I: 'static, O: Data + 'static>(operator: StandardOperator<I, O, P>) -> Self {
-        Self {
-            frontier: Frontier::default(),
-            operator: Box::new(operator),
-        }
-    }
+    // fn new<I: 'static, O: Data + 'static>(operator: StandardOperator<I, O, P>) -> Self {
+    //     Self {
+    //         frontier: Frontier::default(),
+    //         operator: Box::new(operator),
+    //     }
+    // }
 
     pub fn add_upstream_probe(&mut self, probe: Probe) {
         self.frontier.add_upstream_probe(probe)
@@ -156,7 +163,7 @@ where
         self,
         worker_id: WorkerId,
         operator_id: OperatorId,
-        communication: Postbox,
+        communication: Postbox<WorkerId, OperatorId>,
     ) -> RunnableOperator<P> {
         RunnableOperator {
             worker_id,
@@ -172,7 +179,7 @@ pub struct RunnableOperator<P> {
     worker_id: WorkerId,
     operator_id: OperatorId,
     frontier: Frontier,
-    communication: Postbox,
+    communication: Postbox<WorkerId, OperatorId>,
     operator: Box<dyn Operator<P>>,
 }
 

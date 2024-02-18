@@ -16,11 +16,11 @@ fn main() {
     let backend = backend.connect().unwrap();
 
     op_postbox
-        .send(&0, Message::new(0, vec![1, 2, 3, 4]))
+        .send(&0, Message::new(0, vec![1u8, 2, 3, 4]))
         .unwrap();
 
     loop {
-        match op_postbox.recv().unwrap() {
+        match op_postbox.recv::<Vec<u8>>().unwrap() {
             Some(x) => {
                 println!("{x:?}");
                 break;

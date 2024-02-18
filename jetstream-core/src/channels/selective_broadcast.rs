@@ -10,7 +10,7 @@ use std::rc::Rc;
 use crossbeam;
 use itertools::{self, Itertools};
 
-use super::Message;
+use crate::{DataMessage, Message, OperatorPartitioner};
 
 struct BarrierReceiver<K, T, P>(crossbeam::channel::Receiver<Message<K, T, P>>, Option<P>);
 
@@ -26,9 +26,8 @@ impl<K, T, P> BarrierReceiver<K, T, P> {
             return None;
         }
         match self.0.try_recv().ok() {
-            Some(BarrierData::Data(d)) => Some(BarrierData::Data(d)),
-            Some(BarrierData::Load(l)) => Some(BarrierData::Load(l)),
-            Some(BarrierData::Barrier(b)) => {
+            x => x,
+            Some(Message::AbsBarrier(b)) => {
                 self.1 = Some(b);
                 None
             }
@@ -45,7 +44,7 @@ impl<K, T, P> BarrierReceiver<K, T, P> {
     }
     /// Remove any existing barrier from this channel
     fn take_barrier(&mut self) -> Option<Message<K, T, P>> {
-        self.1.take().map(|x| BarrierData::Barrier(x))
+        self.1.take().map(|x| Message::AbsBarrier(x))
     }
 }
 
@@ -68,7 +67,7 @@ pub struct Sender<K, T, P> {
     // Check if we can solve that another way
     senders: Vec<crossbeam::channel::Sender<Message<K, T, P>>>,
     #[allow(clippy::type_complexity)] // it's not thaaat complex
-    partitioner: Rc<dyn Fn(&T, usize) -> Vec<usize>>,
+    partitioner: Rc<dyn OperatorPartitioner<K, T>>,
 }
 
 /// Selective Broadcast Receiver
@@ -76,56 +75,45 @@ pub struct Receiver<K, T, P>(Vec<BarrierReceiver<K, T, P>>);
 
 impl<K, T, P> Sender<K, T, P>
 where
+    K: Clone,
     T: Clone,
     P: Clone,
 {
-    pub fn new_unlinked(partitioner: impl Fn(&T, usize) -> Vec<usize> + 'static) -> Self {
+    pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, T>) -> Self {
         Self {
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
         }
     }
 
-    /// Send a value into this channel. The value will be distributed to receiver
-    /// as per the result of the partitioning function
+    /// Send a value into this channel.
+    /// Data messages are distributed as per the partioning function
+    /// System messages are always broadcasted
     pub fn send(&mut self, msg: Message<K, T, P>) {
         if self.senders.is_empty() {
             return;
         }
-        let all = || (0..self.senders.len()).collect_vec();
-        let recv_idxs = match &msg {
-            Message::Data(x) => (self.partitioner)(x, self.senders.len()),
-            Message::Barrier(_) => all,
-            Message::Load(_) => all,
-            // the two below need to be distributed as all
-            // because there is no key to route them.
-            // It should not matter much, since they are likely
-            // cheap to clone
-            Message::Shutdown(_) => all,
-            Message::ShutdownAck(_) => all,
-            Message::Final(x) => (self.partitioner)(x, self.senders.len()),
-            Message::Redistribute(x) => (self.partitioner)(x.key, self.senders.len()),
-            Message::Acquire(x) => (self.partitioner)(x.key, self.senders.len()),
-        };
-        let recv_idxs_len = recv_idxs.len();
-        // repeat_n will clone for every iteration except the last
-        // this gives us a small optimization on the common "1 receiver" case :)
-        for (idx, elem) in recv_idxs
-            .into_iter()
-            .zip(itertools::repeat_n(msg, recv_idxs_len))
-        {
-            // SAFETY: We modul o the index with the sender length, so it can not be
-            // out of bounds
-            let sender = unsafe { self.senders.get_unchecked(idx % self.senders.len()) };
-            match sender.send(elem) {
-                Ok(_) => continue,
-                // remove dropped receivers
-                Err(_) => {
-                    self.senders.remove(idx);
-                    self.senders.shrink_to_fit()
+        match msg {
+            Message::Data(x) => {
+                let idx = (self.partitioner)(&x, self.senders.len());
+                let _ = self
+                    .senders
+                    .get(idx)
+                    .expect("Receiver Index out of range")
+                    .send(Message::Data(x));
+            }
+            _ => {
+                // repeat_n will clone for every iteration except the last
+                // this gives us a small optimization on the common "1 receiver" case :)
+                for (sender, elem) in self
+                    .senders
+                    .iter_mut()
+                    .zip(itertools::repeat_n(msg, self.senders.len()))
+                {
+                    let _ = sender.send(elem);
                 }
             }
-        }
+        };
     }
 }
 
@@ -177,7 +165,7 @@ impl<K, T, P> Receiver<K, T, P> {
         // 3. All channels are barred
         if self.0.iter().all(|x| x.is_barred()) {
             // PANIC: Unwrap is safe as we just asserted, that they are all barred
-            self.0.iter_mut().map(|x| x.take_barrier().unwrap()).next()
+            self.0.iter_mut().map(|x| x.take_barrier().unwrap()).last()
         } else {
             None
         }

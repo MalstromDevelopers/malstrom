@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
-bincode = "2.0.0-rc.3"
+bincode = {version = "2.0.0-rc.3", features = ["serde"] }
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 derive-new = "0.6.0"
 dns-lookup = "2.0.4"
@@ -28,11 +28,12 @@ tracing = "0.1.40"
 url = "2.4.1"
 kube = { version = "0.87.2", features = ["runtime", "derive"] }
 k8s-openapi = { version = "0.20.0", features = ["latest"] }
-indexmap = "2.1.0"
+indexmap = {version = "2.1.0", features = ["serde"] }
 serde_yaml = "0.9.30"
 postbox = { path = "../postbox" }
 config = "0.13.4"
 lazy_static = "1.4.0"
+serde_derive = "1.0.196"
 
 [build-dependencies]
 prost = "0.12.3"
