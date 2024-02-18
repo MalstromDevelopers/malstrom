@@ -40,7 +40,7 @@ impl<K, T, P> KeyLocal<K, T, P> for JetStreamBuilder<K, T, P>
 where
     K: Key,
     T: Data,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     fn key_local(self, key_func: impl Fn(&T) -> K) -> JetStreamBuilder<K, T, P> {
         let op = StandardOperator::new(move |input, output, ctx| {

@@ -27,11 +27,14 @@ use thiserror::Error;
 
 const CONFIG: bincode::config::Configuration = bincode::config::standard();
 
-trait WorkerId: Clone + Hash + Eq {}
+pub trait WorkerId: Clone + Hash + Eq {}
 impl<T: Clone + Hash + Eq> WorkerId for T {}
-trait OperatorId: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static {}
+pub trait OperatorId:
+    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static
+{
+}
 impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static> OperatorId for T {}
-trait Data: Serialize + DeserializeOwned {}
+pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 
 #[derive(Error, Debug)]
@@ -245,7 +248,7 @@ pub enum BuildError {
 }
 
 pub struct CommunicationBackend {
-    clients: Vec<GrpcSender>,
+    _clients: Vec<GrpcSender>,
     _server_task: JoinHandle<()>,
     _rt: Runtime,
 }
@@ -293,7 +296,7 @@ impl CommunicationBackend {
         }
 
         Ok(Self {
-            clients,
+            _clients: clients,
             _server_task: server_task,
             _rt: rt,
         })

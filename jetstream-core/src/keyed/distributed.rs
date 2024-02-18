@@ -74,8 +74,8 @@ struct Distributor<K, T, P> {
 
 impl<K, T, P> Distributor<K, T, P>
 where
-K: DistKey,
-T: DistData,
+    K: DistKey,
+    T: DistData,
     P: PersistenceBackend,
 {
     fn run(
@@ -123,12 +123,14 @@ T: DistData,
             // simply ignore all keying related messages, since they may not cross here
             _ => None,
         };
-        if let Some(msg) = scalable_message {
-            self.inner = match self.inner {
-                PhaseDistributor::Normal(x) => x.handle_msg(self.dist_func, msg, output, &mut ctx),
-                PhaseDistributor::Interrogate(x) => x.handle_msg(self.dist_func, msg, output, &mut ctx),
-                PhaseDistributor::Collect(_) => todo!(),
-            };
+        self.inner = match self.inner {
+            PhaseDistributor::Normal(x) => {
+                x.run(self.dist_func, scalable_message, output, &mut ctx)
+            }
+            PhaseDistributor::Interrogate(x) => {
+                x.run(self.dist_func, scalable_message, output, &mut ctx)
+            }
+            PhaseDistributor::Collect(_) => todo!(),
         }
     }
 }
@@ -141,13 +143,19 @@ pub(super) struct NormalDistributor {
     pub finished: IndexSet<WorkerId>,
 }
 impl NormalDistributor {
-    pub(super) fn handle_msg<K: DistKey, T: DistData, P: Clone>(
+    pub(super) fn run<K: DistKey, T: DistData, P: Clone>(
         mut self,
         dist_func: impl Fn(&K, &IndexSet<WorkerId>) -> WorkerId,
-        msg: ScalableMessage<K, T>,
+        msg: Option<ScalableMessage<K, T>>,
         output: &mut Sender<K, T, P>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, T> {
+        let msg = match msg {
+            Some(m) => m,
+            None => {
+                return PhaseDistributor::Normal(self);
+            }
+        };
         match msg {
             ScalableMessage::Data(m) => {
                 if m.version.map_or(false, |v| v > self.version) {
@@ -171,12 +179,21 @@ impl NormalDistributor {
                 PhaseDistributor::Normal(self)
             }
             ScalableMessage::ScaleRemoveWorker(set) => {
-                let new_set: IndexSet<WorkerId> = self.worker_set.drain(..).filter(|x| !set.contains(x)).collect();
-                PhaseDistributor::Interrogate(InterrogateDistributor::from_normal(self, new_set, output))
+                let new_set: IndexSet<WorkerId> = self
+                    .worker_set
+                    .drain(..)
+                    .filter(|x| !set.contains(x))
+                    .collect();
+                PhaseDistributor::Interrogate(InterrogateDistributor::from_normal(
+                    self, new_set, output,
+                ))
             }
             ScalableMessage::ScaleAddWorker(set) => {
-                let new_set: IndexSet<WorkerId> = self.worker_set.into_iter().chain(set.into_iter()).collect();
-                PhaseDistributor::Interrogate(InterrogateDistributor::from_normal(self, new_set, output))
+                let new_set: IndexSet<WorkerId> =
+                    self.worker_set.into_iter().chain(set.into_iter()).collect();
+                PhaseDistributor::Interrogate(InterrogateDistributor::from_normal(
+                    self, new_set, output,
+                ))
             }
             ScalableMessage::Done(wid) => {
                 self.finished.insert(wid);
@@ -197,23 +214,67 @@ pub(super) struct CollectDistributor<K, T> {
     // there is no real good way for us to handle that, so we will
     // queue it up to be handled after collect is done
     queued_rescales: Vec<ScalableMessage<K, T>>,
+    current_collect: Option<Collect<K>>,
 }
-impl<K, T> CollectDistributor<K, T> where K: DistKey, T: DistData{
-    pub(super) fn handle_msg<P: Clone>(
+impl<K, T> CollectDistributor<K, T>
+where
+    K: DistKey,
+    T: DistData,
+{
+    pub(super) fn run<P: Clone>(
         mut self,
         dist_func: impl Fn(&K, &IndexSet<WorkerId>) -> WorkerId,
-        msg: ScalableMessage<K, T>,
+        msg: Option<ScalableMessage<K, T>>,
         output: &mut Sender<K, T, P>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, T> {
         match msg {
-            ScalableMessage::Data(m) => {todo!()}
-            ScalableMessage::ScaleRemoveWorker(set) => {todo!()}
-            ScalableMessage::ScaleAddWorker(set) => {todo!()}
-            ScalableMessage::Done(wid) => {todo!()}
+            ScalableMessage::Data(m) => {
+                todo!()
+            }
+            ScalableMessage::ScaleRemoveWorker(set) => {
+                todo!()
+            }
+            ScalableMessage::ScaleAddWorker(set) => {
+                todo!()
+            }
+            ScalableMessage::Done(wid) => {
+                todo!()
+            }
         }
     }
 
+    fn new(
+        whitelist: IndexSet<K>,
+        old_worker_set: IndexSet<WorkerId>,
+        new_worker_set: IndexSet<WorkerId>,
+        version: Version,
+        finished: IndexSet<WorkerId>,
+        queued_rescales: Vec<ScalableMessage<K, T>>,
+        output: &mut Sender<K, T, P>,
+    ) -> Self {
+        let mut hold = IndexMap::new();
+        let current_collect = whitelist.pop().map(|x| {
+            hold.insert(x.clone(), Vec::new());
+            Collect {
+                key: x,
+                collection: Rc::new(Mutex::new(IndexMap::new())),
+            }
+        });
+        if let Some(c) = collect {
+            output.send(Message::Collect(c))
+        }
+        Self {
+            whitelist,
+            hold,
+            old_worker_set,
+            new_worker_set,
+            version: version + 1,
+            finished,
+            queued_rescales,
+            current_collect,
+        }
+    }
 }
 
 struct InterrogateDistributor<K, T> {
@@ -283,10 +344,10 @@ where
             .expect("Network Send Error");
     }
 
-    fn handle_msg<P: Clone>(
+    fn run<P: Clone>(
         mut self,
         dist_func: impl Fn(&K, &IndexSet<WorkerId>) -> WorkerId,
-        msg: ScalableMessage<K, T>,
+        msg: Option<ScalableMessage<K, T>>,
         output: &mut Sender<K, T, P>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, T> {
@@ -375,17 +436,23 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkAcquire<K> {
     key: K,
-    collection: IndexMap<OperatorId, Vec<u8>>
+    collection: IndexMap<OperatorId, Vec<u8>>,
 }
 
-impl<K> From<Acquire<K>> for NetworkAcquire<K>{
+impl<K> From<Acquire<K>> for NetworkAcquire<K> {
     fn from(value: Acquire<K>) -> Self {
-        Self { key: value.key, collection: value.collection.into_inner().unwrap() }
+        Self {
+            key: value.key,
+            collection: value.collection.into_inner().unwrap(),
+        }
     }
 }
-impl<K> From<NetworkAcquire<K>> for Acquire<K>{
+impl<K> From<NetworkAcquire<K>> for Acquire<K> {
     fn from(value: NetworkAcquire<K>) -> Self {
-        Self { key: value.key, collection: Rc::new(Mutex::new(value.collection)) }
+        Self {
+            key: value.key,
+            collection: Rc::new(Mutex::new(value.collection)),
+        }
     }
 }
 

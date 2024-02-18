@@ -13,7 +13,7 @@ fn main() {
     let backend = BackendBuilder::new(listen_addr, vec![(0, peer)], vec![0], 128);
     let op_postbox = backend.for_operator(&0).unwrap();
 
-    let backend = backend.connect().unwrap();
+    let _backend = backend.connect().unwrap();
 
     op_postbox
         .send(&0, Message::new(0, vec![1u8, 2, 3, 4]))
