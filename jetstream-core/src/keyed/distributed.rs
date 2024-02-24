@@ -144,7 +144,7 @@ where
             PhaseDistributor::Interrogate(x) => {
                 x.run(&self.dist_func, scalable_message, output, ctx)
             }
-            PhaseDistributor::Collect(_) => todo!(),
+            PhaseDistributor::Collect(x) => x.run(&self.dist_func, scalable_message, output, ctx),
             PhaseDistributor::None => panic!("Invariant broken: Inner distributor can not be None")
         }
     }

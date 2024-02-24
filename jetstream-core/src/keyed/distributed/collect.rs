@@ -4,11 +4,7 @@ use bincode::config::Configuration;
 use indexmap::{Equivalent, IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    frontier::Timestamp,
-    snapshot::PersistenceBackend,
-    stream::operator::OperatorContext,
-    Data, DataMessage, Key, Message, OperatorId, WorkerId,
+    channels::selective_broadcast::{Receiver, Sender}, frontier::Timestamp, keyed::WorkerPartitioner, snapshot::PersistenceBackend, stream::operator::OperatorContext, Data, DataMessage, Key, Message, OperatorId, WorkerId
 };
 
 use serde::de::DeserializeOwned;
@@ -36,7 +32,7 @@ where
 {
     pub(super) fn run<P: Clone>(
         mut self,
-        dist_func: impl Fn(&K, &IndexSet<WorkerId>) -> WorkerId,
+        dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, T>>,
         output: &mut Sender<K, T, P>,
         ctx: &mut OperatorContext,
@@ -49,7 +45,7 @@ where
                     // Rule 1.2
                     e.push((m.message.time, m.message.value))
                 } else {
-                    let new_target = dist_func(&m.message.key, &self.new_worker_set);
+                    let new_target = *dist_func(&m.message.key, &self.new_worker_set);
                     let old_target = dist_func(&m.message.key, &self.old_worker_set);
                     // Rule 1.1
                     if (new_target != ctx.worker_id) && self.whitelist.contains(&m.message.key) {
