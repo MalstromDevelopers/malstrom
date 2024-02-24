@@ -8,9 +8,10 @@ use std::rc::Rc;
 /// NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 /// big queues with this channel.
 use crossbeam;
+use indexmap::IndexSet;
 use itertools::{self, Itertools};
 
-use crate::{DataMessage, Message, OperatorPartitioner};
+use crate::{DataMessage, Message, OperatorId, OperatorPartitioner, Scale};
 
 struct BarrierReceiver<K, T, P>(crossbeam::channel::Receiver<Message<K, T, P>>, Option<P>);
 
@@ -48,9 +49,9 @@ impl<K, T, P> BarrierReceiver<K, T, P> {
     }
 }
 
-/// A simple partitioner, which will broadcast a value to all receivers
-pub fn full_broadcast<T>(_: &T, recv_cnt: usize) -> Vec<usize> {
-    (0..recv_cnt).collect()
+// /// A simple partitioner, which will broadcast a value to all receivers
+pub fn full_broadcast<T>(_: &T, scale: Scale) -> IndexSet<OperatorId> {
+    (0..scale).collect()
 }
 
 /// Link a Sender and receiver together
@@ -93,14 +94,17 @@ where
         if self.senders.is_empty() {
             return;
         }
+        let recipient_len = self.senders.len();
         match msg {
             Message::Data(x) => {
-                let idx = (self.partitioner)(&x, self.senders.len());
-                let _ = self
+                let indices = (self.partitioner)(&x, recipient_len);
+                for (sender, elem) in self
                     .senders
-                    .get(idx)
-                    .expect("Receiver Index out of range")
-                    .send(Message::Data(x));
+                    .iter_mut()
+                    .zip(itertools::repeat_n(Message::Data(x), indices.len()))
+                {
+                    let _ = sender.send(elem);
+                }
             }
             _ => {
                 // repeat_n will clone for every iteration except the last
@@ -108,7 +112,7 @@ where
                 for (sender, elem) in self
                     .senders
                     .iter_mut()
-                    .zip(itertools::repeat_n(msg, self.senders.len()))
+                    .zip(itertools::repeat_n(msg, recipient_len))
                 {
                     let _ = sender.send(elem);
                 }

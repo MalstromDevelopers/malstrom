@@ -25,21 +25,23 @@ type WorkerId = usize;
 type Scale = usize;
 
 /// Marker trait for stream keys
-trait Key: Hash + Eq + PartialEq + Clone {}
-impl<T: Hash + Eq + PartialEq + Clone> Key for T {}
+trait Key: Hash + Eq + PartialEq + Clone + 'static {}
+impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
 
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
 
 /// Zero sized indicator for an unkeyed stream
+#[derive(Clone, Hash, PartialEq, Eq)]
 struct NoKey;
 /// Zero sized indicator for a stream with no data
+#[derive(Clone)]
 struct NoData;
 
 /// Marker trait for functions which determine inter-operator routing
-trait OperatorPartitioner<K, T>: Fn(&DataMessage<K, T>, Scale) -> OperatorId + 'static {}
-impl<K, T, U: Fn(&DataMessage<K, T>, Scale) -> OperatorId + 'static> OperatorPartitioner<K, T>
+trait OperatorPartitioner<K, T>: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static {}
+impl<K, T, U: Fn(&DataMessage<K, T>, Scale) ->  IndexSet<OperatorId> + 'static> OperatorPartitioner<K, T>
     for U
 {
 }

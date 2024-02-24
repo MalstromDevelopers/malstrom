@@ -8,7 +8,7 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RunnableOperator, StandardOperator,
 };
-use crate::{NoData, NoKey, OperatorPartitioner, WorkerId};
+use crate::{Data, Key, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 
 pub struct Worker<P> {
     operators: Vec<FrontieredOperator<P>>,
@@ -37,7 +37,7 @@ where
         JetStreamBuilder::from_operator(new_op)
     }
 
-    pub fn add_stream<K, T>(&mut self, stream: JetStreamBuilder<K, T, P>) {
+    pub fn add_stream<K: Key, T: Data>(&mut self, stream: JetStreamBuilder<K, T, P>) {
         let stream = end_snapshot_region(stream, self.snapshot_handle.clone());
         for mut op in stream.build().into_operators().into_iter() {
             for p in self.probes.iter() {
@@ -49,7 +49,7 @@ where
     }
 
     /// Unions N streams with identical output types into a single stream
-    pub fn union<K, T>(
+    pub fn union<K: Key, T: Data>(
         &mut self,
         streams: Vec<JetStreamBuilder<K, T, P>>,
     ) -> JetStreamBuilder<K, T, P> {
@@ -63,7 +63,7 @@ where
         JetStreamBuilder::from_operator(unioned)
     }
 
-    pub fn split_n<const N: usize, K, T>(
+    pub fn split_n<const N: usize, K: Key, T: Data>(
         &mut self,
         input: JetStreamBuilder<K, T, P>,
         partitioner: impl OperatorPartitioner<K, T>,
@@ -101,14 +101,14 @@ where
 
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
-        let operator_ids = (0..self.operators.len())
+        let operator_ids: Vec<OperatorId> = (0..self.operators.len())
             .map(|x| x.try_into().unwrap())
             .collect();
         // TODO: Get the peer addresses from K8S
         // should be "podname.sts-name"
         let peers = config.get_k8s_peer_uris();
         let communication_backend =
-            postbox::BackendBuilder::new(listen_addr, peers, operator_ids, 128);
+            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
 
         let operators = self
             .root_stream

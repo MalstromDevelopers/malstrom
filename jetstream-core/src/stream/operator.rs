@@ -8,7 +8,7 @@ use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// which can be used at runtime
 use crate::frontier::{Frontier, FrontierHandle, Probe, Timestamp};
 use crate::snapshot::PersistenceBackend;
-use crate::{OperatorId, OperatorPartitioner, WorkerId};
+use crate::{Key, OperatorId, OperatorPartitioner, WorkerId};
 
 use crate::Data;
 
@@ -23,7 +23,7 @@ pub trait AppendableOperator<K, T, P: PersistenceBackend> {
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<K, T, P: PersistenceBackend>() -> StandardOperator<K, T, K, T, P> {
+pub fn pass_through_operator<K: Key, T: Data, P: PersistenceBackend>() -> StandardOperator<K, T, K, T, P> {
     StandardOperator::new(|input, output, ctx| {
         ctx.frontier.advance_to(Timestamp::MAX);
         if let Some(x) = input.recv() {
@@ -39,7 +39,7 @@ pub struct OperatorContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub frontier: FrontierHandle<'a>,
-    pub communication: &'a Postbox<WorkerId, OperatorId>,
+    pub communication: &'a Postbox<WorkerId>,
 }
 
 /// A builder type to build generic operators
@@ -67,8 +67,10 @@ impl<
 
 impl<KI, TI, KO, TO, P> StandardOperator<KI, TI, KO, TO, P>
 where
-    //     I: Data,
-    //     O: Data,
+    KI: Key,
+    TI: Data,
+    KO: Key,
+    TO: Data,
     P: PersistenceBackend,
 {
     pub fn new(mapper: impl Mapper<KI, TI, KO, TO, P>) -> Self {
@@ -101,8 +103,10 @@ where
 
 impl<KI, TI, KO, TO, P> AppendableOperator<KO, TO, P> for StandardOperator<KI, TI, KO, TO, P>
 where
-    //     I: 'static,
-    //     O: Data + 'static,
+    KI: Key,
+    TI: Data,
+    KO: Key,
+    TO: Data,
     P: PersistenceBackend,
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, TO, P> {
@@ -144,12 +148,12 @@ impl<P> FrontieredOperator<P>
 where
     P: PersistenceBackend,
 {
-    // fn new<I: 'static, O: Data + 'static>(operator: StandardOperator<I, O, P>) -> Self {
-    //     Self {
-    //         frontier: Frontier::default(),
-    //         operator: Box::new(operator),
-    //     }
-    // }
+    fn new<KI: Key, KT: Data, KO: Key, TO: Data>(operator: StandardOperator<KI, KT, KO, TO, P>) -> Self {
+        Self {
+            frontier: Frontier::default(),
+            operator: Box::new(operator),
+        }
+    }
 
     pub fn add_upstream_probe(&mut self, probe: Probe) {
         self.frontier.add_upstream_probe(probe)
@@ -163,7 +167,7 @@ where
         self,
         worker_id: WorkerId,
         operator_id: OperatorId,
-        communication: Postbox<WorkerId, OperatorId>,
+        communication: Postbox<WorkerId>,
     ) -> RunnableOperator<P> {
         RunnableOperator {
             worker_id,
@@ -179,7 +183,7 @@ pub struct RunnableOperator<P> {
     worker_id: WorkerId,
     operator_id: OperatorId,
     frontier: Frontier,
-    communication: Postbox<WorkerId, OperatorId>,
+    communication: Postbox<WorkerId>,
     operator: Box<dyn Operator<P>>,
 }
 

@@ -1,7 +1,7 @@
 use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 use crate::{
     channels::selective_broadcast::{self, Sender},
-    snapshot::PersistenceBackend,
+    snapshot::PersistenceBackend, Data, Key,
 };
 
 pub struct JetStreamBuilder<K, T, P> {
@@ -12,10 +12,11 @@ pub struct JetStreamBuilder<K, T, P> {
 
 impl<K, T, P> JetStreamBuilder<K, T, P>
 where
-    //     O: Data + 'static,
+    K: Key,
+    T: Data,
     P: PersistenceBackend + 'static,
 {
-    pub(crate) fn from_operator<KI: 'static, TI: 'static>(
+    pub(crate) fn from_operator<KI: Key, TI: Data>(
         operator: StandardOperator<KI, TI, K, T, P>,
     ) -> JetStreamBuilder<K, T, P> {
         JetStreamBuilder {
@@ -27,7 +28,8 @@ where
 
 impl<K, T, P> JetStreamBuilder<K, T, P>
 where
-    //     O: Data,
+    K: Key,
+    T: Data,
     P: PersistenceBackend,
 {
     // pub fn tail(&self) -> &FrontieredOperator<O> {
@@ -50,7 +52,7 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<KO: 'static, TO>(
+    pub fn then<KO: Key, TO: Data>(
         mut self,
         mut operator: StandardOperator<K, T, KO, TO, P>,
     ) -> JetStreamBuilder<KO, TO, P> {

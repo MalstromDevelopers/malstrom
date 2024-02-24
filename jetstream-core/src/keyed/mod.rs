@@ -1,14 +1,15 @@
 use indexmap::IndexSet;
 
 use crate::frontier::Timestamp;
+use crate::keyed::distributed::Distributor;
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::StandardOperator;
 use crate::{Data, DataMessage, Key, Message, OperatorId, Scale, WorkerId};
 
-pub mod distributed;
-mod normal_dist;
+use self::distributed::{DistData, DistKey};
 
+pub mod distributed;
 /// Marker trait for functions which determine inter-worker routing
 trait WorkerPartitioner<K>: for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static {}
 impl<K, U: for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static> WorkerPartitioner<K>
@@ -24,7 +25,7 @@ pub trait KeyDistribute<K: Key, T, P: PersistenceBackend> {
     /// with no downtime.
     fn key_distribute(
         self,
-        key_func: impl Fn(&T) -> K,
+        key_func: impl Fn(&T) -> K + 'static,
         partitioner: impl WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, T, P>;
 }
@@ -33,7 +34,7 @@ pub trait KeyLocal<K: Key, T, P> {
     /// messages across workers.
     /// **NOTE:** The keyed stream created by this function **does not**
     /// redistribute state when the local worker is shut down.
-    fn key_local(self, key_func: impl Fn(&T) -> K) -> JetStreamBuilder<K, T, P>;
+    fn key_local(self, key_func: impl Fn(&T) -> K + 'static) -> JetStreamBuilder<K, T, P>;
 }
 
 impl<K, T, P> KeyLocal<K, T, P> for JetStreamBuilder<K, T, P>
@@ -42,7 +43,7 @@ where
     T: Data,
     P: PersistenceBackend,
 {
-    fn key_local(self, key_func: impl Fn(&T) -> K) -> JetStreamBuilder<K, T, P> {
+    fn key_local(self, key_func: impl Fn(&T) -> K + 'static) -> JetStreamBuilder<K, T, P> {
         let op = StandardOperator::new(move |input, output, ctx| {
             ctx.frontier.advance_to(Timestamp::MAX);
             match input.recv() {
@@ -72,14 +73,17 @@ where
 
 impl<K, T, P> KeyDistribute<K, T, P> for JetStreamBuilder<K, T, P>
 where
-    K: Key,
+    K: DistKey,
+    T: DistData,
     P: PersistenceBackend,
 {
     fn key_distribute(
         self,
-        key_func: impl Fn(&T) -> K,
+        key_func: impl Fn(&T) -> K + 'static,
         partitioner: impl WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, T, P> {
+        let mut distributor = Distributor::new(partitioner);
         let keyed = self.key_local(key_func);
+        keyed.then(StandardOperator::new(move |input, output, ctx| distributor.run(input, output, ctx)))
     }
 }

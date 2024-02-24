@@ -275,7 +275,7 @@ Rule 1.2: `(F'(K) != Local) && K ∈ hold`
 Rule 2: `(F'(K) != Local) && K ∉ whitelist && K ∉ hold`
   - We do not have state for this key and we will not have it under the new configuration
   - -> distribute via `F'`
-Rule 3: `(F'(K) == Local) && K ∉ whitelist`
+Rule 3: `(F'(K) == Local)`
     - if `F(K) == Sender`: -> pass downstream
     - else: distribute the message via `F`
 

@@ -2,8 +2,9 @@
 /// to time snapshots
 use bincode::{Decode, Encode};
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 
-use crate::Message;
+use crate::{Data, Key, Message, WorkerId};
 use crate::{frontier::Timestamp, NoData, NoKey};
 
 use crate::{
@@ -11,13 +12,14 @@ use crate::{
     stream::{jetstream::JetStreamBuilder, operator::StandardOperator},
 };
 
+use super::SnapshotVersion;
 use super::{barrier::BarrierData, PersistenceBackend};
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub enum ComsMessage {
-    StartSnapshot(u64),
-    LoadSnapshot(u64),
-    CommitSnapshot(u32, u64),
+    StartSnapshot(SnapshotVersion),
+    LoadSnapshot(SnapshotVersion),
+    CommitSnapshot(WorkerId, SnapshotVersion),
 }
 
 #[derive(Clone)]
@@ -27,15 +29,15 @@ pub struct RegionHandle<P> {
 
 #[derive(Default)]
 struct ControllerState {
-    commited_snapshots: IndexMap<u32, u64>,
+    commited_snapshots: IndexMap<WorkerId, SnapshotVersion>,
 }
 
-pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
+pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
 ) -> (StandardOperator<K, T, K, T, P>, RegionHandle<P>) {
     let bincode_conf = bincode::config::standard();
     // channel from leafs of region to root
-    let (backchannel_tx, backchannel_rx) = crossbeam::channel::unbounded();
+    let (backchannel_tx, backchannel_rx) = crossbeam::channel::unbounded::<P>();
 
     let mut state: Option<ControllerState> = None;
     let mut snapshot_in_progress = false;
@@ -50,7 +52,8 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
             Some(Message::Load(_)) => {
                 unimplemented!("Loads must not cross persistance regions!")
             }
-            x => output.send(x),
+            Some(x) => output.send(x),
+            None => ()
         };
 
         if state.is_none() && ctx.worker_id == 0 {
@@ -68,17 +71,10 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
                 .load(ctx.operator_id)
                 .map(|x| x.1)
                 .unwrap_or_default();
-            output.send(BarrierData::Load(backend));
+            output.send(Message::Load(backend));
 
             // instruct other workers to load the state
-            let msg =
-                bincode::encode_to_vec(ComsMessage::LoadSnapshot(*last_commited), bincode_conf)
-                    .unwrap();
-            for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication
-                    .send(p, Message::new(ctx.operator_id, m))
-                    .unwrap();
-            }
+            ctx.communication.broadcast(ComsMessage::LoadSnapshot(*last_commited));
         }
 
         // PANIC: Can unwrap here because we loaded the state before
@@ -90,16 +86,8 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
             backend.persist(ctx.frontier.get_actual(), &s, ctx.operator_id);
 
             // instruct other workers to start snapshotting
-            let msg =
-                bincode::encode_to_vec(ComsMessage::StartSnapshot(snapshot_epoch), bincode_conf)
-                    .unwrap();
-            for (p, m) in peers.iter().zip(itertools::repeat_n(msg, peers.len())) {
-                ctx.communication
-                    .send(p, Message::new(ctx.operator_id, m))
-                    .unwrap();
-            }
-
-            output.send(BarrierData::Barrier(backend));
+            ctx.communication.broadcast(ComsMessage::StartSnapshot(snapshot_epoch));
+            output.send(Message::AbsBarrier(backend));
             snapshot_in_progress = true;
         }
 
@@ -107,7 +95,7 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
             // since the channel will only yield the barrier once it has
             // received it on all inputs, we now here that we are done with
             // the snapshot
-            snapshot_in_progress = match backchannel_rx.recv() {
+            snapshot_in_progress = match backchannel_rx.try_recv().ok() {
                 Some(b) => {
                     state
                         .as_mut()
@@ -117,13 +105,8 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
                     let epoch = b.get_epoch();
                     println!("Completed snapshot at {epoch}");
                     if ctx.worker_id != 0 {
-                        let msg = bincode::encode_to_vec(
-                            ComsMessage::CommitSnapshot(ctx.worker_id, epoch),
-                            bincode_conf,
-                        )
-                        .unwrap();
                         ctx.communication
-                            .send(&0, Message::new(ctx.operator_id, msg))
+                            .send(&0, ComsMessage::CommitSnapshot(ctx.worker_id, epoch))
                             .unwrap();
                     }
                     false
@@ -132,37 +115,35 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
             }
         }
 
-        match ctx
-            .communication
-            .recv()
-            .ok()
-            .flatten()
-            .map(|x| bincode::decode_from_slice(&x.data, bincode_conf).unwrap().0)
-        {
-            Some(ComsMessage::StartSnapshot(i)) => {
-                let mut backend = P::new_for_epoch(&i);
-                if let Some(s) = state.as_ref() {
-                    backend.persist(ctx.frontier.get_actual(), s, ctx.operator_id);
+        for msg in ctx.communication.recv_all() {
+            match msg
+            {
+                Some(ComsMessage::StartSnapshot(i)) => {
+                    let mut backend = P::new_for_epoch(&i);
+                    if let Some(s) = state.as_ref() {
+                        backend.persist(ctx.frontier.get_actual(), s, ctx.operator_id);
+                    }
+                    output.send(Message::AbsBarrier(backend));
                 }
-                output.send(BarrierData::Barrier(backend));
+                Some(ComsMessage::LoadSnapshot(i)) => {
+                    let backend = P::new_for_epoch(&i);
+                    state = backend
+                        .load(ctx.operator_id)
+                        .map(|x| x.1)
+                        .unwrap_or_default();
+                }
+                Some(ComsMessage::CommitSnapshot(name, epoch)) => {
+                    // TODO handle this more elegantly than unwrap
+                    state
+                        .as_mut()
+                        .unwrap()
+                        .commited_snapshots
+                        .insert(name, epoch);
+                }
+                None => (),
             }
-            Some(ComsMessage::LoadSnapshot(i)) => {
-                let backend = P::new_for_epoch(&i);
-                state = backend
-                    .load(ctx.operator_id)
-                    .map(|x| x.1)
-                    .unwrap_or_default();
-            }
-            Some(ComsMessage::CommitSnapshot(name, epoch)) => {
-                // TODO handle this more elegantly than unwrap
-                state
-                    .as_mut()
-                    .unwrap()
-                    .commited_snapshots
-                    .insert(name, epoch);
-            }
-            None => (),
         }
+
     });
 
     (
@@ -173,7 +154,7 @@ pub fn start_snapshot_region<K, T, P: PersistenceBackend>(
     )
 }
 
-pub fn end_snapshot_region<K, T, P: PersistenceBackend>(
+pub fn end_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     stream: JetStreamBuilder<K, T, P>,
     mut region_handle: RegionHandle<P>,
 ) -> JetStreamBuilder<K, T, P> {
