@@ -1,6 +1,5 @@
 use std::{rc::Rc, sync::Mutex};
 
-
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
@@ -13,12 +12,14 @@ use crate::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use self::{collect::CollectDistributor, normal::NormalDistributor, interrogate::InterrogateDistributor};
+use self::{
+    collect::CollectDistributor, interrogate::InterrogateDistributor, normal::NormalDistributor,
+};
 
 use super::WorkerPartitioner;
-mod normal;
 mod collect;
-mod  interrogate;
+mod interrogate;
+mod normal;
 // use super::normal_dist::NormalDistributor;
 
 pub(super) type Version = usize;
@@ -32,7 +33,7 @@ impl<T: Data + Serialize + DeserializeOwned> DistData for T {}
 
 /// Enum which contains either data messages or instructions to change
 /// the cluster scale
-pub(super) enum ScalableMessage<K, T> {
+enum ScalableMessage<K, T> {
     Data(VersionedMessage<K, T>),
     /// Information that the worker of this ID will soon be removed
     /// from the computation. Triggers Rescaling procedure
@@ -45,14 +46,14 @@ pub(super) enum ScalableMessage<K, T> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct VersionedMessage<K, T> {
+struct VersionedMessage<K, T> {
     pub version: Option<Version>,
     pub sender: WorkerId,
     pub message: DataMessage<K, T>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) enum NetworkMessage<K, T> {
+enum NetworkMessage<K, T> {
     BarrierAlign(WorkerId),
     LoadAlign(WorkerId),
     Data(VersionedMessage<K, T>),
@@ -62,16 +63,15 @@ pub(super) enum NetworkMessage<K, T> {
 
 /// Enum of value distributors for different ICADD
 /// phases
-pub(super) enum PhaseDistributor<K, T> {
+enum PhaseDistributor<K, T> {
     Normal(NormalDistributor),
     Interrogate(InterrogateDistributor<K, T>),
     Collect(CollectDistributor<K, T>),
-    None
+    None,
 }
 
 pub(super) struct Distributor<K, T, P> {
     dist_func: Box<dyn WorkerPartitioner<K>>,
-    version: Version,
     worker_versions: IndexMap<WorkerId, Version>,
     inner: PhaseDistributor<K, T>,
     /// 0 elem is our locally received align, the set is for those received
@@ -90,10 +90,11 @@ where
         let inner = PhaseDistributor::Normal(NormalDistributor::default());
         Self {
             dist_func: Box::new(dist_func),
-            version: 0,
             worker_versions: IndexMap::new(),
             inner,
-            received_barriers: (None, IndexSet::new()), received_loads: (None, IndexSet::new()) }
+            received_barriers: (None, IndexSet::new()),
+            received_loads: (None, IndexSet::new()),
+        }
     }
     pub(super) fn run(
         &mut self,
@@ -135,16 +136,52 @@ where
             // simply ignore all keying related messages, since they may not cross here
             _ => None,
         };
+        self.call_distributor(scalable_message, output, ctx);
+
+        for remote_message in ctx.communication.recv_all::<NetworkMessage<K, T>>() {
+            match remote_message {
+                NetworkMessage::BarrierAlign(x) => {
+                    self.received_barriers.1.insert(x);
+                }
+                NetworkMessage::LoadAlign(x) => {
+                    self.received_loads.1.insert(x);
+                }
+                NetworkMessage::Data(x) => {
+                    self.call_distributor(Some(ScalableMessage::Data(x)), output, ctx);
+                }
+                NetworkMessage::Acquire(x) => output.send(Message::Acquire(x.into())),
+                NetworkMessage::Done(x) => {
+                    self.call_distributor(Some(ScalableMessage::Done(x)), output, ctx);
+                }
+            }
+        }
+        // synchronize barriers and loads
+        if self.received_barriers.1.len() >= ctx.communication.get_peers().len() {
+            if let Some(p) = self.received_barriers.0.take() {
+                output.send(Message::AbsBarrier(p));
+                self.received_barriers.1.drain(..);
+            }
+        }
+        if self.received_loads.1.len() >= ctx.communication.get_peers().len() {
+            if let Some(p) = self.received_loads.0.take() {
+                output.send(Message::Load(p));
+                self.received_loads.1.drain(..);
+            }
+        }
+    }
+
+    fn call_distributor(
+        &mut self,
+        msg: Option<ScalableMessage<K, T>>,
+        output: &mut Sender<K, T, P>,
+        ctx: &mut OperatorContext,
+    ) -> () {
         let inner = std::mem::replace(&mut self.inner, PhaseDistributor::None);
         self.inner = match inner {
-            PhaseDistributor::Normal(x) => {
-                x.run(&self.dist_func, scalable_message, output, ctx)
-            }
-            PhaseDistributor::Interrogate(x) => {
-                x.run(&self.dist_func, scalable_message, output, ctx)
-            }
-            PhaseDistributor::Collect(x) => x.run(&self.dist_func, scalable_message, output, ctx),
-            PhaseDistributor::None => panic!("Invariant broken: Inner distributor can not be None")
+            PhaseDistributor::Normal(x) => x.run(&self.dist_func, msg, output, ctx),
+            PhaseDistributor::Interrogate(x) => x.run(&self.dist_func, msg, output, ctx),
+            PhaseDistributor::Collect(x) => x.run(&self.dist_func, msg, output, ctx),
+            PhaseDistributor::None => panic!("Invariant broken: Inner distributor can not be None"),
         }
     }
 }
@@ -157,26 +194,7 @@ fn send_to_target<K: Clone, T: Clone, P: Clone>(
 ) {
     if *target == ctx.worker_id {
         output.send(Message::Data(msg.message))
-    } 
-}
-
-fn network_send<K: DistKey, T: DistData>(
-    target: &WorkerId,
-    msg: NetworkMessage<K, T>,
-    ctx: &OperatorContext,
-) {
-    ctx.communication
-        .send(target, msg)
-        .expect("Remote send Error");
-}
-fn network_broadcast<K: DistKey, T: DistData>(
-    msg: NetworkMessage<K, T>,
-    ctx: &OperatorContext,
-) {
-    ctx.communication.broadcast(msg).expect("Remote send Error");
-}
-fn network_recv<K: DistKey, T: DistData>(ctx: &OperatorContext) -> Vec<NetworkMessage<K, T>> {
-    ctx.communication.recv_all().collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +210,10 @@ where
         for key in keys.iter().cloned() {
             guard.insert(key);
         }
+    }
+
+    pub(super) fn ref_count(&self) -> usize {
+        Rc::strong_count(&self.shared)
     }
 }
 
@@ -224,7 +246,7 @@ pub struct Acquire<K> {
     key: K,
     collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
 }
-impl<K> Collect<K>
+impl<K> Acquire<K>
 where
     K: Key,
 {

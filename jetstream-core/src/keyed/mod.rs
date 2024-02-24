@@ -47,7 +47,11 @@ where
         let op = StandardOperator::new(move |input, output, ctx| {
             ctx.frontier.advance_to(Timestamp::MAX);
             match input.recv() {
-                Some(Message::Data(DataMessage { time, key: _, value })) => {
+                Some(Message::Data(DataMessage {
+                    time,
+                    key: _,
+                    value,
+                })) => {
                     let new_key = key_func(&value);
                     let new_msg = DataMessage {
                         time,
@@ -84,6 +88,8 @@ where
     ) -> JetStreamBuilder<K, T, P> {
         let mut distributor = Distributor::new(partitioner);
         let keyed = self.key_local(key_func);
-        keyed.then(StandardOperator::new(move |input, output, ctx| distributor.run(input, output, ctx)))
+        keyed.then(StandardOperator::new(move |input, output, ctx| {
+            distributor.run(input, output, ctx)
+        }))
     }
 }

@@ -1,16 +1,16 @@
 use std::{rc::Rc, sync::Mutex};
 
-
-use indexmap::{IndexSet};
+use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::{Sender}, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
 };
 
-
-
-
-use super::{DistData, DistKey, Interrogate, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage};
+use super::{
+    collect::CollectDistributor, DistData, DistKey, Interrogate, NetworkMessage, PhaseDistributor,
+    ScalableMessage, Version, VersionedMessage,
+};
 
 pub(super) struct InterrogateDistributor<K, T> {
     whitelist: Rc<Mutex<IndexSet<K>>>,
@@ -22,6 +22,7 @@ pub(super) struct InterrogateDistributor<K, T> {
     // there is no real good way for us to handle that, so we will
     // queue it up to be handled after collect is done
     queued_rescales: Vec<ScalableMessage<K, T>>,
+    running_interrogate: Interrogate<K>,
 }
 impl<K, T> InterrogateDistributor<K, T>
 where
@@ -37,7 +38,7 @@ where
     ) -> Self {
         let whitelist = Rc::new(Mutex::new(IndexSet::new()));
         let interrogate = Interrogate { shared: whitelist };
-        output.send(Message::Interrogate(interrogate));
+        output.send(Message::Interrogate(interrogate.clone()));
 
         Self {
             whitelist: Rc::new(Mutex::new(IndexSet::new())),
@@ -46,6 +47,7 @@ where
             version,
             finished,
             queued_rescales: Vec::new(),
+            running_interrogate: interrogate,
         }
     }
     fn send_local<P: Clone>(
@@ -61,12 +63,7 @@ where
         output.send(Message::Data(msg))
     }
 
-    fn send_remote(
-        &self,
-        target: &WorkerId,
-        msg: DataMessage<K, T>,
-        ctx: &mut OperatorContext,
-    ) {
+    fn send_remote(&self, target: &WorkerId, msg: DataMessage<K, T>, ctx: &mut OperatorContext) {
         ctx.communication
             .send(
                 target,
@@ -97,26 +94,42 @@ where
                 let old_target = dist_func(&d.message.key, &self.old_worker_set);
                 if *old_target != ctx.worker_id {
                     self.send_remote(old_target, d.message, ctx);
-                    return PhaseDistributor::Interrogate(self);
+                } else {
+                    self.send_local(dist_func, d.message, output, ctx.worker_id);
                 }
-                self.send_local(dist_func, d.message, output, ctx.worker_id);
-                PhaseDistributor::Interrogate(self)
             }
             Some(ScalableMessage::ScaleRemoveWorker(x)) => {
                 self.queued_rescales
                     .push(ScalableMessage::ScaleRemoveWorker(x));
-                PhaseDistributor::Interrogate(self)
             }
             Some(ScalableMessage::ScaleAddWorker(x)) => {
                 self.queued_rescales
                     .push(ScalableMessage::ScaleAddWorker(x));
-                PhaseDistributor::Interrogate(self)
             }
             Some(ScalableMessage::Done(x)) => {
                 self.finished.insert(x);
-                PhaseDistributor::Interrogate(self)
-            },
-            None => PhaseDistributor::Interrogate(self)
+            }
+            None => (),
+        };
+        if self.running_interrogate.ref_count() == 1 {
+            // SAFETY: We can take from the Rc since we just asserted, that we have the only
+            // reference
+            let whitelist = unsafe {
+                Rc::try_unwrap(self.whitelist)
+                    .unwrap_unchecked()
+                    .into_inner()
+                    .unwrap()
+            };
+            PhaseDistributor::Collect(CollectDistributor::new(
+                whitelist,
+                self.old_worker_set,
+                self.new_worker_set,
+                self.version,
+                self.finished,
+                self.queued_rescales,
+            ))
+        } else {
+            PhaseDistributor::Interrogate(self)
         }
     }
 }

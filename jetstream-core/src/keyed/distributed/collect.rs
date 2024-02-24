@@ -1,16 +1,16 @@
 use std::{rc::Rc, sync::Mutex};
 
-
 use indexmap::{Equivalent, IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Sender}, frontier::Timestamp, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
+    channels::selective_broadcast::Sender, frontier::Timestamp, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
 };
 
-
-
-
-use super::{normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, NetworkAcquire, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage};
+use super::{
+    normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, NetworkAcquire,
+    NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage,
+};
 
 pub(super) struct CollectDistributor<K, T> {
     whitelist: IndexSet<K>,
@@ -62,14 +62,18 @@ where
                     }
                 };
             }
-            Some(ScalableMessage::ScaleRemoveWorker(set)) => {self
-                .queued_rescales
-                .push(ScalableMessage::ScaleRemoveWorker(set));},
-            Some(ScalableMessage::ScaleAddWorker(set)) => {self
-                .queued_rescales
-                .push(ScalableMessage::ScaleAddWorker(set));},
-            Some(ScalableMessage::Done(wid)) => {self.finished.insert(wid);},
-            None => ()
+            Some(ScalableMessage::ScaleRemoveWorker(set)) => {
+                self.queued_rescales
+                    .push(ScalableMessage::ScaleRemoveWorker(set));
+            }
+            Some(ScalableMessage::ScaleAddWorker(set)) => {
+                self.queued_rescales
+                    .push(ScalableMessage::ScaleAddWorker(set));
+            }
+            Some(ScalableMessage::Done(wid)) => {
+                self.finished.insert(wid);
+            }
+            None => (),
         };
         match self.current_collect.take() {
             Some(cc) => {
@@ -80,7 +84,7 @@ where
                     let key = cc.key;
                     let held_msgs = self.hold.swap_remove(&key);
                     let acquire_target = dist_func(&key, &self.new_worker_set);
-                    
+
                     // PANIC: We can unwrap here, as we already asserted, that we are
                     // the only reference to the RC in the if
                     let collection = Rc::try_unwrap(cc.collection).unwrap().into_inner().unwrap();
@@ -122,7 +126,7 @@ where
                 if let Some(next_key) = self.whitelist.pop() {
                     self.hold.insert(next_key.clone(), Vec::new());
                     let collect = Collect::new(next_key);
-                    
+
                     self.current_collect = Some(collect.clone());
                     output.send(Message::Collect(collect))
                 } else if !self.finished.contains(&ctx.worker_id) {
@@ -145,7 +149,7 @@ where
         }
     }
 
-    fn new(
+    pub(super) fn new(
         whitelist: IndexSet<K>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,

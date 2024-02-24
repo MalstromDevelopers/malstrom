@@ -23,7 +23,8 @@ pub trait AppendableOperator<K, T, P: PersistenceBackend> {
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<K: Key, T: Data, P: PersistenceBackend>() -> StandardOperator<K, T, K, T, P> {
+pub fn pass_through_operator<K: Key, T: Data, P: PersistenceBackend>(
+) -> StandardOperator<K, T, K, T, P> {
     StandardOperator::new(|input, output, ctx| {
         ctx.frontier.advance_to(Timestamp::MAX);
         if let Some(x) = input.recv() {
@@ -148,7 +149,9 @@ impl<P> FrontieredOperator<P>
 where
     P: PersistenceBackend,
 {
-    fn new<KI: Key, KT: Data, KO: Key, TO: Data>(operator: StandardOperator<KI, KT, KO, TO, P>) -> Self {
+    fn new<KI: Key, KT: Data, KO: Key, TO: Data>(
+        operator: StandardOperator<KI, KT, KO, TO, P>,
+    ) -> Self {
         Self {
             frontier: Frontier::default(),
             operator: Box::new(operator),

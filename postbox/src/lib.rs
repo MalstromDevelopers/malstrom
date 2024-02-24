@@ -23,7 +23,7 @@ use grpc::generic_communication_server::GenericCommunicationServer;
 use grpc::{ExchangeMessage, ExchangeResponse};
 
 use serde::de::DeserializeOwned;
-use serde::{Serialize};
+use serde::Serialize;
 use thiserror::Error;
 
 const CONFIG: bincode::config::Configuration = bincode::config::standard();

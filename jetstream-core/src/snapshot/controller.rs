@@ -1,17 +1,16 @@
-
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::frontier::Timestamp;
 use crate::{Data, Key, Message, WorkerId};
-use crate::{frontier::Timestamp};
 
 use crate::{
-    channels::selective_broadcast::{Receiver},
+    channels::selective_broadcast::Receiver,
     stream::{jetstream::JetStreamBuilder, operator::StandardOperator},
 };
 
+use super::PersistenceBackend;
 use super::SnapshotVersion;
-use super::{PersistenceBackend};
 
 #[derive(Serialize, Deserialize)]
 pub enum ComsMessage {
@@ -51,7 +50,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
                 unimplemented!("Loads must not cross persistance regions!")
             }
             Some(x) => output.send(x),
-            None => ()
+            None => (),
         };
 
         if state.is_none() && ctx.worker_id == 0 {
@@ -72,7 +71,8 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
             output.send(Message::Load(backend));
 
             // instruct other workers to load the state
-            ctx.communication.broadcast(ComsMessage::LoadSnapshot(*last_commited));
+            ctx.communication
+                .broadcast(ComsMessage::LoadSnapshot(*last_commited));
         }
 
         // PANIC: Can unwrap here because we loaded the state before
@@ -84,7 +84,8 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
             backend.persist(ctx.frontier.get_actual(), &s, ctx.operator_id);
 
             // instruct other workers to start snapshotting
-            ctx.communication.broadcast(ComsMessage::StartSnapshot(snapshot_epoch));
+            ctx.communication
+                .broadcast(ComsMessage::StartSnapshot(snapshot_epoch));
             output.send(Message::AbsBarrier(backend));
             snapshot_in_progress = true;
         }
@@ -114,8 +115,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
         }
 
         for msg in ctx.communication.recv_all() {
-            match msg
-            {
+            match msg {
                 Some(ComsMessage::StartSnapshot(i)) => {
                     let mut backend = P::new_for_epoch(&i);
                     if let Some(s) = state.as_ref() {
@@ -141,7 +141,6 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
                 None => (),
             }
         }
-
     });
 
     (

@@ -1,16 +1,16 @@
-
-
-
-use indexmap::{IndexSet};
+use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::{Sender}, keyed::WorkerPartitioner, stream::operator::OperatorContext, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, Message, WorkerId,
 };
-
 
 use serde::{Deserialize, Serialize};
 
-use super::{interrogate::InterrogateDistributor, DistData, DistKey, NetworkMessage, PhaseDistributor, ScalableMessage, Version};
+use super::{
+    interrogate::InterrogateDistributor, DistData, DistKey, NetworkMessage, PhaseDistributor,
+    ScalableMessage, Version,
+};
 
 #[derive(Serialize, Deserialize, Default)]
 pub(super) struct NormalDistributor {
@@ -57,15 +57,22 @@ impl NormalDistributor {
                     .filter(|x| !set.contains(x))
                     .collect();
                 PhaseDistributor::Interrogate(InterrogateDistributor::new(
-                    old_set, new_set, self.version, self.finished, output,
+                    old_set,
+                    new_set,
+                    self.version,
+                    self.finished,
+                    output,
                 ))
             }
             ScalableMessage::ScaleAddWorker(set) => {
                 let old_set = self.worker_set.clone();
-                let new_set: IndexSet<WorkerId> =
-                    self.worker_set.into_iter().chain(set).collect();
+                let new_set: IndexSet<WorkerId> = self.worker_set.into_iter().chain(set).collect();
                 PhaseDistributor::Interrogate(InterrogateDistributor::new(
-                    old_set, new_set, self.version, self.finished, output,
+                    old_set,
+                    new_set,
+                    self.version,
+                    self.finished,
+                    output,
                 ))
             }
             ScalableMessage::Done(wid) => {

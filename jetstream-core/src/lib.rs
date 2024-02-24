@@ -1,4 +1,3 @@
-
 use frontier::Timestamp;
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
@@ -25,7 +24,7 @@ type WorkerId = usize;
 type Scale = usize;
 
 /// Marker trait for stream keys
-trait Key: Hash + Eq + PartialEq + Clone + 'static {}
+pub trait Key: Hash + Eq + PartialEq + Clone + 'static {}
 impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
 
 /// Data which may move through a stream
@@ -34,15 +33,18 @@ impl<T: Clone + 'static> Data for T {}
 
 /// Zero sized indicator for an unkeyed stream
 #[derive(Clone, Hash, PartialEq, Eq)]
-struct NoKey;
+pub struct NoKey;
 /// Zero sized indicator for a stream with no data
 #[derive(Clone)]
-struct NoData;
+pub struct NoData;
 
 /// Marker trait for functions which determine inter-operator routing
-pub trait OperatorPartitioner<K, T>: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static {}
-impl<K, T, U: Fn(&DataMessage<K, T>, Scale) ->  IndexSet<OperatorId> + 'static> OperatorPartitioner<K, T>
-    for U
+pub trait OperatorPartitioner<K, T>:
+    Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static
+{
+}
+impl<K, T, U: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static>
+    OperatorPartitioner<K, T> for U
 {
 }
 
