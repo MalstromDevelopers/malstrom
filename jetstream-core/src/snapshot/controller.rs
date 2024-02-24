@@ -1,19 +1,17 @@
-/// A snapshot controller that uses K8S configmaps as a synchronization mechanism
-/// to time snapshots
-use bincode::{Decode, Encode};
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{Data, Key, Message, WorkerId};
-use crate::{frontier::Timestamp, NoData, NoKey};
+use crate::{frontier::Timestamp};
 
 use crate::{
-    channels::selective_broadcast::{self, Receiver, Sender},
+    channels::selective_broadcast::{Receiver},
     stream::{jetstream::JetStreamBuilder, operator::StandardOperator},
 };
 
 use super::SnapshotVersion;
-use super::{barrier::BarrierData, PersistenceBackend};
+use super::{PersistenceBackend};
 
 #[derive(Serialize, Deserialize)]
 pub enum ComsMessage {
@@ -35,7 +33,7 @@ struct ControllerState {
 pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
 ) -> (StandardOperator<K, T, K, T, P>, RegionHandle<P>) {
-    let bincode_conf = bincode::config::standard();
+    let _bincode_conf = bincode::config::standard();
     // channel from leafs of region to root
     let (backchannel_tx, backchannel_rx) = crossbeam::channel::unbounded::<P>();
 
@@ -43,7 +41,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     let mut snapshot_in_progress = false;
 
     let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
-        let peers = ctx.communication.get_peers();
+        let _peers = ctx.communication.get_peers();
         ctx.frontier.advance_to(Timestamp::MAX);
         match input.recv() {
             Some(Message::AbsBarrier(_)) => {
@@ -156,7 +154,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
 
 pub fn end_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     stream: JetStreamBuilder<K, T, P>,
-    mut region_handle: RegionHandle<P>,
+    region_handle: RegionHandle<P>,
 ) -> JetStreamBuilder<K, T, P> {
     let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
         ctx.frontier.advance_to(Timestamp::MAX);

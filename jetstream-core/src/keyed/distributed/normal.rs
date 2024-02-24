@@ -1,13 +1,13 @@
-use std::{marker::PhantomData, rc::Rc, sync::Mutex};
 
-use bincode::config::Configuration;
-use indexmap::{Equivalent, IndexMap, IndexSet};
+
+
+use indexmap::{IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, frontier::Timestamp, keyed::WorkerPartitioner, snapshot::PersistenceBackend, stream::operator::OperatorContext, Data, DataMessage, Key, Message, OperatorId, WorkerId
+    channels::selective_broadcast::{Sender}, keyed::WorkerPartitioner, stream::operator::OperatorContext, Message, WorkerId
 };
 
-use serde::de::DeserializeOwned;
+
 use serde::{Deserialize, Serialize};
 
 use super::{interrogate::InterrogateDistributor, DistData, DistKey, NetworkMessage, PhaseDistributor, ScalableMessage, Version};
@@ -44,7 +44,7 @@ impl NormalDistributor {
                     output.send(Message::Data(m.message));
                 } else {
                     ctx.communication
-                        .send(&target, NetworkMessage::Data(m))
+                        .send(target, NetworkMessage::Data(m))
                         .expect("Remote send Error");
                 };
                 PhaseDistributor::Normal(self)
@@ -63,7 +63,7 @@ impl NormalDistributor {
             ScalableMessage::ScaleAddWorker(set) => {
                 let old_set = self.worker_set.clone();
                 let new_set: IndexSet<WorkerId> =
-                    self.worker_set.into_iter().chain(set.into_iter()).collect();
+                    self.worker_set.into_iter().chain(set).collect();
                 PhaseDistributor::Interrogate(InterrogateDistributor::new(
                     old_set, new_set, self.version, self.finished, output,
                 ))

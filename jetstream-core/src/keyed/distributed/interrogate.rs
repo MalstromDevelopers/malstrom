@@ -1,16 +1,16 @@
-use std::{marker::PhantomData, rc::Rc, sync::Mutex};
+use std::{rc::Rc, sync::Mutex};
 
-use bincode::config::Configuration;
-use indexmap::{Equivalent, IndexMap, IndexSet};
+
+use indexmap::{IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, frontier::Timestamp, keyed::WorkerPartitioner, snapshot::PersistenceBackend, stream::operator::OperatorContext, Data, DataMessage, Key, Message, OperatorId, WorkerId
+    channels::selective_broadcast::{Sender}, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
 };
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 
-use super::{normal::NormalDistributor, DistData, DistKey, Interrogate, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage};
+
+
+use super::{DistData, DistKey, Interrogate, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage};
 
 pub(super) struct InterrogateDistributor<K, T> {
     whitelist: Rc<Mutex<IndexSet<K>>>,
@@ -43,8 +43,8 @@ where
             whitelist: Rc::new(Mutex::new(IndexSet::new())),
             old_worker_set,
             new_worker_set,
-            version: version,
-            finished: finished,
+            version,
+            finished,
             queued_rescales: Vec::new(),
         }
     }
@@ -54,7 +54,7 @@ where
         msg: DataMessage<K, T>,
         output: &mut Sender<K, T, P>,
         local_wid: WorkerId,
-    ) -> () {
+    ) {
         if *(dist_func)(&msg.key, &self.new_worker_set) != local_wid {
             self.whitelist.lock().unwrap().insert(msg.key.clone());
         }
@@ -66,7 +66,7 @@ where
         target: &WorkerId,
         msg: DataMessage<K, T>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         ctx.communication
             .send(
                 target,
@@ -96,7 +96,7 @@ where
                 }
                 let old_target = dist_func(&d.message.key, &self.old_worker_set);
                 if *old_target != ctx.worker_id {
-                    self.send_remote(&old_target, d.message, ctx);
+                    self.send_remote(old_target, d.message, ctx);
                     return PhaseDistributor::Interrogate(self);
                 }
                 self.send_local(dist_func, d.message, output, ctx.worker_id);

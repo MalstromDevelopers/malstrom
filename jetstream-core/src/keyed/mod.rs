@@ -5,7 +5,7 @@ use crate::keyed::distributed::Distributor;
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::StandardOperator;
-use crate::{Data, DataMessage, Key, Message, OperatorId, Scale, WorkerId};
+use crate::{Data, DataMessage, Key, Message, WorkerId};
 
 use self::distributed::{DistData, DistKey};
 
@@ -47,7 +47,7 @@ where
         let op = StandardOperator::new(move |input, output, ctx| {
             ctx.frontier.advance_to(Timestamp::MAX);
             match input.recv() {
-                Some(Message::Data(DataMessage { time, key, value })) => {
+                Some(Message::Data(DataMessage { time, key: _, value })) => {
                     let new_key = key_func(&value);
                     let new_msg = DataMessage {
                         time,

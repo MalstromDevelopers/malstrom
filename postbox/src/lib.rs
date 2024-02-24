@@ -21,9 +21,9 @@ use grpc::generic_communication_client::GenericCommunicationClient;
 use grpc::generic_communication_server::GenericCommunication;
 use grpc::generic_communication_server::GenericCommunicationServer;
 use grpc::{ExchangeMessage, ExchangeResponse};
-use itertools;
+
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use thiserror::Error;
 
 const CONFIG: bincode::config::Configuration = bincode::config::standard();
@@ -103,8 +103,8 @@ where
         Ok(self.recv_with_sender::<D>()?.map(|x| x.1))
     }
 
-    pub fn recv_all<'a, D: Data>(&'a self) -> RecvIterator<'a, W, D> {
-        RecvIterator(&self, PhantomData)
+    pub fn recv_all<D: Data>(&self) -> RecvIterator<'_, W, D> {
+        RecvIterator(self, PhantomData)
     }
 
     pub fn recv_with_sender<D: Data>(&self) -> Result<Option<(W, D)>, RecvError> {

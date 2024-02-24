@@ -1,14 +1,14 @@
-use std::{marker::PhantomData, rc::Rc, sync::Mutex};
+use std::{rc::Rc, sync::Mutex};
 
-use bincode::config::Configuration;
+
 use indexmap::{Equivalent, IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, frontier::Timestamp, keyed::WorkerPartitioner, snapshot::PersistenceBackend, stream::operator::OperatorContext, Data, DataMessage, Key, Message, OperatorId, WorkerId
+    channels::selective_broadcast::{Sender}, frontier::Timestamp, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
 };
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+
+
 
 use super::{normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, NetworkAcquire, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage};
 
@@ -50,15 +50,15 @@ where
                     // Rule 1.1
                     if (new_target != ctx.worker_id) && self.whitelist.contains(&m.message.key) {
                         output.send(Message::Data(m.message))
-                    } else if (new_target != ctx.worker_id) {
+                    } else if new_target != ctx.worker_id {
                         // Rule 2
-                        send_to_target(m, &new_target, output, &ctx)
-                    } else if (new_target == m.sender) {
+                        send_to_target(m, &new_target, output, ctx)
+                    } else if new_target == m.sender {
                         // Rule 3
-                        send_to_target(m, &ctx.worker_id, output, &ctx)
+                        send_to_target(m, &ctx.worker_id, output, ctx)
                     } else {
                         // Rule 3
-                        send_to_target(m, &old_target, output, &ctx)
+                        send_to_target(m, old_target, output, ctx)
                     }
                 };
             }
@@ -86,16 +86,16 @@ where
                     let collection = Rc::try_unwrap(cc.collection).unwrap().into_inner().unwrap();
                     let acquire = NetworkAcquire {
                         key: key.clone(),
-                        collection: collection,
+                        collection,
                     };
                     ctx.communication
-                        .send(&acquire_target, NetworkMessage::<K, T>::Acquire(acquire))
+                        .send(acquire_target, NetworkMessage::<K, T>::Acquire(acquire))
                         .expect("Communication error");
 
                     for msg in held_msgs.into_iter().flatten() {
                         ctx.communication
                             .send(
-                                &acquire_target,
+                                acquire_target,
                                 NetworkMessage::Data(VersionedMessage {
                                     version: Some(self.version),
                                     sender: ctx.worker_id,
@@ -109,7 +109,7 @@ where
                             .expect("Communication error");
                     }
 
-                    let next_collect = self.whitelist.pop().map(|x| {
+                    let _next_collect = self.whitelist.pop().map(|x| {
                         self.hold.insert(x.clone(), Vec::new());
                         Collect {
                             key: x,

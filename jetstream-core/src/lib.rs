@@ -1,4 +1,4 @@
-use bincode::{Decode, Encode};
+
 use frontier::Timestamp;
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};

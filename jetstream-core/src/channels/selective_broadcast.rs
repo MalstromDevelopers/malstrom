@@ -9,9 +9,9 @@ use std::rc::Rc;
 /// big queues with this channel.
 use crossbeam;
 use indexmap::IndexSet;
-use itertools::{self, Itertools};
+use itertools::{self};
 
-use crate::{DataMessage, Message, OperatorId, OperatorPartitioner, Scale};
+use crate::{Message, OperatorId, OperatorPartitioner, Scale};
 
 struct BarrierReceiver<K, T, P>(crossbeam::channel::Receiver<Message<K, T, P>>, Option<P>);
 

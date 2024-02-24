@@ -1,11 +1,10 @@
-use std::{marker::PhantomData, rc::Rc, sync::Mutex};
+use std::{rc::Rc, sync::Mutex};
 
-use bincode::config::Configuration;
-use indexmap::{Equivalent, IndexMap, IndexSet};
+
+use indexmap::{IndexMap, IndexSet};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    frontier::Timestamp,
     snapshot::PersistenceBackend,
     stream::operator::OperatorContext,
     Data, DataMessage, Key, Message, OperatorId, WorkerId,
@@ -130,13 +129,13 @@ where
             })),
             Some(Message::ScaleAddWorker(x)) => Some(ScalableMessage::ScaleAddWorker(x)),
             Some(Message::ScaleRemoveWorker(x)) => Some(ScalableMessage::ScaleRemoveWorker(x)),
-            Some(Message::ShutdownMarker(x)) => {
+            Some(Message::ShutdownMarker(_x)) => {
                 todo!()
             }
             // simply ignore all keying related messages, since they may not cross here
             _ => None,
         };
-        let mut inner = std::mem::replace(&mut self.inner, PhaseDistributor::None);
+        let inner = std::mem::replace(&mut self.inner, PhaseDistributor::None);
         self.inner = match inner {
             PhaseDistributor::Normal(x) => {
                 x.run(&self.dist_func, scalable_message, output, ctx)
@@ -158,23 +157,22 @@ fn send_to_target<K: Clone, T: Clone, P: Clone>(
 ) {
     if *target == ctx.worker_id {
         output.send(Message::Data(msg.message))
-    } else {
-    }
+    } 
 }
 
 fn network_send<K: DistKey, T: DistData>(
     target: &WorkerId,
     msg: NetworkMessage<K, T>,
     ctx: &OperatorContext,
-) -> () {
+) {
     ctx.communication
-        .send(&target, msg)
+        .send(target, msg)
         .expect("Remote send Error");
 }
 fn network_broadcast<K: DistKey, T: DistData>(
     msg: NetworkMessage<K, T>,
     ctx: &OperatorContext,
-) -> () {
+) {
     ctx.communication.broadcast(msg).expect("Remote send Error");
 }
 fn network_recv<K: DistKey, T: DistData>(ctx: &OperatorContext) -> Vec<NetworkMessage<K, T>> {
@@ -189,9 +187,9 @@ impl<K> Interrogate<K>
 where
     K: Key,
 {
-    pub fn add_keys(&mut self, keys: &[K]) -> () {
+    pub fn add_keys(&mut self, keys: &[K]) {
         let mut guard = self.shared.lock().unwrap();
-        for key in keys.into_iter().map(|x| x.clone()) {
+        for key in keys.iter().cloned() {
             guard.insert(key);
         }
     }
@@ -212,7 +210,7 @@ where
             collection: Rc::new(Mutex::new(IndexMap::new())),
         }
     }
-    pub fn add_state(&mut self, operator_id: OperatorId, state: Vec<u8>) -> () {
+    pub fn add_state(&mut self, operator_id: OperatorId, state: Vec<u8>) {
         self.collection.lock().unwrap().insert(operator_id, state);
     }
 
