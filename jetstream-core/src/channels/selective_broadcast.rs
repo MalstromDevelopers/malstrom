@@ -27,12 +27,11 @@ impl<K, T, P> BarrierReceiver<K, T, P> {
             return None;
         }
         match self.0.try_recv().ok() {
-            x => x,
             Some(Message::AbsBarrier(b)) => {
                 self.1 = Some(b);
                 None
             }
-            None => None,
+            x => x,
         }
     }
 

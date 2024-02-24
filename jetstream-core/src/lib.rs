@@ -40,7 +40,7 @@ struct NoKey;
 struct NoData;
 
 /// Marker trait for functions which determine inter-operator routing
-trait OperatorPartitioner<K, T>: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static {}
+pub trait OperatorPartitioner<K, T>: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static {}
 impl<K, T, U: Fn(&DataMessage<K, T>, Scale) ->  IndexSet<OperatorId> + 'static> OperatorPartitioner<K, T>
     for U
 {
@@ -95,7 +95,7 @@ impl ShutdownMarker {
     /// Get the count of strong reference to the inner Rc
     /// Note that this includes the instance you are calling
     /// this method on.
-    fn get_count(&self) -> usize {
+    pub(crate) fn get_count(&self) -> usize {
         Rc::strong_count(&self.rc)
     }
 }
