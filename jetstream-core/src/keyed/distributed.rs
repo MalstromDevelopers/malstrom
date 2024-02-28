@@ -219,7 +219,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct Collect<K> {
-    key: K,
+    pub key: K,
     collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
 }
 impl<K> Collect<K>

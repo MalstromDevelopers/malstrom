@@ -64,19 +64,25 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
             let last_commited = latest.commited_snapshots.values().min().unwrap_or(&0);
             // load last committed state
             let backend = P::new_for_epoch(last_commited);
-            state = backend
+            state.replace(backend
                 .load(ctx.operator_id)
                 .map(|x| x.1)
-                .unwrap_or_default();
+                .unwrap_or_default());
+            println!("State loaded");
             output.send(Message::Load(backend));
 
             // instruct other workers to load the state
             ctx.communication
-                .broadcast(ComsMessage::LoadSnapshot(*last_commited));
+                .broadcast(ComsMessage::LoadSnapshot(*last_commited))
+                .expect("Network communication error");
         }
+        
 
         // PANIC: Can unwrap here because we loaded the state before
-        let s = state.as_mut().unwrap();
+        let s = match state.as_mut() {
+            Some(x) => x,
+            None => return
+        };
         if !snapshot_in_progress && ctx.worker_id == 0 && timer() {
             let snapshot_epoch = s.commited_snapshots.values().min().unwrap_or(&0) + 1;
             println!("Starting new snapshot at epoch {snapshot_epoch}");
@@ -85,7 +91,8 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
 
             // instruct other workers to start snapshotting
             ctx.communication
-                .broadcast(ComsMessage::StartSnapshot(snapshot_epoch));
+                .broadcast(ComsMessage::StartSnapshot(snapshot_epoch))
+                .expect("Network communication error");
             output.send(Message::AbsBarrier(backend));
             snapshot_in_progress = true;
         }

@@ -12,7 +12,7 @@ pub trait PersistenceBackend: Clone + 'static {
     fn persist<S>(&mut self, frontier: Timestamp, state: &S, operator_id: OperatorId);
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct NoPersistenceBackend {
     epoch: SnapshotVersion,
 }

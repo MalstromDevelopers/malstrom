@@ -27,6 +27,14 @@ impl NormalDistributor {
         output: &mut Sender<K, T, P>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, T> {
+        // TODO HACK
+        if self.worker_set.len() == 0 {
+            let mut wids: Vec<WorkerId> = vec![ctx.worker_id];
+            wids.extend(ctx.communication.get_peers());
+            wids.sort();
+            self.worker_set.extend(wids);
+        }
+
         let msg = match msg {
             Some(m) => m,
             None => {

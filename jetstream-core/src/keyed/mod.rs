@@ -1,5 +1,6 @@
 use indexmap::IndexSet;
 
+use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::frontier::Timestamp;
 use crate::keyed::distributed::Distributor;
 use crate::snapshot::PersistenceBackend;
@@ -11,7 +12,10 @@ use self::distributed::{DistData, DistKey};
 
 pub mod distributed;
 /// Marker trait for functions which determine inter-worker routing
-trait WorkerPartitioner<K>: for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static {}
+pub trait WorkerPartitioner<K>:
+    for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static
+{
+}
 impl<K, U: for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static> WorkerPartitioner<K>
     for U
 {
@@ -32,19 +36,24 @@ pub trait KeyDistribute<K: Key, T, P: PersistenceBackend> {
 pub trait KeyLocal<K: Key, T, P> {
     /// Turn a stream into a keyed stream and **do not** distribute
     /// messages across workers.
-    /// **NOTE:** The keyed stream created by this function **does not**
+    /// # ⚠️ Warning:
+    /// The keyed stream created by this function **does not**
     /// redistribute state when the local worker is shut down.
+    /// If the worker gets de-scheduled all state is potentially lost.
+    /// To have the state moved to a different worker in this case, use
+    /// `key_distribute`.
     fn key_local(self, key_func: impl Fn(&T) -> K + 'static) -> JetStreamBuilder<K, T, P>;
 }
 
-impl<K, T, P> KeyLocal<K, T, P> for JetStreamBuilder<K, T, P>
+impl<X, K, T, P> KeyLocal<K, T, P> for JetStreamBuilder<X, T, P>
 where
+    X: Key,
     K: Key,
     T: Data,
     P: PersistenceBackend,
 {
     fn key_local(self, key_func: impl Fn(&T) -> K + 'static) -> JetStreamBuilder<K, T, P> {
-        let op = StandardOperator::new(move |input, output, ctx| {
+        let op = StandardOperator::new(move |input: &mut Receiver<X, T, P>, output: &mut Sender<K, T, P>, ctx| {
             ctx.frontier.advance_to(Timestamp::MAX);
             match input.recv() {
                 Some(Message::Data(DataMessage {
@@ -65,18 +74,22 @@ where
                 Some(Message::Collect(_)) => (),
                 Some(Message::Acquire(_)) => (),
                 Some(Message::DropKey(_)) => (),
-                Some(x) => {
-                    output.send(x);
-                }
-                None => (),
+                // necessary to convince Rust it is a different generic type now
+                Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
+                Some(Message::Load(l)) => output.send(Message::Load(l)),
+                Some(Message::ScaleAddWorker(x)) => output.send(Message::ScaleAddWorker(x)),
+                Some(Message::ScaleRemoveWorker(x)) => output.send(Message::ScaleRemoveWorker(x)),
+                Some(Message::ShutdownMarker(x)) => output.send(Message::ShutdownMarker(x)),
+                None => ()
             }
         });
         self.then(op)
     }
 }
 
-impl<K, T, P> KeyDistribute<K, T, P> for JetStreamBuilder<K, T, P>
+impl<X, K, T, P> KeyDistribute<K, T, P> for JetStreamBuilder<X, T, P>
 where
+    X: Key,
     K: DistKey,
     T: DistData,
     P: PersistenceBackend,

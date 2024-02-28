@@ -28,7 +28,6 @@ fn main() {
     loop {
         match op_postbox.recv_all::<Vec<u8>>().next() {
             Some(x) => {
-                println!("{x:?}");
                 break;
             }
             None => {

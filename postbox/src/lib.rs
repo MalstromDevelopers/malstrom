@@ -1,6 +1,7 @@
 mod grpc {
     tonic::include_proto!("postbox");
 }
+use std::fmt::{format, Debug};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -29,15 +30,15 @@ use thiserror::Error;
 const CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 pub trait WorkerId:
-    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static
+    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static> WorkerId for T {}
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> WorkerId for T {}
 pub trait OperatorId:
-    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static
+    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + 'static> OperatorId for T {}
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> OperatorId for T {}
 pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 
@@ -45,8 +46,8 @@ type Binary = Vec<u8>;
 
 #[derive(Error, Debug)]
 pub enum SendError {
-    #[error("Recipient not found")]
-    RecipientNotFound,
+    #[error("Recipient not found {0}")]
+    RecipientNotFound(String),
     #[error("Channel receiving end at the GRPC sender has been dropped")]
     GrpcSenderDropped,
     #[error("Message could not be serialized")]
@@ -61,8 +62,8 @@ pub enum RecvError {
 }
 #[derive(Error, Debug)]
 pub enum BuildError {
-    #[error("Recipient not found")]
-    RecipientNotFound,
+    #[error("Recipient not found {0}")]
+    OperatorNotFound(String),
     #[error("WorkerId could not be serialized")]
     EncodingError(#[from] bincode::error::EncodeError),
     #[error("Error creating tokio runtime")]
@@ -137,7 +138,7 @@ where
     fn send_encoded(&self, recipient: &W, message: MessageWrapper) -> Result<(), SendError> {
         self.outgoing
             .get(recipient)
-            .ok_or(SendError::RecipientNotFound)?
+            .ok_or(SendError::RecipientNotFound(format!("{recipient:?}")))?
             .send(message)
             .map_err(|_| SendError::GrpcSenderDropped)
     }
@@ -222,11 +223,11 @@ where
         self
     }
 
-    pub fn for_operator(&self, operator_id: &O) -> Result<Postbox<W>, SendError> {
+    pub fn for_operator(&self, operator_id: &O) -> Result<Postbox<W>, BuildError> {
         let incoming = self
             .incoming
             .get(operator_id)
-            .ok_or(SendError::RecipientNotFound)?
+            .ok_or(BuildError::OperatorNotFound(format!("{operator_id:?}")))?
             .clone();
         let op_encoded = encode_to_vec(operator_id, CONFIG)?;
         Ok(Postbox {

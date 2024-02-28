@@ -4,7 +4,7 @@ use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
 use std::{hash::Hash, rc::Rc};
 
-mod channels;
+pub mod channels;
 // pub mod filter;
 pub mod frontier;
 // pub mod inspect;
@@ -14,7 +14,7 @@ pub mod config;
 // pub mod network_exchange;
 pub mod snapshot;
 // pub mod source;
-// pub mod stateful_map;
+pub mod stateful_map;
 pub mod keyed;
 pub mod stream;
 pub mod worker;
@@ -55,6 +55,11 @@ pub struct DataMessage<K, T> {
     pub time: Timestamp,
     pub key: K,
     pub value: T,
+}
+impl<K, T> DataMessage<K, T> {
+    pub fn new(time: Timestamp, key: K, value: T) -> Self {
+        Self { time, key, value }
+    }
 }
 /// Content variants of a JetStream message.
 /// Most messages will be of the data flavour, i.e. data to be processed,

@@ -1,55 +1,63 @@
+use std::collections::HashMap;
+
+use itertools::Itertools;
+
 use crate::{
-    channels::selective_broadcast::Receiver,
-    frontier::FrontierHandle,
-    snapshot::{barrier::BarrierData, PersistenceBackend},
-    stream::{
+    channels::selective_broadcast::{Receiver, Sender}, frontier::FrontierHandle, snapshot::{barrier::BarrierData, PersistenceBackend}, stream::{
         jetstream::JetStreamBuilder,
         operator::StandardOperator,
-    }, DataMessage, Message,
+    }, Data, DataMessage, Key, Message
 };
 
 pub trait StatefulMap<K, TI, P: PersistenceBackend> {
-    fn stateful_map<K, TO, S: Default + 'static>(
+    fn stateful_map<TO: Data, S: Default + 'static>(
         self,
-        mapper: impl FnMut(DataMessage<K, TI>, &mut FrontierHandle, &mut S) -> DataMessage<K, TO> + 'static,
+        mapper: impl FnMut(TI, &mut S) -> TO + 'static,
     ) -> JetStreamBuilder<K, TO, P>;
 }
 
-impl<KI, TI, P> StatefulMap<KI, TI, P> for JetStreamBuilder<KI, TI, P>
+impl<K, TI, P> StatefulMap<K, TI, P> for JetStreamBuilder<K, TI, P>
 where
+    K: Key,
+    TI: Data,
     P: PersistenceBackend,
 {
-    fn stateful_map<KO, TO, S: Default + 'static>(
+    fn stateful_map<TO: Data, S: Default + 'static>(
         self,
-        mut mapper: impl FnMut(DataMessage<KI, TI>, &mut FrontierHandle, &mut S) -> DataMessage<KO, TO> + 'static,
-    ) -> JetStreamBuilder<KO, TO, P> {
-        let mut state: Option<S> = None;
-        let operator = StandardOperator::new(move |input: &mut Receiver<KI, TI, P>, output, ctx| {
+        mut mapper: impl FnMut(TI, &mut S) -> TO + 'static,
+    ) -> JetStreamBuilder<K, TO, P> {
+        let mut state: HashMap<K, S> = HashMap::new();
+        let op = StandardOperator::new(move |input: &mut Receiver<K, TI, P>, output: &mut Sender<K, TO, P>, ctx| {
             let msg = match input.recv() {
                 Some(x) => x,
                 None => return
             };
-            match msg {
-                Message::Load(l) => {
-                    let (time, loaded_state) = l.load(ctx.operator_id).unwrap_or_default();
-                    ctx.frontier.advance_to(time);
-                    state = Some(loaded_state);
+            let mapped = match msg {
+                Message::Data(DataMessage { time, key, value }) => {
+                let state = state.entry(key.to_owned()).or_default();
+                let mapped = mapper(value, state);
+                Message::Data(DataMessage::new(time, key, mapped))
                 }
-                Message::AbsBarrier(mut b) => {
-                    if let Some(st) = state.as_ref() {
-                        b.persist(ctx.frontier.get_actual(), &st, ctx.operator_id);
-                    }
-                    output.send(BarrierData::Barrier(b));
-                }
-                Message::Data(d) => {
-                    if let Some(st) = state.as_mut() {
-                        let result = mapper(d, &mut ctx.frontier, st);
-                        output.send(BarrierData::Data(result));
-                    }
-                }
-                Message::CeaseMarker(key) 
-            }
+                // key messages may not cross key region boundaries
+                Message::Interrogate(mut x) => {
+                    x.add_keys(&(state.keys().map(|k| k.to_owned()).collect_vec()));
+                    Message::Interrogate(x)
+                },
+                Message::Collect(x) => {
+                    // x.add_state(ctx.operator_id, state.get(&x.key))
+                    todo!()
+                },
+                Message::Acquire(x) => todo!(),
+                Message::DropKey(x) => todo!(),
+                // necessary to convince Rust it is a different generic type now
+                Message::AbsBarrier(b) => Message::AbsBarrier(b),
+                Message::Load(l) => Message::Load(l),
+                Message::ScaleAddWorker(x) => Message::ScaleAddWorker(x),
+                Message::ScaleRemoveWorker(x) => Message::ScaleRemoveWorker(x),
+                Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
+            };
+            output.send(mapped)
         });
-        self.then(operator)
+        self.then(op)
     }
 }

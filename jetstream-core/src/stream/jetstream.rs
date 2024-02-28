@@ -1,8 +1,9 @@
-use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
+use super::operator::{AppendableOperator, FrontieredOperator, OperatorContext, StandardOperator};
 use crate::{
-    channels::selective_broadcast::{self, Sender},
+    channels::selective_broadcast::{self, Receiver, Sender},
+    frontier::Timestamp,
     snapshot::PersistenceBackend,
-    Data, Key,
+    Data, Key, NoData, NoKey,
 };
 
 pub struct JetStreamBuilder<K, T, P> {
@@ -47,6 +48,14 @@ where
     //     &mut self.tail.unwrap()
     // }
 
+    pub fn new() -> JetStreamBuilder<NoKey, NoData, P> {
+        JetStreamBuilder::from_operator(StandardOperator::new(
+            |_input: &mut Receiver<NoKey, NoData, P>, _output, ctx: &mut OperatorContext| {
+                ctx.frontier.advance_to(Timestamp::MAX)
+            },
+        ))
+    }
+
     pub fn get_output_mut(&mut self) -> &mut Sender<K, T, P> {
         self.tail.get_output_mut()
     }
@@ -69,7 +78,7 @@ where
         }
     }
 
-    pub fn build(mut self) -> JetStream<P> {
+    pub(crate) fn build(mut self) -> JetStream<P> {
         let tail = self.tail.build();
         self.operators.push(tail);
         JetStream {

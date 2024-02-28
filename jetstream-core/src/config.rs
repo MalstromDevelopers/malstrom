@@ -15,9 +15,11 @@ pub struct Config {
     // communication port for inter-worker comm
     pub port: u16,
     // name of k8s statefulset
-    pub sts_name: String,
+    pub sts_name: Option<String>,
     // total cluster size before any rescaling
     pub initial_scale: Scale,
+
+    pub cluster_addresses: Option<Vec<String>>,
 }
 
 impl Config {
@@ -35,13 +37,20 @@ impl Config {
             .expect("Invalid configuratiioin")
     }
 
-    pub fn get_k8s_peer_uris(&self) -> Vec<(WorkerId, Uri)> {
-        let sts_name = self.sts_name.clone();
-        let port = self.port;
-        (0..self.initial_scale)
-            .filter(|i| *i != self.worker_id)
-            .map(|i| (i, format!("http://{sts_name}-{i}.{sts_name}:{port}")))
-            .map(|(i, x)| (i, x.parse::<Uri>().unwrap()))
-            .collect()
+    pub fn get_peer_uris(&self) -> Vec<(WorkerId, Uri)> {
+        if let Some(sts_name) = &self.sts_name {
+            let port = self.port;
+            (0..self.initial_scale)
+                .filter(|i| *i != self.worker_id)
+                .map(|i| (i, format!("http://{sts_name}-{i}.{sts_name}:{port}")))
+                .map(|(i, x)| (i, x.parse::<Uri>().unwrap()))
+                .collect()
+        } else {
+            self.cluster_addresses.as_ref().expect(
+                "If not using kubernetes DNS discovery, cluster addresses must be set through the config"
+            ).iter().enumerate().filter(
+                |(i, _)| *i != self.worker_id).map(
+                    |(i, x)| (i, x.parse::<Uri>().unwrap())).collect()
+        }
     }
 }
