@@ -1,8 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-
-use itertools::Itertools;
-
 use crate::channels::selective_broadcast::{self};
 use crate::snapshot::controller::{end_snapshot_region, start_snapshot_region, RegionHandle};
 use crate::snapshot::PersistenceBackend;
@@ -96,7 +93,6 @@ where
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
         let _operator_ids: Vec<OperatorId> = (0..self.operators.len())
-            .map(|x| x.try_into().unwrap())
             .collect();
         // TODO: Get the peer addresses from K8S
         // should be "podname.sts-name"
@@ -116,9 +112,9 @@ where
             .map(|(i, x)| {
                 x.build(
                     config.worker_id,
-                    i.try_into().unwrap(),
+                    i,
                     communication_backend
-                        .for_operator(&i.try_into().unwrap())
+                        .for_operator(&i)
                         .unwrap(),
                 )
             })
