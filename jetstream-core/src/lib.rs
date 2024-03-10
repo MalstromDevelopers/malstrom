@@ -2,8 +2,8 @@ use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
 
-use time::Epoch;
 use std::{hash::Hash, rc::Rc};
+use time::Epoch;
 
 pub mod channels;
 // pub mod filter;
@@ -15,12 +15,12 @@ pub mod config;
 // pub mod network_exchange;
 pub mod snapshot;
 // pub mod source;
-pub mod stateful_map;
 pub mod keyed;
+pub mod stateful_map;
 pub mod stream;
-pub mod worker;
 mod time;
 mod util;
+pub mod worker;
 type OperatorId = usize;
 type WorkerId = usize;
 type Scale = usize;

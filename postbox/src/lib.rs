@@ -33,12 +33,18 @@ pub trait WorkerId:
     Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> WorkerId for T {}
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> WorkerId
+    for T
+{
+}
 pub trait OperatorId:
     Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> OperatorId for T {}
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> OperatorId
+    for T
+{
+}
 pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 

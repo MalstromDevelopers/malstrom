@@ -3,11 +3,13 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::{Equivalent, IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
 };
 
 use super::{
-    normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, DistTimestamp, NetworkAcquire, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage
+    normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, DistTimestamp,
+    NetworkAcquire, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage,
 };
 
 pub(super) struct CollectDistributor<K, V, T> {

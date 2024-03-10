@@ -1,13 +1,15 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, Message, WorkerId,
 };
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    interrogate::InterrogateDistributor, DistData, DistKey, DistTimestamp, NetworkMessage, PhaseDistributor, ScalableMessage, Version
+    interrogate::InterrogateDistributor, DistData, DistKey, DistTimestamp, NetworkMessage,
+    PhaseDistributor, ScalableMessage, Version,
 };
 
 #[derive(Serialize, Deserialize, Default)]

@@ -42,7 +42,10 @@ pub trait KeyLocal<X, K: Key, V, T, P> {
     /// If the worker gets de-scheduled all state is potentially lost.
     /// To have the state moved to a different worker in this case, use
     /// `key_distribute`.
-    fn key_local(self, key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static) -> JetStreamBuilder<K, V, T, P>;
+    fn key_local(
+        self,
+        key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
+    ) -> JetStreamBuilder<K, V, T, P>;
 }
 
 impl<X, K, V, T, P> KeyLocal<X, K, V, T, P> for JetStreamBuilder<X, V, T, P>
@@ -53,33 +56,40 @@ where
     T: Timestamp,
     P: PersistenceBackend,
 {
-    fn key_local(self, key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static) -> JetStreamBuilder<K, V, T, P> {
-        let op = StandardOperator::new(move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
-            match input.recv() {
-                Some(Message::Data(d)) => {
-                    let new_key = key_func(&d);
-                    let new_msg = DataMessage {
-                        time: d.time,
-                        key: new_key,
-                        value: d.value,
-                    };
-                    output.send(Message::Data(new_msg))
+    fn key_local(
+        self,
+        key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
+    ) -> JetStreamBuilder<K, V, T, P> {
+        let op = StandardOperator::new(
+            move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
+                match input.recv() {
+                    Some(Message::Data(d)) => {
+                        let new_key = key_func(&d);
+                        let new_msg = DataMessage {
+                            time: d.time,
+                            key: new_key,
+                            value: d.value,
+                        };
+                        output.send(Message::Data(new_msg))
+                    }
+                    // key messages may not cross key region boundaries
+                    Some(Message::Interrogate(_)) => (),
+                    Some(Message::Collect(_)) => (),
+                    Some(Message::Acquire(_)) => (),
+                    Some(Message::DropKey(_)) => (),
+                    // necessary to convince Rust it is a different generic type now
+                    Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
+                    Some(Message::Load(l)) => output.send(Message::Load(l)),
+                    Some(Message::ScaleAddWorker(x)) => output.send(Message::ScaleAddWorker(x)),
+                    Some(Message::ScaleRemoveWorker(x)) => {
+                        output.send(Message::ScaleRemoveWorker(x))
+                    }
+                    Some(Message::ShutdownMarker(x)) => output.send(Message::ShutdownMarker(x)),
+                    Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),
+                    None => (),
                 }
-                // key messages may not cross key region boundaries
-                Some(Message::Interrogate(_)) => (),
-                Some(Message::Collect(_)) => (),
-                Some(Message::Acquire(_)) => (),
-                Some(Message::DropKey(_)) => (),
-                // necessary to convince Rust it is a different generic type now
-                Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
-                Some(Message::Load(l)) => output.send(Message::Load(l)),
-                Some(Message::ScaleAddWorker(x)) => output.send(Message::ScaleAddWorker(x)),
-                Some(Message::ScaleRemoveWorker(x)) => output.send(Message::ScaleRemoveWorker(x)),
-                Some(Message::ShutdownMarker(x)) => output.send(Message::ShutdownMarker(x)),
-                Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),
-                None => ()
-            }
-        });
+            },
+        );
         self.then(op)
     }
 }

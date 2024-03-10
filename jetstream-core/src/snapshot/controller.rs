@@ -56,15 +56,11 @@ pub fn start_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBacken
             println!("Loading latest state");
             // initial startup, send load command to all if leader
             let backend = P::new_latest();
-            let latest: ControllerState = backend
-                .load(ctx.operator_id)
-                .unwrap_or_default();
+            let latest: ControllerState = backend.load(ctx.operator_id).unwrap_or_default();
             let last_commited = latest.commited_snapshots.values().min().unwrap_or(&0);
             // load last committed state
             let backend = P::new_for_epoch(last_commited);
-            state.replace(backend
-                .load(ctx.operator_id)
-                .unwrap_or_default());
+            state.replace(backend.load(ctx.operator_id).unwrap_or_default());
             println!("State loaded");
             output.send(Message::Load(backend));
 
@@ -73,12 +69,11 @@ pub fn start_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBacken
                 .broadcast(ComsMessage::LoadSnapshot(*last_commited))
                 .expect("Network communication error");
         }
-        
 
         // PANIC: Can unwrap here because we loaded the state before
         let s = match state.as_mut() {
             Some(x) => x,
-            None => return
+            None => return,
         };
         if !snapshot_in_progress && ctx.worker_id == 0 && timer() {
             let snapshot_epoch = s.commited_snapshots.values().min().unwrap_or(&0) + 1;
@@ -129,9 +124,7 @@ pub fn start_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBacken
                 }
                 Some(ComsMessage::LoadSnapshot(i)) => {
                     let backend = P::new_for_epoch(&i);
-                    state = backend
-                        .load(ctx.operator_id)
-                        .unwrap_or_default();
+                    state = backend.load(ctx.operator_id).unwrap_or_default();
                 }
                 Some(ComsMessage::CommitSnapshot(name, epoch)) => {
                     // TODO handle this more elegantly than unwrap

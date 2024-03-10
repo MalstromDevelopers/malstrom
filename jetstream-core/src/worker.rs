@@ -35,7 +35,10 @@ where
         JetStreamBuilder::from_operator(new_op)
     }
 
-    pub fn add_stream<K: Key, V: Data, T: Timestamp>(&mut self, stream: JetStreamBuilder<K, V, T, P>) {
+    pub fn add_stream<K: Key, V: Data, T: Timestamp>(
+        &mut self,
+        stream: JetStreamBuilder<K, V, T, P>,
+    ) {
         let stream = end_snapshot_region(stream, self.snapshot_handle.clone());
         self.operators.extend(stream.build().into_operators())
     }
@@ -85,15 +88,17 @@ where
         unsafe { new_streams.try_into().unwrap_unchecked() }
     }
 
-    pub fn build(self, config: Option<crate::config::Config>) -> Result<RuntimeWorker, postbox::BuildError> {
+    pub fn build(
+        self,
+        config: Option<crate::config::Config>,
+    ) -> Result<RuntimeWorker, postbox::BuildError> {
         // TODO: Add a `void` sink at the end of every dataflow to swallow
         // unused messages
         let config = config.as_ref().unwrap_or(&crate::config::CONFIG);
 
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
-        let _operator_ids: Vec<OperatorId> = (0..self.operators.len())
-            .collect();
+        let _operator_ids: Vec<OperatorId> = (0..self.operators.len()).collect();
         // TODO: Get the peer addresses from K8S
         // should be "podname.sts-name"
         let peers = config.get_peer_uris();
@@ -108,14 +113,13 @@ where
         let operator_ids = operators.iter().map(|(i, _)| *i).collect();
         let communication_backend =
             postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
-        let operators = operators.into_iter()
+        let operators = operators
+            .into_iter()
             .map(|(i, x)| {
                 x.build(
                     config.worker_id,
                     i,
-                    communication_backend
-                        .for_operator(&i)
-                        .unwrap(),
+                    communication_backend.for_operator(&i).unwrap(),
                 )
             })
             .collect();
@@ -132,8 +136,7 @@ pub struct RuntimeWorker {
     operators: Vec<RunnableOperator>,
     communication: postbox::CommunicationBackend,
 }
-impl RuntimeWorker
-{
+impl RuntimeWorker {
     // pub fn get_frontier(&self) -> Option<Timestamp> {
     //     self.probes.last().map(|x| x.read())
     // }

@@ -1,6 +1,6 @@
 pub mod barrier;
 pub mod controller;
-use crate::{OperatorId};
+use crate::OperatorId;
 
 pub type SnapshotVersion = usize;
 

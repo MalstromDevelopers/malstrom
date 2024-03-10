@@ -3,11 +3,13 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
+    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
 };
 
 use super::{
-    collect::CollectDistributor, DistData, DistKey, DistTimestamp, Interrogate, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage
+    collect::CollectDistributor, DistData, DistKey, DistTimestamp, Interrogate, NetworkMessage,
+    PhaseDistributor, ScalableMessage, Version, VersionedMessage,
 };
 
 pub(super) struct InterrogateDistributor<K, V, T> {
@@ -26,7 +28,7 @@ impl<K, V, T> InterrogateDistributor<K, V, T>
 where
     K: DistKey,
     V: DistData,
-    T: DistTimestamp
+    T: DistTimestamp,
 {
     pub(super) fn new<P: Clone>(
         old_worker_set: IndexSet<WorkerId>,

@@ -78,7 +78,7 @@ where
     K: Clone,
     V: Clone,
     T: Clone,
-    P: Clone
+    P: Clone,
 {
     pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {

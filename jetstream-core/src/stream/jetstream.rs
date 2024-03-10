@@ -1,6 +1,9 @@
 use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 use crate::{
-    channels::selective_broadcast::{self, Sender}, snapshot::PersistenceBackend, time::{Timestamp}, Data, Key
+    channels::selective_broadcast::{self, Sender},
+    snapshot::PersistenceBackend,
+    time::Timestamp,
+    Data, Key,
 };
 
 pub struct JetStreamBuilder<K, V, T, P> {
@@ -14,7 +17,7 @@ where
     K: Key,
     V: Data,
     T: Timestamp,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     pub(crate) fn from_operator<KI: Key, VI: Data, TI: Timestamp>(
         operator: StandardOperator<KI, VI, TI, K, V, T, P>,
@@ -31,7 +34,7 @@ where
     K: Key,
     V: Data,
     T: Timestamp,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     // pub fn tail(&self) -> &FrontieredOperator<O> {
     //     // we can unwrap here, since this impl block is bound by
@@ -90,8 +93,7 @@ pub struct JetStream {
     operators: Vec<FrontieredOperator>,
 }
 
-impl JetStream
-{
+impl JetStream {
     pub fn into_operators(self) -> Vec<FrontieredOperator> {
         self.operators
     }

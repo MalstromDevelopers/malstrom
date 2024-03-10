@@ -1,9 +1,9 @@
-
 /// Panics with an error message explaining the "Early Data Error"
 /// Call this if the operator encounters data before having received
 /// a state load message
 pub(crate) fn panic_early_data<T>() -> T {
-    panic!("
+    panic!(
+        "
         Early Data Error:
         An operator encountered data to process before the initial
         state load message had reached it.
@@ -16,5 +16,6 @@ pub(crate) fn panic_early_data<T>() -> T {
         not produce data before the state load message.
         If you believe this to be a bug in JetStream itself, please report
         it to the maintainers.
-    ")
+    "
+    )
 }

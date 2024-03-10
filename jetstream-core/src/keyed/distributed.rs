@@ -3,7 +3,11 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, snapshot::PersistenceBackend, stream::operator::OperatorContext, time::Timestamp, Data, DataMessage, Key, Message, OperatorId, WorkerId
+    channels::selective_broadcast::{Receiver, Sender},
+    snapshot::PersistenceBackend,
+    stream::operator::OperatorContext,
+    time::Timestamp,
+    Data, DataMessage, Key, Message, OperatorId, WorkerId,
 };
 
 use serde::de::DeserializeOwned;
@@ -85,7 +89,7 @@ where
     K: DistKey,
     V: DistData,
     T: DistTimestamp,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     pub(super) fn new(dist_func: impl WorkerPartitioner<K>) -> Self {
         let inner = PhaseDistributor::Normal(NormalDistributor::default());

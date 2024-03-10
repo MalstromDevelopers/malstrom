@@ -1,43 +1,70 @@
 use std::{
-    collections::{HashMap, VecDeque}, net::{SocketAddr, SocketAddrV4}, path::Path, sync::{
+    collections::{HashMap, VecDeque},
+    net::{SocketAddr, SocketAddrV4},
+    path::Path,
+    sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }, time::{Duration, Instant}
+    },
+    time::{Duration, Instant},
 };
 
+use apache_avro::{from_value, AvroSchema, Reader, Schema};
+use glob::glob;
 use itertools::Itertools;
 use jetstream::{
-    channels::selective_broadcast::{Receiver, Sender}, config::Config, keyed::{KeyDistribute, KeyLocal}, snapshot::NoPersistenceBackend, stateful_map::StatefulMap, stream::{
+    channels::selective_broadcast::{Receiver, Sender},
+    config::Config,
+    keyed::{KeyDistribute, KeyLocal},
+    snapshot::NoPersistenceBackend,
+    stateful_map::StatefulMap,
+    stream::{
         jetstream::{JetStream, JetStreamBuilder},
         operator::StandardOperator,
-    }, worker::{self, Worker}, DataMessage, Message, NoData, NoKey
+    },
+    worker::{self, Worker},
+    DataMessage, Message, NoData, NoKey,
 };
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use url::Url;
-use apache_avro::{from_value, AvroSchema, Reader, Schema};
-use glob::glob;
 
 static ALLOWED_OUT_OF_BOUNDNESS: u64 = 20 * 1000; // seconds
 static STATE_SIZE: usize = 10;
 static PREDICTION_NUM: usize = 5;
 
-
 /// Code I stole from Nico
 fn main() {
-    let config = Config{
+    let config = Config {
         worker_id: 0,
         port: 29090,
-        cluster_addresses: Some(vec!["http://localhost:29091".into(), "http://localhost:29092".into(), "http://localhost:29093".into(), "http://localhost:29094".into()]),
+        cluster_addresses: Some(vec![
+            "http://localhost:29091".into(),
+            "http://localhost:29092".into(),
+            "http://localhost:29093".into(),
+            "http://localhost:29094".into(),
+        ]),
         initial_scale: 2,
-        sts_name: None
+        sts_name: None,
     };
     let base_port: u16 = 29091;
     let range = 0..10u16;
-    let addresses = range.clone().map(|x| x + base_port).map(|x| format!("http://localhost:{x}")).collect_vec();
-    let configs = range.map(|x| Config{worker_id: x.try_into().unwrap(), port: base_port + x, cluster_addresses: Some(addresses.clone()), initial_scale: addresses.len(), sts_name: None});
+    let addresses = range
+        .clone()
+        .map(|x| x + base_port)
+        .map(|x| format!("http://localhost:{x}"))
+        .collect_vec();
+    let configs = range.map(|x| Config {
+        worker_id: x.try_into().unwrap(),
+        port: base_port + x,
+        cluster_addresses: Some(addresses.clone()),
+        initial_scale: addresses.len(),
+        sts_name: None,
+    });
 
-    let threads = configs.map(|c| std::thread::spawn(move || run_stream_a(c))).collect_vec();
+    let threads = configs
+        .map(|c| std::thread::spawn(move || run_stream_a(c)))
+        .collect_vec();
     for x in threads {
         x.join().unwrap()
     }
@@ -77,18 +104,23 @@ fn run_stream_a(config: Config) {
             },
         )
         // filter data
-        .then(StandardOperator::new(|input: &mut Receiver<u64, StateVector, NoPersistenceBackend>, output, ctx| {
-            ctx.frontier.advance_to(Timestamp::MAX);
-            match input.recv() {
-                Some(Message::Data(DataMessage { time, key, value })) => {
-                    if value.longitude.is_some() && value.time_position.is_some() && value.velocity.is_some() {
-                        output.send(Message::Data(DataMessage { time, key, value }))
+        .then(StandardOperator::new(
+            |input: &mut Receiver<u64, StateVector, NoPersistenceBackend>, output, ctx| {
+                ctx.frontier.advance_to(Timestamp::MAX);
+                match input.recv() {
+                    Some(Message::Data(DataMessage { time, key, value })) => {
+                        if value.longitude.is_some()
+                            && value.time_position.is_some()
+                            && value.velocity.is_some()
+                        {
+                            output.send(Message::Data(DataMessage { time, key, value }))
+                        }
                     }
-                },
-                Some(x) => output.send(x),
-                None => ()
-            }
-        }))
+                    Some(x) => output.send(x),
+                    None => (),
+                }
+            },
+        ))
         // acumulate state
         .stateful_map(|val, state: &mut VecDeque<StateVector>| {
             state.push_back(val);
@@ -98,16 +130,22 @@ fn run_stream_a(config: Config) {
             }
             state.clone()
         })
-        .then(StandardOperator::new(|input: &mut Receiver<u64, VecDeque<StateVector>, NoPersistenceBackend>, output: &mut Sender<u64, VecDeque<StateVector>, NoPersistenceBackend>, _ctx| {
-            if let Some(x) = input.recv()  {
-                match x {
-                    Message::Data(DataMessage { time, key, value }) => if value.len() >= 2  {
-                        output.send(Message::Data(DataMessage::new(time, key, value)))
+        .then(StandardOperator::new(
+            |input: &mut Receiver<u64, VecDeque<StateVector>, NoPersistenceBackend>,
+             output: &mut Sender<u64, VecDeque<StateVector>, NoPersistenceBackend>,
+             _ctx| {
+                if let Some(x) = input.recv() {
+                    match x {
+                        Message::Data(DataMessage { time, key, value }) => {
+                            if value.len() >= 2 {
+                                output.send(Message::Data(DataMessage::new(time, key, value)))
+                            }
+                        }
+                        x => output.send(x),
                     }
-                    x => output.send(x)
-                }
-            };
-        }))
+                };
+            },
+        ))
         .stateful_map(|mut trajectory, state: &mut ()| {
             // println!("Predicting...");
             for _ in 0..PREDICTION_NUM {
@@ -117,8 +155,11 @@ fn run_stream_a(config: Config) {
             trajectory
         })
         // destruct all the messages
-        .then(StandardOperator::new(|input, _output: &mut Sender<NoKey, NoData, _>, _ctx| {input.recv();}))
-        ;
+        .then(StandardOperator::new(
+            |input, _output: &mut Sender<NoKey, NoData, _>, _ctx| {
+                input.recv();
+            },
+        ));
 
     let mut worker = Worker::new(|| false);
     worker.add_stream(stream);
@@ -184,7 +225,11 @@ fn read_avro(path: &Path) -> Vec<StateVector> {
     let mut produced_records_successful = 0;
 
     // iterate over read records and write them to the Kafka endpoint
-    reader.into_iter().filter(|value| value.is_ok()).map(|value| from_value::<StateVector>(&value.unwrap()).unwrap()).collect()
+    reader
+        .into_iter()
+        .filter(|value| value.is_ok())
+        .map(|value| from_value::<StateVector>(&value.unwrap()).unwrap())
+        .collect()
 }
 
 use std::collections::hash_map::DefaultHasher;
@@ -196,12 +241,9 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     s.finish()
 }
 
-
-use std::{
-    time::{SystemTime, UNIX_EPOCH},
-};
-use std::f64::consts::PI;
 use libm::{asin, atan2};
+use std::f64::consts::PI;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Defines the Predictor trait
 pub trait Predictor<T> {
@@ -209,8 +251,6 @@ pub trait Predictor<T> {
     /// on itself.
     fn predict(&self) -> T;
 }
-
-
 
 impl Predictor<StateVector> for VecDeque<StateVector> {
     fn predict(&self) -> StateVector {
@@ -226,8 +266,7 @@ impl Predictor<StateVector> for VecDeque<StateVector> {
             ))
         }
 
-        let avg_bearing =
-            average_bearing(sliding_values.iter().filter_map(|x| x.0).collect());
+        let avg_bearing = average_bearing(sliding_values.iter().filter_map(|x| x.0).collect());
 
         // radius of the earth
         let radius = 6371.0;
@@ -236,7 +275,7 @@ impl Predictor<StateVector> for VecDeque<StateVector> {
             sliding_values.iter().map(|x| x.1).sum::<i64>() / (sliding_values.len() as i64);
 
         let avg_speed = self.iter().map(|x| x.velocity.unwrap()).sum::<f64>() / self.len() as f64;
-        
+
         // convert speed to km/h
         let speed_kmph = avg_speed * 3.6;
         let avg_bearing_rad = avg_bearing.unwrap().to_radians();
@@ -253,7 +292,7 @@ impl Predictor<StateVector> for VecDeque<StateVector> {
         // calculate the predicted lat
         let lat2 = asin(
             lat1.sin() * (distance / radius).cos()
-            + lat1.cos() * (distance / radius).sin() * avg_bearing_rad.cos(),
+                + lat1.cos() * (distance / radius).sin() * avg_bearing_rad.cos(),
         );
         // calculate the predicted lon
         let lon2 = lon1
@@ -261,11 +300,11 @@ impl Predictor<StateVector> for VecDeque<StateVector> {
                 avg_bearing_rad.sin() * (distance / radius).sin() * (lat1).cos(),
                 (distance / radius).cos() - lat1.sin() * lat2.sin(),
             );
-        
+
         // convert from radians to degree
         let new_lat = lat2.to_degrees();
         let new_lon = lon2.to_degrees();
-        
+
         // create new StateVector from previous message and newly calculated fields
         let mut new_sv = last.clone();
         new_sv.latitude = Some(new_lat);
@@ -281,11 +320,10 @@ impl Predictor<StateVector> for VecDeque<StateVector> {
     }
 }
 
-
 /// The function calculate the bearing between two geographic positions.
-/// 
+///
 /// It returns the bearing to true noth in the range between 0 and 360
-/// 
+///
 /// # Example
 /// ```rust
 /// let sv1 = StateVecotr{...};
@@ -311,7 +349,7 @@ pub fn calculate_bearing(sv1: &StateVector, sv2: &StateVector) -> Option<f64> {
 }
 
 /// Calculate the average bearing from a list of bearings
-/// 
+///
 /// # Example
 /// ```rust
 /// let avg_bearing = geographic_helper::average_bearing(vec![1,2,3,4]);

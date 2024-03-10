@@ -61,7 +61,8 @@ impl<
         TI,
         TO,
         P,
-        X: FnMut(&mut Receiver<KI, VI, TI, P>, &mut Sender<KO, VO, TO, P>, &mut OperatorContext) + 'static,
+        X: FnMut(&mut Receiver<KI, VI, TI, P>, &mut Sender<KO, VO, TO, P>, &mut OperatorContext)
+            + 'static,
     > Mapper<KI, VI, TI, KO, VO, TO, P> for X
 {
 }
@@ -74,7 +75,7 @@ where
     VO: Data,
     TI: Timestamp,
     TO: Timestamp,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     pub fn new(mapper: impl Mapper<KI, VI, TI, KO, VO, TO, P>) -> Self {
         let input = Receiver::new_unlinked();
@@ -104,7 +105,8 @@ where
     }
 }
 
-impl<KI, VI, TI, KO, VO, TO, P> AppendableOperator<KO, VO, TO, P> for StandardOperator<KI, VI, TI, KO, VO, TO, P>
+impl<KI, VI, TI, KO, VO, TO, P> AppendableOperator<KO, VO, TO, P>
+    for StandardOperator<KI, VI, TI, KO, VO, TO, P>
 where
     KI: Key,
     VI: Data,
@@ -112,7 +114,7 @@ where
     KO: Key,
     VO: Data,
     TO: Timestamp,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO, P> {
         &mut self.output
@@ -130,8 +132,7 @@ where
 //     mapper: Box<dyn FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle)>,
 //     output: Sender<O, P>,
 // }
-impl<KI, VI, TI, KO, VO, TO, P> Operator for StandardOperator<KI, VI, TI, KO, VO, TO, P>
-{
+impl<KI, VI, TI, KO, VO, TO, P> Operator for StandardOperator<KI, VI, TI, KO, VO, TO, P> {
     fn step(&mut self, context: &mut OperatorContext) {
         (self.mapper)(&mut self.input, &mut self.output, context);
     }
@@ -145,9 +146,16 @@ pub struct FrontieredOperator {
     operator: Box<dyn Operator>,
 }
 
-impl FrontieredOperator
-{
-    fn new<KI: Key, VI: Data, TI: Timestamp, KO: Key, VO: Data, TO: Timestamp, P: PersistenceBackend>(
+impl FrontieredOperator {
+    fn new<
+        KI: Key,
+        VI: Data,
+        TI: Timestamp,
+        KO: Key,
+        VO: Data,
+        TO: Timestamp,
+        P: PersistenceBackend,
+    >(
         operator: StandardOperator<KI, VI, TI, KO, VO, TO, P>,
     ) -> Self {
         Self {
@@ -177,8 +185,7 @@ pub struct RunnableOperator {
     operator: Box<dyn Operator>,
 }
 
-impl RunnableOperator
-{
+impl RunnableOperator {
     pub fn step(&mut self) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,
