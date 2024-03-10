@@ -158,7 +158,7 @@ pub fn end_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>
     stream: JetStreamBuilder<K, V, T, P>,
     region_handle: RegionHandle<P>,
 ) -> JetStreamBuilder<K, V, T, P> {
-    let op = StandardOperator::new(move |input: &mut Receiver<K, V, T, P>, output, ctx| {
+    let op = StandardOperator::new(move |input: &mut Receiver<K, V, T, P>, output, _ctx| {
         match input.recv() {
             Some(Message::AbsBarrier(b)) => region_handle.sender.send(b).unwrap(),
             Some(x) => output.send(x),

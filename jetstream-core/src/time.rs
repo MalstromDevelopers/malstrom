@@ -16,12 +16,12 @@ impl Timestamp for NoTime {
     const MIN: Self = NoTime;
 }
 impl PartialOrd for NoTime{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
     }
 }
 impl PartialEq for NoTime{
-    fn eq(&self, other: &Self) -> bool {
+    fn eq(&self, _other: &Self) -> bool {
         true
     }
 }
@@ -52,15 +52,15 @@ timestamp_impl!(i128);
 timestamp_impl!(f64);
 timestamp_impl!(f32);
 
-use std::collections::HashMap;
 
-use itertools::Itertools;
+
+
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender}, snapshot::PersistenceBackend, stream::{
         jetstream::JetStreamBuilder,
         operator::StandardOperator,
-    }, Data, DataMessage, Key, Message, NoKey
+    }, Data, DataMessage, Message, NoKey
 };
 
 /// IMPORTANT: The epoch generator can semantically only be implemented
@@ -84,7 +84,7 @@ where
         mut mapper: impl FnMut(&DataMessage<NoKey, V, TI>) -> TO + 'static,
         mut generator: impl FnMut(Option<&DataMessage<NoKey, V, TI>>) -> Option<Epoch<TO>> + 'static
     ) -> JetStreamBuilder<NoKey, V, TO, P> {
-        let op = StandardOperator::new(move |input: &mut Receiver<NoKey, V, TI, P>, output: &mut Sender<NoKey, V, TO, P>, ctx| {
+        let op = StandardOperator::new(move |input: &mut Receiver<NoKey, V, TI, P>, output: &mut Sender<NoKey, V, TO, P>, _ctx| {
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Data(d) => {
@@ -94,7 +94,7 @@ where
                         let new_ts = mapper(&d);
                         output.send(Message::Data(DataMessage { key: d.key, value: d.value, time: new_ts }))
                         }
-                        Message::Interrogate(mut x) => 
+                        Message::Interrogate(x) => 
                             output.send(Message::Interrogate(x)),
                         Message::Collect(x) => {
                             // x.add_state(ctx.operator_id, state.get(&x.key))
@@ -110,12 +110,10 @@ where
                         Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
                         Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                         Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
-                        Message::Epoch(x) => (),
+                        Message::Epoch(_x) => (),
                 }
-            } else {
-                if let Some(x) = generator(None) {
-                    output.send(Message::Epoch(x))
-                }
+            } else if let Some(x) = generator(None) {
+                output.send(Message::Epoch(x))
             }
         });
         self.then(op)

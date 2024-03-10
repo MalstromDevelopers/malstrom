@@ -105,7 +105,7 @@ where
     ) {
         // TODO: check what if any state we need to persist
         let scalable_message = match input.recv() {
-            Some(Message::AbsBarrier(mut b)) => {
+            Some(Message::AbsBarrier(b)) => {
                 let _ = self.received_barriers.0.insert(b);
                 ctx.communication
                     .broadcast(NetworkMessage::<K, V, T>::BarrierAlign(ctx.worker_id))
@@ -171,7 +171,7 @@ where
         msg: Option<ScalableMessage<K, V, T>>,
         output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let inner = std::mem::replace(&mut self.inner, PhaseDistributor::None);
         self.inner = match inner {
             PhaseDistributor::Normal(x) => x.run(&self.dist_func, msg, output, ctx),

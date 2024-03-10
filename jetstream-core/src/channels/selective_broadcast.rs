@@ -11,7 +11,7 @@ use crossbeam;
 use indexmap::IndexSet;
 use itertools::{self};
 
-use crate::{snapshot::PersistenceBackend, Message, OperatorId, OperatorPartitioner, Scale};
+use crate::{Message, OperatorId, OperatorPartitioner, Scale};
 
 struct BarrierReceiver<K, V, T, P>(crossbeam::channel::Receiver<Message<K, V, T, P>>, Option<P>);
 

@@ -46,12 +46,12 @@ where
                     };
                     Message::Interrogate(x)
                 },
-                Message::Collect(x) => {
+                Message::Collect(_x) => {
                     // x.add_state(ctx.operator_id, state.get(&x.key))
                     todo!()
                 },
-                Message::Acquire(x) => todo!(),
-                Message::DropKey(x) => todo!(),
+                Message::Acquire(_x) => todo!(),
+                Message::DropKey(_x) => todo!(),
                 // necessary to convince Rust it is a different generic type now
                 Message::AbsBarrier(b) => Message::AbsBarrier(b),
                 Message::Load(l) => {

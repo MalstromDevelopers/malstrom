@@ -1,6 +1,6 @@
-use super::operator::{AppendableOperator, FrontieredOperator, OperatorContext, StandardOperator};
+use super::operator::{AppendableOperator, FrontieredOperator, StandardOperator};
 use crate::{
-    channels::selective_broadcast::{self, Receiver, Sender}, snapshot::PersistenceBackend, time::{NoTime, Timestamp}, Data, Key, NoData, NoKey
+    channels::selective_broadcast::{self, Sender}, snapshot::PersistenceBackend, time::{Timestamp}, Data, Key
 };
 
 pub struct JetStreamBuilder<K, V, T, P> {

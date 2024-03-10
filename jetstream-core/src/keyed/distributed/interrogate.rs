@@ -3,7 +3,7 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, time::Timestamp, DataMessage, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, DataMessage, Message, WorkerId
 };
 
 use super::{

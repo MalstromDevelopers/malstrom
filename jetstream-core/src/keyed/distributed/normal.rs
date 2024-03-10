@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, time::Timestamp, Message, WorkerId
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, Message, WorkerId
 };
 
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ impl NormalDistributor {
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, V, T> {
         // TODO HACK
-        if self.worker_set.len() == 0 {
+        if self.worker_set.is_empty() {
             let mut wids: Vec<WorkerId> = vec![ctx.worker_id];
             wids.extend(ctx.communication.get_peers());
             wids.sort();

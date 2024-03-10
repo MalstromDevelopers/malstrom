@@ -1,5 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::Duration;
+
 
 use itertools::Itertools;
 
@@ -64,7 +64,7 @@ where
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T, P>; N] {
         let partition_op = StandardOperator::new_with_output_partitioning(
-            |input, output, ctx| {
+            |input, output, _ctx| {
                 if let Some(x) = input.recv() {
                     output.send(x)
                 }
@@ -95,7 +95,7 @@ where
 
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
-        let operator_ids: Vec<OperatorId> = (0..self.operators.len())
+        let _operator_ids: Vec<OperatorId> = (0..self.operators.len())
             .map(|x| x.try_into().unwrap())
             .collect();
         // TODO: Get the peer addresses from K8S
@@ -109,7 +109,7 @@ where
             .chain(self.operators)
             .enumerate()
             .collect();
-        let operator_ids = operators.iter().map(|(i, _)| i.clone()).collect();
+        let operator_ids = operators.iter().map(|(i, _)| *i).collect();
         let communication_backend =
             postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
         let operators = operators.into_iter()

@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
-use snapshot::PersistenceBackend;
+
 use time::Epoch;
 use std::{hash::Hash, rc::Rc};
 

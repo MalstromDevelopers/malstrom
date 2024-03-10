@@ -25,7 +25,7 @@ pub trait AppendableOperator<K, V, T, P> {
 /// An Operator which does nothing except passing data along
 pub fn pass_through_operator<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
 ) -> StandardOperator<K, V, T, K, V, T, P> {
-    StandardOperator::new(|input, output, ctx| {
+    StandardOperator::new(|input, output, _ctx| {
         if let Some(x) = input.recv() {
             output.send(x)
         }

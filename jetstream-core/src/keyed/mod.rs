@@ -54,7 +54,7 @@ where
     P: PersistenceBackend,
 {
     fn key_local(self, key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static) -> JetStreamBuilder<K, V, T, P> {
-        let op = StandardOperator::new(move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, ctx| {
+        let op = StandardOperator::new(move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
             match input.recv() {
                 Some(Message::Data(d)) => {
                     let new_key = key_func(&d);
