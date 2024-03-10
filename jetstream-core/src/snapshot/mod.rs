@@ -1,6 +1,6 @@
 pub mod barrier;
 pub mod controller;
-use crate::{frontier::Timestamp, OperatorId};
+use crate::{OperatorId};
 
 pub type SnapshotVersion = usize;
 
@@ -8,8 +8,8 @@ pub trait PersistenceBackend: Clone + 'static {
     fn new_latest() -> Self;
     fn new_for_epoch(snapshot_epoch: &SnapshotVersion) -> Self;
     fn get_epoch(&self) -> SnapshotVersion;
-    fn load<S>(&self, operator_id: OperatorId) -> Option<(Timestamp, S)>;
-    fn persist<S>(&mut self, frontier: Timestamp, state: &S, operator_id: OperatorId);
+    fn load<S>(&self, operator_id: OperatorId) -> Option<S>;
+    fn persist<S>(&mut self, state: &S, operator_id: OperatorId);
 }
 
 #[derive(Default, Clone, Debug)]
@@ -31,9 +31,9 @@ impl PersistenceBackend for NoPersistenceBackend {
         self.epoch
     }
 
-    fn load<S>(&self, _operator_id: OperatorId) -> Option<(Timestamp, S)> {
+    fn load<S>(&self, _operator_id: OperatorId) -> Option<S> {
         None
     }
 
-    fn persist<S>(&mut self, _frontier: Timestamp, _state: &S, _operator_id: OperatorId) {}
+    fn persist<S>(&mut self, _state: &S, _operator_id: OperatorId) {}
 }

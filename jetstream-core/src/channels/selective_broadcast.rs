@@ -11,18 +11,18 @@ use crossbeam;
 use indexmap::IndexSet;
 use itertools::{self};
 
-use crate::{Message, OperatorId, OperatorPartitioner, Scale};
+use crate::{snapshot::PersistenceBackend, Message, OperatorId, OperatorPartitioner, Scale};
 
-struct BarrierReceiver<K, T, P>(crossbeam::channel::Receiver<Message<K, T, P>>, Option<P>);
+struct BarrierReceiver<K, V, T, P>(crossbeam::channel::Receiver<Message<K, V, T, P>>, Option<P>);
 
-impl<K, T, P> BarrierReceiver<K, T, P> {
-    fn new(rx: crossbeam::channel::Receiver<Message<K, T, P>>) -> Self {
+impl<K, V, T, P> BarrierReceiver<K, V, T, P> {
+    fn new(rx: crossbeam::channel::Receiver<Message<K, V, T, P>>) -> Self {
         Self(rx, None)
     }
 
     /// Receive only data, no barriers.
     /// If a barrier is the next element in the channel, return None
-    fn receive_data(&mut self) -> Option<Message<K, T, P>> {
+    fn receive_data(&mut self) -> Option<Message<K, V, T, P>> {
         if self.1.is_some() {
             return None;
         }
@@ -43,7 +43,7 @@ impl<K, T, P> BarrierReceiver<K, T, P> {
         self.1.is_some()
     }
     /// Remove any existing barrier from this channel
-    fn take_barrier(&mut self) -> Option<Message<K, T, P>> {
+    fn take_barrier(&mut self) -> Option<Message<K, V, T, P>> {
         self.1.take().map(|x| Message::AbsBarrier(x))
     }
 }
@@ -54,32 +54,33 @@ pub fn full_broadcast<T>(_: &T, scale: Scale) -> IndexSet<OperatorId> {
 }
 
 /// Link a Sender and receiver together
-pub fn link<K, T, P>(sender: &mut Sender<K, T, P>, receiver: &mut Receiver<K, T, P>) {
+pub fn link<K, V, T, P>(sender: &mut Sender<K, V, T, P>, receiver: &mut Receiver<K, V, T, P>) {
     let receiver_inner = sender.subscribe_inner();
     receiver.0.push(receiver_inner);
 }
 
 /// Selective Broadcast Sender
 #[derive(Clone)]
-pub struct Sender<K, T, P> {
+pub struct Sender<K, V, T, P> {
     // TOOD: We only have the partitioner in the Box to allow cloning
     // Which is only really needed in the snapshot conroller
     // Check if we can solve that another way
-    senders: Vec<crossbeam::channel::Sender<Message<K, T, P>>>,
+    senders: Vec<crossbeam::channel::Sender<Message<K, V, T, P>>>,
     #[allow(clippy::type_complexity)] // it's not thaaat complex
-    partitioner: Rc<dyn OperatorPartitioner<K, T>>,
+    partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
 }
 
 /// Selective Broadcast Receiver
-pub struct Receiver<K, T, P>(Vec<BarrierReceiver<K, T, P>>);
+pub struct Receiver<K, V, T, P>(Vec<BarrierReceiver<K, V, T, P>>);
 
-impl<K, T, P> Sender<K, T, P>
+impl<K, V, T, P> Sender<K, V, T, P>
 where
     K: Clone,
+    V: Clone,
     T: Clone,
-    P: Clone,
+    P: Clone
 {
-    pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, T>) -> Self {
+    pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
@@ -89,7 +90,7 @@ where
     /// Send a value into this channel.
     /// Data messages are distributed as per the partioning function
     /// System messages are always broadcasted
-    pub fn send(&mut self, msg: Message<K, T, P>) {
+    pub fn send(&mut self, msg: Message<K, V, T, P>) {
         if self.senders.is_empty() {
             return;
         }
@@ -120,14 +121,14 @@ where
     }
 }
 
-impl<K, T, P> Sender<K, T, P> {
+impl<K, V, T, P> Sender<K, V, T, P> {
     /// Subrscribe to this sender
-    pub fn subscribe(&mut self) -> Receiver<K, T, P> {
+    pub fn subscribe(&mut self) -> Receiver<K, V, T, P> {
         let rx = self.subscribe_inner();
         Receiver(vec![rx])
     }
 
-    fn subscribe_inner(&mut self) -> BarrierReceiver<K, T, P> {
+    fn subscribe_inner(&mut self) -> BarrierReceiver<K, V, T, P> {
         let (tx, rx) = crossbeam::channel::unbounded();
         self.senders.push(tx);
         BarrierReceiver::new(rx)
@@ -145,7 +146,7 @@ impl<K, T, P> Sender<K, T, P> {
 //     }
 // }
 
-impl<K, T, P> Receiver<K, T, P> {
+impl<K, V, T, P> Receiver<K, V, T, P> {
     pub fn new_unlinked() -> Self {
         Self(Vec::new())
     }
@@ -155,7 +156,7 @@ impl<K, T, P> Receiver<K, T, P> {
     /// This method synchronizes barriers, i.e. if a channel is barred, it will
     /// not receive any messages from that channel until all channels are barred.
     /// Once all channels are barred, a single barrier will be emitted
-    pub fn recv(&mut self) -> Option<Message<K, T, P>> {
+    pub fn recv(&mut self) -> Option<Message<K, V, T, P>> {
         for r in self.0.iter_mut() {
             match r.receive_data() {
                 Some(x) => return Some(x),

@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::frontier::Timestamp;
+use crate::time::Timestamp;
 use crate::{Data, Key, Message, WorkerId};
 
 use crate::{
@@ -29,9 +29,9 @@ struct ControllerState {
     commited_snapshots: IndexMap<WorkerId, SnapshotVersion>,
 }
 
-pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
+pub fn start_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
     mut timer: impl FnMut() -> bool + 'static,
-) -> (StandardOperator<K, T, K, T, P>, RegionHandle<P>) {
+) -> (StandardOperator<K, V, T, K, V, T, P>, RegionHandle<P>) {
     let _bincode_conf = bincode::config::standard();
     // channel from leafs of region to root
     let (backchannel_tx, backchannel_rx) = crossbeam::channel::unbounded::<P>();
@@ -39,9 +39,8 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     let mut state: Option<ControllerState> = None;
     let mut snapshot_in_progress = false;
 
-    let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
+    let op = StandardOperator::new(move |input: &mut Receiver<K, V, T, P>, output, ctx| {
         let _peers = ctx.communication.get_peers();
-        ctx.frontier.advance_to(Timestamp::MAX);
         match input.recv() {
             Some(Message::AbsBarrier(_)) => {
                 unimplemented!("Barriers must not cross persistance regions!")
@@ -59,14 +58,12 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
             let backend = P::new_latest();
             let latest: ControllerState = backend
                 .load(ctx.operator_id)
-                .map(|x| x.1)
                 .unwrap_or_default();
             let last_commited = latest.commited_snapshots.values().min().unwrap_or(&0);
             // load last committed state
             let backend = P::new_for_epoch(last_commited);
             state.replace(backend
                 .load(ctx.operator_id)
-                .map(|x| x.1)
                 .unwrap_or_default());
             println!("State loaded");
             output.send(Message::Load(backend));
@@ -87,7 +84,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
             let snapshot_epoch = s.commited_snapshots.values().min().unwrap_or(&0) + 1;
             println!("Starting new snapshot at epoch {snapshot_epoch}");
             let mut backend = P::new_for_epoch(&snapshot_epoch);
-            backend.persist(ctx.frontier.get_actual(), &s, ctx.operator_id);
+            backend.persist(&s, ctx.operator_id);
 
             // instruct other workers to start snapshotting
             ctx.communication
@@ -126,7 +123,7 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
                 Some(ComsMessage::StartSnapshot(i)) => {
                     let mut backend = P::new_for_epoch(&i);
                     if let Some(s) = state.as_ref() {
-                        backend.persist(ctx.frontier.get_actual(), s, ctx.operator_id);
+                        backend.persist(s, ctx.operator_id);
                     }
                     output.send(Message::AbsBarrier(backend));
                 }
@@ -134,7 +131,6 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
                     let backend = P::new_for_epoch(&i);
                     state = backend
                         .load(ctx.operator_id)
-                        .map(|x| x.1)
                         .unwrap_or_default();
                 }
                 Some(ComsMessage::CommitSnapshot(name, epoch)) => {
@@ -158,12 +154,11 @@ pub fn start_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
     )
 }
 
-pub fn end_snapshot_region<K: Key, T: Data, P: PersistenceBackend>(
-    stream: JetStreamBuilder<K, T, P>,
+pub fn end_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
+    stream: JetStreamBuilder<K, V, T, P>,
     region_handle: RegionHandle<P>,
-) -> JetStreamBuilder<K, T, P> {
-    let op = StandardOperator::new(move |input: &mut Receiver<K, T, P>, output, ctx| {
-        ctx.frontier.advance_to(Timestamp::MAX);
+) -> JetStreamBuilder<K, V, T, P> {
+    let op = StandardOperator::new(move |input: &mut Receiver<K, V, T, P>, output, ctx| {
         match input.recv() {
             Some(Message::AbsBarrier(b)) => region_handle.sender.send(b).unwrap(),
             Some(x) => output.send(x),

@@ -3,16 +3,14 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
-    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, time::Timestamp, DataMessage, Message, WorkerId
 };
 
 use super::{
-    collect::CollectDistributor, DistData, DistKey, Interrogate, NetworkMessage, PhaseDistributor,
-    ScalableMessage, Version, VersionedMessage,
+    collect::CollectDistributor, DistData, DistKey, DistTimestamp, Interrogate, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage
 };
 
-pub(super) struct InterrogateDistributor<K, T> {
+pub(super) struct InterrogateDistributor<K, V, T> {
     whitelist: Rc<Mutex<IndexSet<K>>>,
     old_worker_set: IndexSet<WorkerId>,
     new_worker_set: IndexSet<WorkerId>,
@@ -21,20 +19,21 @@ pub(super) struct InterrogateDistributor<K, T> {
     // if we receive another scale instruction during the interrogation,
     // there is no real good way for us to handle that, so we will
     // queue it up to be handled after collect is done
-    queued_rescales: Vec<ScalableMessage<K, T>>,
+    queued_rescales: Vec<ScalableMessage<K, V, T>>,
     running_interrogate: Interrogate<K>,
 }
-impl<K, T> InterrogateDistributor<K, T>
+impl<K, V, T> InterrogateDistributor<K, V, T>
 where
     K: DistKey,
-    T: DistData,
+    V: DistData,
+    T: DistTimestamp
 {
     pub(super) fn new<P: Clone>(
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
         finished: IndexSet<WorkerId>,
-        output: &mut Sender<K, T, P>,
+        output: &mut Sender<K, V, T, P>,
     ) -> Self {
         let whitelist = Rc::new(Mutex::new(IndexSet::new()));
         let interrogate = Interrogate { shared: whitelist };
@@ -53,8 +52,8 @@ where
     fn send_local<P: Clone>(
         &self,
         dist_func: &impl WorkerPartitioner<K>,
-        msg: DataMessage<K, T>,
-        output: &mut Sender<K, T, P>,
+        msg: DataMessage<K, V, T>,
+        output: &mut Sender<K, V, T, P>,
         local_wid: WorkerId,
     ) {
         if *(dist_func)(&msg.key, &self.new_worker_set) != local_wid {
@@ -63,7 +62,7 @@ where
         output.send(Message::Data(msg))
     }
 
-    fn send_remote(&self, target: &WorkerId, msg: DataMessage<K, T>, ctx: &mut OperatorContext) {
+    fn send_remote(&self, target: &WorkerId, msg: DataMessage<K, V, T>, ctx: &mut OperatorContext) {
         ctx.communication
             .send(
                 target,
@@ -79,10 +78,10 @@ where
     pub(super) fn run<P: Clone>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
-        msg: Option<ScalableMessage<K, T>>,
-        output: &mut Sender<K, T, P>,
+        msg: Option<ScalableMessage<K, V, T>>,
+        output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
-    ) -> PhaseDistributor<K, T> {
+    ) -> PhaseDistributor<K, V, T> {
         match msg {
             Some(ScalableMessage::Data(d)) => {
                 // if the messages version is greater than our version we send it

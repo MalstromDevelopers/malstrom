@@ -1,15 +1,13 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, keyed::WorkerPartitioner,
-    stream::operator::OperatorContext, Message, WorkerId,
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, time::Timestamp, Message, WorkerId
 };
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    interrogate::InterrogateDistributor, DistData, DistKey, NetworkMessage, PhaseDistributor,
-    ScalableMessage, Version,
+    interrogate::InterrogateDistributor, DistData, DistKey, DistTimestamp, NetworkMessage, PhaseDistributor, ScalableMessage, Version
 };
 
 #[derive(Serialize, Deserialize, Default)]
@@ -20,13 +18,13 @@ pub(super) struct NormalDistributor {
     pub finished: IndexSet<WorkerId>,
 }
 impl NormalDistributor {
-    pub(super) fn run<K: DistKey, T: DistData, P: Clone>(
+    pub(super) fn run<K: DistKey, V: DistData, T: DistTimestamp, P: Clone>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
-        msg: Option<ScalableMessage<K, T>>,
-        output: &mut Sender<K, T, P>,
+        msg: Option<ScalableMessage<K, V, T>>,
+        output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
-    ) -> PhaseDistributor<K, T> {
+    ) -> PhaseDistributor<K, V, T> {
         // TODO HACK
         if self.worker_set.len() == 0 {
             let mut wids: Vec<WorkerId> = vec![ctx.worker_id];

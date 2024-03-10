@@ -3,10 +3,7 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    snapshot::PersistenceBackend,
-    stream::operator::OperatorContext,
-    Data, DataMessage, Key, Message, OperatorId, WorkerId,
+    channels::selective_broadcast::{Receiver, Sender}, snapshot::PersistenceBackend, stream::operator::OperatorContext, time::Timestamp, Data, DataMessage, Key, Message, OperatorId, WorkerId
 };
 
 use serde::de::DeserializeOwned;
@@ -31,10 +28,13 @@ impl<T: Key + Serialize + DeserializeOwned + 'static> DistKey for T {}
 pub trait DistData: Data + Serialize + DeserializeOwned {}
 impl<T: Data + Serialize + DeserializeOwned> DistData for T {}
 
+pub trait DistTimestamp: Timestamp + Serialize + DeserializeOwned {}
+impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
+
 /// Enum which contains either data messages or instructions to change
 /// the cluster scale
-enum ScalableMessage<K, T> {
-    Data(VersionedMessage<K, T>),
+enum ScalableMessage<K, V, T> {
+    Data(VersionedMessage<K, V, T>),
     /// Information that the worker of this ID will soon be removed
     /// from the computation. Triggers Rescaling procedure
     ScaleRemoveWorker(IndexSet<WorkerId>),
@@ -46,45 +46,46 @@ enum ScalableMessage<K, T> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct VersionedMessage<K, T> {
+struct VersionedMessage<K, V, T> {
     pub version: Option<Version>,
     pub sender: WorkerId,
-    pub message: DataMessage<K, T>,
+    pub message: DataMessage<K, V, T>,
 }
 
 #[derive(Serialize, Deserialize)]
-enum NetworkMessage<K, T> {
+enum NetworkMessage<K, V, T> {
     BarrierAlign(WorkerId),
     LoadAlign(WorkerId),
-    Data(VersionedMessage<K, T>),
+    Data(VersionedMessage<K, V, T>),
     Acquire(NetworkAcquire<K>),
     Done(WorkerId),
 }
 
 /// Enum of value distributors for different ICADD
 /// phases
-enum PhaseDistributor<K, T> {
+enum PhaseDistributor<K, V, T> {
     Normal(NormalDistributor),
-    Interrogate(InterrogateDistributor<K, T>),
-    Collect(CollectDistributor<K, T>),
+    Interrogate(InterrogateDistributor<K, V, T>),
+    Collect(CollectDistributor<K, V, T>),
     None,
 }
 
-pub(super) struct Distributor<K, T, P> {
+pub(super) struct Distributor<K, V, T, P> {
     dist_func: Box<dyn WorkerPartitioner<K>>,
     worker_versions: IndexMap<WorkerId, Version>,
-    inner: PhaseDistributor<K, T>,
+    inner: PhaseDistributor<K, V, T>,
     /// 0 elem is our locally received align, the set is for those received
     /// from remotes
     received_barriers: (Option<P>, IndexSet<WorkerId>),
     received_loads: (Option<P>, IndexSet<WorkerId>),
 }
 
-impl<K, T, P> Distributor<K, T, P>
+impl<K, V, T, P> Distributor<K, V, T, P>
 where
     K: DistKey,
-    T: DistData,
-    P: PersistenceBackend,
+    V: DistData,
+    T: DistTimestamp,
+    P: PersistenceBackend
 {
     pub(super) fn new(dist_func: impl WorkerPartitioner<K>) -> Self {
         let inner = PhaseDistributor::Normal(NormalDistributor::default());
@@ -98,28 +99,23 @@ where
     }
     pub(super) fn run(
         &mut self,
-        input: &mut Receiver<K, T, P>,
-        output: &mut Sender<K, T, P>,
+        input: &mut Receiver<K, V, T, P>,
+        output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
     ) {
         // TODO: check what if any state we need to persist
         let scalable_message = match input.recv() {
             Some(Message::AbsBarrier(mut b)) => {
-                // persist frontier
-                b.persist(ctx.frontier.get_actual(), &(), ctx.operator_id);
                 let _ = self.received_barriers.0.insert(b);
                 ctx.communication
-                    .broadcast(NetworkMessage::<K, T>::BarrierAlign(ctx.worker_id))
+                    .broadcast(NetworkMessage::<K, V, T>::BarrierAlign(ctx.worker_id))
                     .expect("Communication error");
                 None
             }
             Some(Message::Load(p)) => {
-                // load frontier
-                ctx.frontier
-                    .advance_to(p.load::<()>(ctx.operator_id).unwrap_or_default().0);
                 let _ = self.received_loads.0.insert(p);
                 ctx.communication
-                    .broadcast(NetworkMessage::<K, T>::LoadAlign(ctx.worker_id))
+                    .broadcast(NetworkMessage::<K, V, T>::LoadAlign(ctx.worker_id))
                     .expect("Communication error");
                 None
             }
@@ -138,7 +134,7 @@ where
         };
         self.call_distributor(scalable_message, output, ctx);
 
-        for remote_message in ctx.communication.recv_all::<NetworkMessage<K, T>>() {
+        for remote_message in ctx.communication.recv_all::<NetworkMessage<K, V, T>>() {
             match remote_message {
                 NetworkMessage::BarrierAlign(x) => {
                     self.received_barriers.1.insert(x);
@@ -172,8 +168,8 @@ where
 
     fn call_distributor(
         &mut self,
-        msg: Option<ScalableMessage<K, T>>,
-        output: &mut Sender<K, T, P>,
+        msg: Option<ScalableMessage<K, V, T>>,
+        output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
     ) -> () {
         let inner = std::mem::replace(&mut self.inner, PhaseDistributor::None);
@@ -186,10 +182,10 @@ where
     }
 }
 
-fn send_to_target<K: Clone, T: Clone, P: Clone>(
-    msg: VersionedMessage<K, T>,
+fn send_to_target<K: Clone, V: Clone, T: Clone, P: Clone>(
+    msg: VersionedMessage<K, V, T>,
     target: &WorkerId,
-    output: &mut Sender<K, T, P>,
+    output: &mut Sender<K, V, T, P>,
     ctx: &OperatorContext,
 ) {
     if *target == ctx.worker_id {

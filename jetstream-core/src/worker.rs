@@ -4,19 +4,18 @@ use std::time::Duration;
 use itertools::Itertools;
 
 use crate::channels::selective_broadcast::{self};
-use crate::frontier::{Probe, Timestamp};
 use crate::snapshot::controller::{end_snapshot_region, start_snapshot_region, RegionHandle};
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, FrontieredOperator, RunnableOperator, StandardOperator,
 };
+use crate::time::{NoTime, Timestamp};
 use crate::{Data, Key, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 
 pub struct Worker<P> {
-    operators: Vec<FrontieredOperator<P>>,
-    probes: Vec<Probe>,
-    root_stream: JetStreamBuilder<NoKey, NoData, P>,
+    operators: Vec<FrontieredOperator>,
+    root_stream: JetStreamBuilder<NoKey, NoData, NoTime, P>,
     snapshot_handle: RegionHandle<P>,
 }
 impl<P> Worker<P>
@@ -28,34 +27,27 @@ where
 
         Worker {
             operators: Vec::new(),
-            probes: Vec::new(),
             root_stream: JetStreamBuilder::from_operator(snapshot_op),
             snapshot_handle: region_handle,
         }
     }
 
-    pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, P> {
+    pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime, P> {
         let mut new_op = pass_through_operator();
         selective_broadcast::link(self.root_stream.get_output_mut(), new_op.get_input_mut());
         JetStreamBuilder::from_operator(new_op)
     }
 
-    pub fn add_stream<K: Key, T: Data>(&mut self, stream: JetStreamBuilder<K, T, P>) {
+    pub fn add_stream<K: Key, V: Data, T: Timestamp>(&mut self, stream: JetStreamBuilder<K, V, T, P>) {
         let stream = end_snapshot_region(stream, self.snapshot_handle.clone());
-        for mut op in stream.build().into_operators().into_iter() {
-            for p in self.probes.iter() {
-                op.add_upstream_probe(p.clone())
-            }
-            self.probes.push(op.get_probe());
-            self.operators.push(op);
-        }
+        self.operators.extend(stream.build().into_operators())
     }
 
     /// Unions N streams with identical output types into a single stream
-    pub fn union<K: Key, T: Data>(
+    pub fn union<K: Key, V: Data, T: Timestamp>(
         &mut self,
-        streams: Vec<JetStreamBuilder<K, T, P>>,
-    ) -> JetStreamBuilder<K, T, P> {
+        streams: Vec<JetStreamBuilder<K, V, T, P>>,
+    ) -> JetStreamBuilder<K, V, T, P> {
         // this is the operator which reveives the union stream
         let mut unioned = pass_through_operator();
 
@@ -66,14 +58,13 @@ where
         JetStreamBuilder::from_operator(unioned)
     }
 
-    pub fn split_n<const N: usize, K: Key, T: Data>(
+    pub fn split_n<const N: usize, K: Key, V: Data, T: Timestamp>(
         &mut self,
-        input: JetStreamBuilder<K, T, P>,
-        partitioner: impl OperatorPartitioner<K, T>,
-    ) -> [JetStreamBuilder<K, T, P>; N] {
+        input: JetStreamBuilder<K, V, T, P>,
+        partitioner: impl OperatorPartitioner<K, V, T>,
+    ) -> [JetStreamBuilder<K, V, T, P>; N] {
         let partition_op = StandardOperator::new_with_output_partitioning(
             |input, output, ctx| {
-                ctx.frontier.advance_to(Timestamp::MAX);
                 if let Some(x) = input.recv() {
                     output.send(x)
                 }
@@ -82,7 +73,7 @@ where
         );
         let mut input = input.then(partition_op);
 
-        let new_streams: Vec<JetStreamBuilder<K, T, P>> = (0..N)
+        let new_streams: Vec<JetStreamBuilder<K, V, T, P>> = (0..N)
             .map(|_| {
                 let mut operator = pass_through_operator();
                 selective_broadcast::link(input.get_output_mut(), operator.get_input_mut());
@@ -97,7 +88,7 @@ where
         unsafe { new_streams.try_into().unwrap_unchecked() }
     }
 
-    pub fn build(self, config: Option<crate::config::Config>) -> Result<RuntimeWorker<P>, postbox::BuildError> {
+    pub fn build(self, config: Option<crate::config::Config>) -> Result<RuntimeWorker, postbox::BuildError> {
         // TODO: Add a `void` sink at the end of every dataflow to swallow
         // unused messages
         let config = config.as_ref().unwrap_or(&crate::config::CONFIG);
@@ -110,7 +101,7 @@ where
         // TODO: Get the peer addresses from K8S
         // should be "podname.sts-name"
         let peers = config.get_peer_uris();
-        let operators: Vec<(usize, FrontieredOperator<P>)> = self
+        let operators: Vec<(usize, FrontieredOperator)> = self
             .root_stream
             .build()
             .into_operators()
@@ -132,33 +123,28 @@ where
                 )
             })
             .collect();
-        // NOTE: The root operator has no frontier and gets no probe
         Ok(RuntimeWorker {
             worker_id: config.worker_id,
             operators,
-            probes: self.probes,
             communication: communication_backend.connect()?,
         })
     }
 }
 
-pub struct RuntimeWorker<P> {
+pub struct RuntimeWorker {
     worker_id: WorkerId,
-    operators: Vec<RunnableOperator<P>>,
-    probes: Vec<Probe>,
+    operators: Vec<RunnableOperator>,
     communication: postbox::CommunicationBackend,
 }
-impl<P> RuntimeWorker<P>
-where
-    P: PersistenceBackend,
+impl RuntimeWorker
 {
-    pub fn get_frontier(&self) -> Option<Timestamp> {
-        self.probes.last().map(|x| x.read())
-    }
+    // pub fn get_frontier(&self) -> Option<Timestamp> {
+    //     self.probes.last().map(|x| x.read())
+    // }
 
-    pub fn get_all_frontiers(&self) -> Vec<Timestamp> {
-        self.probes.iter().map(|x| x.read()).collect()
-    }
+    // pub fn get_all_frontiers(&self) -> Vec<Timestamp> {
+    //     self.probes.iter().map(|x| x.read()).collect()
+    // }
 
     pub fn step(&mut self) {
         for op in self.operators.iter_mut().rev() {

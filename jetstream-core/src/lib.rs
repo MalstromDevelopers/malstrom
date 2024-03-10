@@ -1,12 +1,13 @@
-use frontier::Timestamp;
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
+use snapshot::PersistenceBackend;
+use time::Epoch;
 use std::{hash::Hash, rc::Rc};
 
 pub mod channels;
 // pub mod filter;
-pub mod frontier;
+// pub mod frontier;
 // pub mod inspect;
 // pub mod kafka;
 // pub mod map;
@@ -18,7 +19,8 @@ pub mod stateful_map;
 pub mod keyed;
 pub mod stream;
 pub mod worker;
-
+mod time;
+mod util;
 type OperatorId = usize;
 type WorkerId = usize;
 type Scale = usize;
@@ -39,25 +41,25 @@ pub struct NoKey;
 pub struct NoData;
 
 /// Marker trait for functions which determine inter-operator routing
-pub trait OperatorPartitioner<K, T>:
-    Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static
+pub trait OperatorPartitioner<K, V, T>:
+    Fn(&DataMessage<K, V, T>, Scale) -> IndexSet<OperatorId> + 'static
 {
 }
-impl<K, T, U: Fn(&DataMessage<K, T>, Scale) -> IndexSet<OperatorId> + 'static>
-    OperatorPartitioner<K, T> for U
+impl<K, V, T, U: Fn(&DataMessage<K, V, T>, Scale) -> IndexSet<OperatorId> + 'static>
+    OperatorPartitioner<K, V, T> for U
 {
 }
 
 /// A message which gets processed in a JetStream
 /// Messages always include a timestamp and content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DataMessage<K, T> {
-    pub time: Timestamp,
+pub struct DataMessage<K, V, T> {
     pub key: K,
-    pub value: T,
+    pub value: V,
+    pub time: T,
 }
-impl<K, T> DataMessage<K, T> {
-    pub fn new(time: Timestamp, key: K, value: T) -> Self {
+impl<K, V, T> DataMessage<K, V, T> {
+    pub fn new(key: K, value: V, time: T) -> Self {
         Self { time, key, value }
     }
 }
@@ -66,8 +68,9 @@ impl<K, T> DataMessage<K, T> {
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
 #[derive(Debug, Clone)]
-pub enum Message<K, T, P> {
-    Data(DataMessage<K, T>),
+pub enum Message<K, V, T, P> {
+    Data(DataMessage<K, V, T>),
+    Epoch(Epoch<T>),
     /// Barrier used for asynchronous snapshotting
     AbsBarrier(P),
     /// Instruction to load state
@@ -82,6 +85,7 @@ pub enum Message<K, T, P> {
     /// See struct docstring for more information
     ShutdownMarker(ShutdownMarker),
 
+    /// Rescaling state movement messages
     Interrogate(Interrogate<K>),
     Collect(Collect<K>),
     Acquire(Acquire<K>),

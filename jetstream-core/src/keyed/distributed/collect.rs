@@ -3,18 +3,16 @@ use std::{rc::Rc, sync::Mutex};
 use indexmap::{Equivalent, IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::Sender, frontier::Timestamp, keyed::WorkerPartitioner,
-    stream::operator::OperatorContext, DataMessage, Message, WorkerId,
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, stream::operator::OperatorContext, time::Timestamp, DataMessage, Message, WorkerId
 };
 
 use super::{
-    normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, NetworkAcquire,
-    NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage,
+    normal::NormalDistributor, send_to_target, Collect, DistData, DistKey, DistTimestamp, NetworkAcquire, NetworkMessage, PhaseDistributor, ScalableMessage, Version, VersionedMessage
 };
 
-pub(super) struct CollectDistributor<K, T> {
+pub(super) struct CollectDistributor<K, V, T> {
     whitelist: IndexSet<K>,
-    hold: IndexMap<K, Vec<(Timestamp, T)>>,
+    hold: IndexMap<K, Vec<(V, T)>>,
     old_worker_set: IndexSet<WorkerId>,
     new_worker_set: IndexSet<WorkerId>,
     version: Version,
@@ -22,28 +20,29 @@ pub(super) struct CollectDistributor<K, T> {
     // if we receive another scale instruction during the interrogation,
     // there is no real good way for us to handle that, so we will
     // queue it up to be handled after collect is done
-    queued_rescales: Vec<ScalableMessage<K, T>>,
+    queued_rescales: Vec<ScalableMessage<K, V, T>>,
     current_collect: Option<Collect<K>>,
 }
-impl<K, T> CollectDistributor<K, T>
+impl<K, V, T> CollectDistributor<K, V, T>
 where
     K: DistKey,
-    T: DistData,
+    V: DistData,
+    T: DistTimestamp,
 {
     pub(super) fn run<P: Clone>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
-        msg: Option<ScalableMessage<K, T>>,
-        output: &mut Sender<K, T, P>,
+        msg: Option<ScalableMessage<K, V, T>>,
+        output: &mut Sender<K, V, T, P>,
         ctx: &mut OperatorContext,
-    ) -> PhaseDistributor<K, T> {
+    ) -> PhaseDistributor<K, V, T> {
         match msg {
             Some(ScalableMessage::Data(m)) => {
                 if m.version.map_or(false, |v| v > self.version) {
                     output.send(Message::Data(m.message));
                 } else if let Some(e) = self.hold.get_mut(&m.message.key) {
                     // Rule 1.2
-                    e.push((m.message.time, m.message.value))
+                    e.push((m.message.value, m.message.time))
                 } else {
                     let new_target = *dist_func(&m.message.key, &self.new_worker_set);
                     let old_target = dist_func(&m.message.key, &self.old_worker_set);
@@ -93,7 +92,7 @@ where
                         collection,
                     };
                     ctx.communication
-                        .send(acquire_target, NetworkMessage::<K, T>::Acquire(acquire))
+                        .send(acquire_target, NetworkMessage::<K, V, T>::Acquire(acquire))
                         .expect("Communication error");
 
                     for msg in held_msgs.into_iter().flatten() {
@@ -132,7 +131,7 @@ where
                 } else if !self.finished.contains(&ctx.worker_id) {
                     self.finished.insert(ctx.worker_id);
                     ctx.communication
-                        .broadcast(NetworkMessage::<K, T>::Done(ctx.worker_id))
+                        .broadcast(NetworkMessage::<K, V, T>::Done(ctx.worker_id))
                         .expect("Network error")
                 }
             }
@@ -155,7 +154,7 @@ where
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
         finished: IndexSet<WorkerId>,
-        queued_rescales: Vec<ScalableMessage<K, T>>,
+        queued_rescales: Vec<ScalableMessage<K, V, T>>,
     ) -> Self {
         Self {
             whitelist,

@@ -1,26 +1,24 @@
 use super::operator::{AppendableOperator, FrontieredOperator, OperatorContext, StandardOperator};
 use crate::{
-    channels::selective_broadcast::{self, Receiver, Sender},
-    frontier::Timestamp,
-    snapshot::PersistenceBackend,
-    Data, Key, NoData, NoKey,
+    channels::selective_broadcast::{self, Receiver, Sender}, snapshot::PersistenceBackend, time::{NoTime, Timestamp}, Data, Key, NoData, NoKey
 };
 
-pub struct JetStreamBuilder<K, T, P> {
-    operators: Vec<FrontieredOperator<P>>,
+pub struct JetStreamBuilder<K, V, T, P> {
+    operators: Vec<FrontieredOperator>,
     // these are probes for every operator in operators
-    tail: Box<dyn AppendableOperator<K, T, P>>,
+    tail: Box<dyn AppendableOperator<K, V, T, P>>,
 }
 
-impl<K, T, P> JetStreamBuilder<K, T, P>
+impl<K, V, T, P> JetStreamBuilder<K, V, T, P>
 where
     K: Key,
-    T: Data,
-    P: PersistenceBackend + 'static,
+    V: Data,
+    T: Timestamp,
+    P: PersistenceBackend
 {
-    pub(crate) fn from_operator<KI: Key, TI: Data>(
-        operator: StandardOperator<KI, TI, K, T, P>,
-    ) -> JetStreamBuilder<K, T, P> {
+    pub(crate) fn from_operator<KI: Key, VI: Data, TI: Timestamp>(
+        operator: StandardOperator<KI, VI, TI, K, V, T, P>,
+    ) -> JetStreamBuilder<K, V, T, P> {
         JetStreamBuilder {
             operators: Vec::new(),
             tail: Box::new(operator),
@@ -28,11 +26,12 @@ where
     }
 }
 
-impl<K, T, P> JetStreamBuilder<K, T, P>
+impl<K, V, T, P> JetStreamBuilder<K, V, T, P>
 where
     K: Key,
-    T: Data,
-    P: PersistenceBackend,
+    V: Data,
+    T: Timestamp,
+    P: PersistenceBackend
 {
     // pub fn tail(&self) -> &FrontieredOperator<O> {
     //     // we can unwrap here, since this impl block is bound by
@@ -48,24 +47,24 @@ where
     //     &mut self.tail.unwrap()
     // }
 
-    pub fn new() -> JetStreamBuilder<NoKey, NoData, P> {
-        JetStreamBuilder::from_operator(StandardOperator::new(
-            |_input: &mut Receiver<NoKey, NoData, P>, _output, ctx: &mut OperatorContext| {
-                ctx.frontier.advance_to(Timestamp::MAX)
-            },
-        ))
-    }
+    // pub fn new() -> JetStreamBuilder<NoKey, NoData, NoTime, P> {
+    //     JetStreamBuilder::from_operator(StandardOperator::new(
+    //         |_input: &mut Receiver<NoKey, NoData, NoTime, P>, _output, ctx: &mut OperatorContext| {
+    //             ctx.frontier.advance_to(Timestamp::MAX)
+    //         },
+    //     ))
+    // }
 
-    pub fn get_output_mut(&mut self) -> &mut Sender<K, T, P> {
+    pub fn get_output_mut(&mut self) -> &mut Sender<K, V, T, P> {
         self.tail.get_output_mut()
     }
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<KO: Key, TO: Data>(
+    pub fn then<KO: Key, VO: Data, TO: Timestamp>(
         mut self,
-        mut operator: StandardOperator<K, T, KO, TO, P>,
-    ) -> JetStreamBuilder<KO, TO, P> {
+        mut operator: StandardOperator<K, V, T, KO, VO, TO, P>,
+    ) -> JetStreamBuilder<KO, VO, TO, P> {
         // let (tx, rx) = selective_broadcast::<O>();
         selective_broadcast::link(self.tail.get_output_mut(), operator.get_input_mut());
 
@@ -78,7 +77,7 @@ where
         }
     }
 
-    pub(crate) fn build(mut self) -> JetStream<P> {
+    pub(crate) fn build(mut self) -> JetStream {
         let tail = self.tail.build();
         self.operators.push(tail);
         JetStream {
@@ -87,15 +86,13 @@ where
     }
 }
 
-pub struct JetStream<P: PersistenceBackend> {
-    operators: Vec<FrontieredOperator<P>>,
+pub struct JetStream {
+    operators: Vec<FrontieredOperator>,
 }
 
-impl<P> JetStream<P>
-where
-    P: PersistenceBackend,
+impl JetStream
 {
-    pub fn into_operators(self) -> Vec<FrontieredOperator<P>> {
+    pub fn into_operators(self) -> Vec<FrontieredOperator> {
         self.operators
     }
 }
