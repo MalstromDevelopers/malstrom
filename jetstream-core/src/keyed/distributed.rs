@@ -4,7 +4,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    snapshot::PersistenceBackend,
+    snapshot::{Barrier, Load, PersistenceBackend},
     stream::operator::OperatorContext,
     time::Timestamp,
     Data, DataMessage, Key, Message, OperatorId, WorkerId,
@@ -80,8 +80,8 @@ pub(super) struct Distributor<K, V, T, P> {
     inner: PhaseDistributor<K, V, T>,
     /// 0 elem is our locally received align, the set is for those received
     /// from remotes
-    received_barriers: (Option<P>, IndexSet<WorkerId>),
-    received_loads: (Option<P>, IndexSet<WorkerId>),
+    received_barriers: (Option<Barrier<P>>, IndexSet<WorkerId>),
+    received_loads: (Option<Load<P>>, IndexSet<WorkerId>),
 }
 
 impl<K, V, T, P> Distributor<K, V, T, P>
@@ -186,7 +186,7 @@ where
     }
 }
 
-fn send_to_target<K: Clone, V: Clone, T: Clone, P: Clone>(
+fn send_to_target<K: Clone, V: Clone, T: Clone, P>(
     msg: VersionedMessage<K, V, T>,
     target: &WorkerId,
     output: &mut Sender<K, V, T, P>,
@@ -232,8 +232,10 @@ where
             collection: Rc::new(Mutex::new(IndexMap::new())),
         }
     }
-    pub fn add_state(&mut self, operator_id: OperatorId, state: Vec<u8>) {
-        self.collection.lock().unwrap().insert(operator_id, state);
+    pub fn add_state<S: Serialize>(&mut self, operator_id: OperatorId, state: &S) {
+        let encoded = bincode::serde::encode_to_vec(state, bincode::config::standard())
+            .expect("State serialization error");
+        self.collection.lock().unwrap().insert(operator_id, encoded);
     }
 
     fn ref_count(&self) -> usize {
@@ -250,11 +252,16 @@ impl<K> Acquire<K>
 where
     K: Key,
 {
-    pub fn take_state(&self, operator_id: &OperatorId) -> Option<(K, Vec<u8>)> {
+    pub fn take_state<S: DeserializeOwned>(&self, operator_id: &OperatorId) -> Option<(K, S)> {
         self.collection
             .lock()
             .unwrap()
             .swap_remove(operator_id)
+            .map(|x| {
+                bincode::serde::decode_from_slice(&x, bincode::config::standard())
+                    .expect("State deserialization error")
+                    .0
+            })
             .map(|s| (self.key.clone(), s))
     }
 }

@@ -1,27 +1,27 @@
-use crate::frontier::Timestamp;
-use crate::snapshot::barrier::BarrierData;
-use crate::stream::jetstream::{Data, JetStreamBuilder};
-use crate::stream::operator::StandardOperator;
+use crate::Data;
 
-pub trait Filter<O> {
-    fn filter(self, filter: impl FnMut(&O) -> bool + 'static) -> JetStreamBuilder<O>;
+use crate::snapshot::PersistenceBackend;
+use crate::stateless_op::StatelessOp;
+use crate::stream::jetstream::JetStreamBuilder;
+use crate::time::Timestamp;
+use crate::Key;
+
+pub trait Filter<K, V, T, P> {
+    fn filter(self, filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T, P>;
 }
 
-impl<O> Filter<O> for JetStreamBuilder<O>
+impl<K, V, T, P> Filter<K, V, T, P> for JetStreamBuilder<K, V, T, P>
 where
-    O: Data,
+    K: Key,
+    V: Data,
+    T: Timestamp,
+    P: PersistenceBackend,
 {
-    fn filter(self, mut filter: impl FnMut(&O) -> bool + 'static) -> JetStreamBuilder<O> {
-        let operator = StandardOperator::new(move |input, output, frontier| {
-            // since this operator does not participate in progress tracking
-            // it must set u64::MAX to not block others from advancing
-            let _ = frontier.advance_to(Timestamp::MAX);
-            match input.recv() {
-                Some(BarrierData::Data(x)) => {if filter(&x){output.send(BarrierData::Data(x))}},
-                Some(BarrierData::Barrier(b)) => output.send(BarrierData::Barrier(b)),
-                None => ()
+    fn filter(self, mut filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T, P> {
+        self.stateless_op(move |item, out| {
+            if filter(&item.value) {
+                out.send(crate::Message::Data(item))
             }
-        });
-        self.then(operator)
+        })
     }
 }

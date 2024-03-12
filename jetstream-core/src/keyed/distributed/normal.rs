@@ -20,7 +20,7 @@ pub(super) struct NormalDistributor {
     pub finished: IndexSet<WorkerId>,
 }
 impl NormalDistributor {
-    pub(super) fn run<K: DistKey, V: DistData, T: DistTimestamp, P: Clone>(
+    pub(super) fn run<K: DistKey, V: DistData, T: DistTimestamp, P>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, V, T>>,

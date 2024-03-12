@@ -11,10 +11,11 @@ pub struct Epoch<T> {
 
 #[derive(Clone)]
 pub struct NoTime;
-impl Timestamp for NoTime {
-    const MAX: Self = NoTime;
-    const MIN: Self = NoTime;
+
+pub trait MaybeTime: Clone + 'static {}
+impl<T:Clone + 'static> MaybeTime for T {
 }
+
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
@@ -55,7 +56,7 @@ timestamp_impl!(f32);
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     snapshot::PersistenceBackend,
-    stream::{jetstream::JetStreamBuilder, operator::StandardOperator},
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
     Data, DataMessage, Message, NoKey,
 };
 
@@ -80,7 +81,7 @@ where
         mut mapper: impl FnMut(&DataMessage<NoKey, V, TI>) -> TO + 'static,
         mut generator: impl FnMut(Option<&DataMessage<NoKey, V, TI>>) -> Option<Epoch<TO>> + 'static,
     ) -> JetStreamBuilder<NoKey, V, TO, P> {
-        let op = StandardOperator::new(
+        let op = OperatorBuilder::direct(
             move |input: &mut Receiver<NoKey, V, TI, P>,
                   output: &mut Sender<NoKey, V, TO, P>,
                   _ctx| {

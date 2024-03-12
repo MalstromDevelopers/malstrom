@@ -1,27 +1,23 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    net::{SocketAddr, SocketAddrV4},
-    path::Path,
-    sync::{
+    collections::{HashMap, VecDeque}, net::{SocketAddr, SocketAddrV4}, path::Path, rc::Rc, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
-    time::{Duration, Instant},
+    }, time::{Duration, Instant}
 };
 
 use apache_avro::{from_value, AvroSchema, Reader, Schema};
 use glob::glob;
 use itertools::Itertools;
+use jetstream::time;
 use jetstream::{
     channels::selective_broadcast::{Receiver, Sender},
     config::Config,
+    filter::Filter,
     keyed::{KeyDistribute, KeyLocal},
-    snapshot::NoPersistenceBackend,
+    snapshot::NoopPersistenceBackend,
     stateful_map::StatefulMap,
-    stream::{
-        jetstream::{JetStream, JetStreamBuilder},
-        operator::StandardOperator,
-    },
+    stream::operator::OperatorBuilder,
+    time::NoTime,
     worker::{self, Worker},
     DataMessage, Message, NoData, NoKey,
 };
@@ -61,66 +57,59 @@ fn main() {
         initial_scale: addresses.len(),
         sts_name: None,
     });
-
+    let start = Instant::now();
     let threads = configs
         .map(|c| std::thread::spawn(move || run_stream_a(c)))
         .collect_vec();
+
     for x in threads {
-        x.join().unwrap()
+        let _ = x.join();
     }
+
 }
 
 fn run_stream_a(config: Config) {
-    println!("{config:?}");
     let mut globber = glob("/Users/damionwerner/Desktop/benchmark-data/*.avro").unwrap();
+    let mut worker = Worker::<NoopPersistenceBackend>::new(|| false);
 
-    let stream = JetStreamBuilder::<NoKey, NoData, NoPersistenceBackend>::new()
-        .then(StandardOperator::new(move |_input, output, ctx| {
+    let eof = Rc::new(AtomicBool::new(false));
+    let eof_moved = eof.clone();
+    let start = Instant::now();
+    
+    let stream = worker
+        .new_stream()
+        .then(OperatorBuilder::direct(move |input, output, ctx| {
             if ctx.worker_id != 0 {
                 return;
             }
+
             if let Some(x) = globber.next() {
                 let x = x.unwrap();
                 let t = Instant::now();
                 println!("{x:?} @ {t:?}");
                 let content = read_avro(&x);
                 for c in content {
-                    output.send(jetstream::Message::Data(DataMessage::new(
-                        Timestamp::new(0),
-                        NoKey,
-                        c,
-                    )));
+                    output.send(jetstream::Message::Data(DataMessage::new(NoKey, c, 0)));
                 }
                 let t = Instant::now();
                 println!("{t:?}");
+            } else {
+                eof_moved.store(true, Ordering::Relaxed);
+                let elapsed = Instant::now().duration_since(start);
+                println!("That took {elapsed:?}");
             }
         }))
         .key_distribute(
-            |val| calculate_hash(&val.icao24),
+            |msg| calculate_hash(&msg.value.icao24),
             |key, targets| {
                 let len = targets.len() - 1;
                 let key: usize = (*key).try_into().unwrap();
                 targets.get_index((key % len) + 1).unwrap()
             },
         )
-        // filter data
-        .then(StandardOperator::new(
-            |input: &mut Receiver<u64, StateVector, NoPersistenceBackend>, output, ctx| {
-                ctx.frontier.advance_to(Timestamp::MAX);
-                match input.recv() {
-                    Some(Message::Data(DataMessage { time, key, value })) => {
-                        if value.longitude.is_some()
-                            && value.time_position.is_some()
-                            && value.velocity.is_some()
-                        {
-                            output.send(Message::Data(DataMessage { time, key, value }))
-                        }
-                    }
-                    Some(x) => output.send(x),
-                    None => (),
-                }
-            },
-        ))
+        .filter(|value| {
+            value.longitude.is_some() && value.time_position.is_some() && value.velocity.is_some()
+        })
         // acumulate state
         .stateful_map(|val, state: &mut VecDeque<StateVector>| {
             state.push_back(val);
@@ -130,22 +119,7 @@ fn run_stream_a(config: Config) {
             }
             state.clone()
         })
-        .then(StandardOperator::new(
-            |input: &mut Receiver<u64, VecDeque<StateVector>, NoPersistenceBackend>,
-             output: &mut Sender<u64, VecDeque<StateVector>, NoPersistenceBackend>,
-             _ctx| {
-                if let Some(x) = input.recv() {
-                    match x {
-                        Message::Data(DataMessage { time, key, value }) => {
-                            if value.len() >= 2 {
-                                output.send(Message::Data(DataMessage::new(time, key, value)))
-                            }
-                        }
-                        x => output.send(x),
-                    }
-                };
-            },
-        ))
+        .filter(|value| value.len() > 2)
         .stateful_map(|mut trajectory, state: &mut ()| {
             // println!("Predicting...");
             for _ in 0..PREDICTION_NUM {
@@ -155,21 +129,14 @@ fn run_stream_a(config: Config) {
             trajectory
         })
         // destruct all the messages
-        .then(StandardOperator::new(
-            |input, _output: &mut Sender<NoKey, NoData, _>, _ctx| {
-                input.recv();
-            },
-        ));
+        .filter(|_| false);
 
-    let mut worker = Worker::new(|| false);
     worker.add_stream(stream);
-    let mut worker = worker.build(Some(config)).unwrap();
+    let mut worker = worker.build(config).unwrap();
 
-    while worker.get_frontier().unwrap_or(Timestamp::default()) < Timestamp::new(9) {
-        let frontiers = worker.get_all_frontiers();
+    while !eof.load(Ordering::Relaxed) {
         worker.step()
     }
-    println!("Stream A done with frontier at {:?}", worker.get_frontier());
 }
 
 #[derive(Debug, AvroSchema, Serialize, Deserialize, Clone)]

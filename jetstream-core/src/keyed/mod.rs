@@ -4,9 +4,9 @@ use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::keyed::distributed::Distributor;
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
-use crate::stream::operator::StandardOperator;
+use crate::stream::operator::OperatorBuilder;
 use crate::time::Timestamp;
-use crate::{Data, DataMessage, Key, Message, WorkerId};
+use crate::{Data, DataMessage, Key, MaybeKey, Message, WorkerId};
 
 use self::distributed::{DistData, DistKey, DistTimestamp};
 
@@ -50,7 +50,7 @@ pub trait KeyLocal<X, K: Key, V, T, P> {
 
 impl<X, K, V, T, P> KeyLocal<X, K, V, T, P> for JetStreamBuilder<X, V, T, P>
 where
-    X: Key,
+    X: MaybeKey,
     K: Key,
     V: Data,
     T: Timestamp,
@@ -60,7 +60,7 @@ where
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> JetStreamBuilder<K, V, T, P> {
-        let op = StandardOperator::new(
+        let op = OperatorBuilder::direct(
             move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
                 match input.recv() {
                     Some(Message::Data(d)) => {
@@ -96,7 +96,7 @@ where
 
 impl<X, K, V, T, P> KeyDistribute<X, K, V, T, P> for JetStreamBuilder<X, V, T, P>
 where
-    X: Key,
+    X: MaybeKey,
     K: DistKey,
     V: DistData,
     T: DistTimestamp,
@@ -109,7 +109,7 @@ where
     ) -> JetStreamBuilder<K, V, T, P> {
         let mut distributor = Distributor::new(partitioner);
         let keyed = self.key_local(key_func);
-        keyed.then(StandardOperator::new(move |input, output, ctx| {
+        keyed.then(OperatorBuilder::direct(move |input, output, ctx| {
             distributor.run(input, output, ctx)
         }))
     }

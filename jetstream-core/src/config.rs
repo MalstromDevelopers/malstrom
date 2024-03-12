@@ -1,11 +1,6 @@
 use crate::{Scale, WorkerId};
-use lazy_static::lazy_static;
 use serde::Deserialize;
 use tonic::transport::Uri;
-
-lazy_static! {
-    pub static ref CONFIG: Config = Config::new();
-}
 
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
@@ -34,7 +29,7 @@ impl Config {
             .build()
             .expect("Error loading configuration")
             .try_deserialize()
-            .expect("Invalid configuratiioin")
+            .expect("Invalid configuration")
     }
 
     pub fn get_peer_uris(&self) -> Vec<(WorkerId, Uri)> {

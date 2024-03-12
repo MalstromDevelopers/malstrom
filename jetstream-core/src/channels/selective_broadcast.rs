@@ -11,9 +11,9 @@ use crossbeam;
 use indexmap::IndexSet;
 use itertools::{self};
 
-use crate::{Message, OperatorId, OperatorPartitioner, Scale};
+use crate::{snapshot::Barrier, Message, OperatorId, OperatorPartitioner, Scale};
 
-struct BarrierReceiver<K, V, T, P>(crossbeam::channel::Receiver<Message<K, V, T, P>>, Option<P>);
+struct BarrierReceiver<K, V, T, P>(crossbeam::channel::Receiver<Message<K, V, T, P>>, Option<Barrier<P>>);
 
 impl<K, V, T, P> BarrierReceiver<K, V, T, P> {
     fn new(rx: crossbeam::channel::Receiver<Message<K, V, T, P>>) -> Self {
@@ -78,7 +78,6 @@ where
     K: Clone,
     V: Clone,
     T: Clone,
-    P: Clone,
 {
     pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {

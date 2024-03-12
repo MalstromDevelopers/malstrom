@@ -1,24 +1,20 @@
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
+use snapshot::{Barrier, Load};
 
 use std::{hash::Hash, rc::Rc};
 use time::Epoch;
 
 pub mod channels;
-// pub mod filter;
-// pub mod frontier;
-// pub mod inspect;
-// pub mod kafka;
-// pub mod map;
 pub mod config;
-// pub mod network_exchange;
-pub mod snapshot;
-// pub mod source;
+pub mod filter;
 pub mod keyed;
-pub mod stateful_map;
+pub mod snapshot;
+pub mod operators;
+mod stateless_op;
 pub mod stream;
-mod time;
+pub mod time;
 mod util;
 pub mod worker;
 type OperatorId = usize;
@@ -26,16 +22,31 @@ type WorkerId = usize;
 type Scale = usize;
 
 /// Marker trait for stream keys
-pub trait Key: Hash + Eq + PartialEq + Clone + 'static {}
-impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
+pub trait Key: Hash + Eq + PartialEq + Clone + 'static {
+}
+impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {
+}
+
+/// Marker trait to denote streams that may or may not be keyed
+pub trait MaybeKey: Clone + 'static {
+}
+impl<T: Clone + 'static> MaybeKey for T {
+}
+
+#[derive(Clone)]
+pub struct NoKey;
 
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
 
-/// Zero sized indicator for an unkeyed stream
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub struct NoKey;
+// /// Zero sized indicator for an unkeyed stream
+// #[derive(Clone)]
+// pub struct NoKey;
+// impl Key for NoKey {
+//     type KeyType = ()
+// }
+
 /// Zero sized indicator for a stream with no data
 #[derive(Clone)]
 pub struct NoData;
@@ -67,14 +78,14 @@ impl<K, V, T> DataMessage<K, V, T> {
 /// Most messages will be of the data flavour, i.e. data to be processed,
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Message<K, V, T, P> {
     Data(DataMessage<K, V, T>),
     Epoch(Epoch<T>),
     /// Barrier used for asynchronous snapshotting
-    AbsBarrier(P),
+    AbsBarrier(Barrier<P>),
     /// Instruction to load state
-    Load(P),
+    Load(Load<P>),
     /// Information that the worker of this ID will soon be removed
     /// from the computation. Triggers Rescaling procedure
     ScaleRemoveWorker(IndexSet<WorkerId>),
@@ -90,6 +101,24 @@ pub enum Message<K, V, T, P> {
     Collect(Collect<K>),
     Acquire(Acquire<K>),
     DropKey(K),
+}
+impl <K, V, T, P> Clone for Message<K, V, T, P> where K: Clone, V: Clone, T: Clone {
+    fn clone(&self) -> Self {
+        // for some reason this could not be derived
+        match self {
+            Self::Data(x) => Self::Data(x.clone()),
+            Self::Epoch(x) => Self::Epoch(x.clone()),
+            Self::AbsBarrier(x) => Self::AbsBarrier(x.clone()),
+            Self::Load(x) => Self::Load(x.clone()),
+            Self::ScaleRemoveWorker(x) => Self::ScaleRemoveWorker(x.clone()),
+            Self::ScaleAddWorker(x) => Self::ScaleAddWorker(x.clone()),
+            Self::ShutdownMarker(x) => Self::ShutdownMarker(x.clone()),
+            Self::Interrogate(x) => Self::Interrogate(x.clone()),
+            Self::Collect(x) => Self::Collect(x.clone()),
+            Self::Acquire(x) => Self::Acquire(x.clone()),
+            Self::DropKey(x) => Self::DropKey(x.clone()),
+        }
+    }
 }
 
 /// This marker will be sent by the cluster lifecycle controller

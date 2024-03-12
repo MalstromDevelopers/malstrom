@@ -30,7 +30,7 @@ where
     V: DistData,
     T: DistTimestamp,
 {
-    pub(super) fn new<P: Clone>(
+    pub(super) fn new<P>(
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
@@ -51,7 +51,7 @@ where
             running_interrogate: interrogate,
         }
     }
-    fn send_local<P: Clone>(
+    fn send_local<P>(
         &self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: DataMessage<K, V, T>,
@@ -77,7 +77,7 @@ where
             .expect("Network Send Error");
     }
 
-    pub(super) fn run<P: Clone>(
+    pub(super) fn run<P>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, V, T>>,

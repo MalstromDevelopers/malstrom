@@ -31,7 +31,7 @@ where
     V: DistData,
     T: DistTimestamp,
 {
-    pub(super) fn run<P: Clone>(
+    pub(super) fn run<P>(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, V, T>>,

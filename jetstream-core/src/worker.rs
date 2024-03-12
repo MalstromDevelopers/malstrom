@@ -1,31 +1,30 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use crate::channels::selective_broadcast::{self};
-use crate::snapshot::controller::{end_snapshot_region, start_snapshot_region, RegionHandle};
+use crate::operators::void::Void;
+use crate::snapshot::controller::make_snapshot_controller;
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
-    pass_through_operator, FrontieredOperator, RunnableOperator, StandardOperator,
+    pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
 use crate::time::{NoTime, Timestamp};
 use crate::{Data, Key, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 
 pub struct Worker<P> {
-    operators: Vec<FrontieredOperator>,
+    operators: Vec<Box<dyn BuildableOperator<P>>>,
     root_stream: JetStreamBuilder<NoKey, NoData, NoTime, P>,
-    snapshot_handle: RegionHandle<P>,
 }
 impl<P> Worker<P>
 where
     P: PersistenceBackend,
 {
     pub fn new(snapshot_timer: impl FnMut() -> bool + 'static) -> Worker<P> {
-        let (snapshot_op, region_handle) = start_snapshot_region(snapshot_timer);
+        let snapshot_op = make_snapshot_controller(snapshot_timer);
 
         Worker {
             operators: Vec::new(),
             root_stream: JetStreamBuilder::from_operator(snapshot_op),
-            snapshot_handle: region_handle,
         }
     }
 
@@ -39,8 +38,8 @@ where
         &mut self,
         stream: JetStreamBuilder<K, V, T, P>,
     ) {
-        let stream = end_snapshot_region(stream, self.snapshot_handle.clone());
-        self.operators.extend(stream.build().into_operators())
+        // call void to destroy all remaining messages
+        self.operators.extend(stream.void().into_operators())
     }
 
     /// Unions N streams with identical output types into a single stream
@@ -63,10 +62,12 @@ where
         input: JetStreamBuilder<K, V, T, P>,
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T, P>; N] {
-        let partition_op = StandardOperator::new_with_output_partitioning(
-            |input, output, _ctx| {
-                if let Some(x) = input.recv() {
-                    output.send(x)
+        let partition_op = OperatorBuilder::new_with_output_partitioning(
+            |_| {
+                |input, output, _ctx| {
+                    if let Some(x) = input.recv() {
+                        output.send(x)
+                    }
                 }
             },
             partitioner,
@@ -90,37 +91,33 @@ where
 
     pub fn build(
         self,
-        config: Option<crate::config::Config>,
+        config: crate::config::Config,
     ) -> Result<RuntimeWorker, postbox::BuildError> {
         // TODO: Add a `void` sink at the end of every dataflow to swallow
         // unused messages
-        let config = config.as_ref().unwrap_or(&crate::config::CONFIG);
 
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
-        let _operator_ids: Vec<OperatorId> = (0..self.operators.len()).collect();
-        // TODO: Get the peer addresses from K8S
-        // should be "podname.sts-name"
         let peers = config.get_peer_uris();
-        let operators: Vec<(usize, FrontieredOperator)> = self
+
+        let operator_ids: Vec<OperatorId> =
+            (0..(self.operators.len() + self.root_stream.operator_count())).collect();
+        let communication_backend =
+            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
+
+        let operators: Vec<RunnableOperator> = self
             .root_stream
-            .build()
             .into_operators()
             .into_iter()
             .chain(self.operators)
             .enumerate()
-            .collect();
-        let operator_ids = operators.iter().map(|(i, _)| *i).collect();
-        let communication_backend =
-            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
-        let operators = operators
-            .into_iter()
             .map(|(i, x)| {
-                x.build(
+                x.into_runnable(BuildContext::new(
                     config.worker_id,
                     i,
+                    P::new_latest(config.worker_id),
                     communication_backend.for_operator(&i).unwrap(),
-                )
+                ))
             })
             .collect();
         Ok(RuntimeWorker {

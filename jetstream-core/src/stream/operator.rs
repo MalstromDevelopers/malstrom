@@ -7,30 +7,10 @@ use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
 use crate::snapshot::PersistenceBackend;
-use crate::time::Timestamp;
-use crate::{Key, OperatorId, OperatorPartitioner, WorkerId};
+use crate::time::MaybeTime;
+use crate::{Key, MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
 
 use crate::Data;
-
-/// An Operator which can have output added and can be turned
-/// into a FrontieredOperator
-/// This trait exists mainly for type erasure, so that the Jetstream
-/// need not know the input type of its last operator
-pub trait AppendableOperator<K, V, T, P> {
-    fn get_output_mut(&mut self) -> &mut Sender<K, V, T, P>;
-
-    fn build(self: Box<Self>) -> FrontieredOperator;
-}
-
-/// An Operator which does nothing except passing data along
-pub fn pass_through_operator<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
-) -> StandardOperator<K, V, T, K, V, T, P> {
-    StandardOperator::new(|input, output, _ctx| {
-        if let Some(x) = input.recv() {
-            output.send(x)
-        }
-    })
-}
 
 /// This is a type injected to logic function at runtime
 /// and cotains context, whicht the logic generally can not change
@@ -41,15 +21,83 @@ pub struct OperatorContext<'a> {
     pub communication: &'a Postbox<WorkerId>,
 }
 
+pub struct BuildContext<P> {
+    pub worker_id: WorkerId,
+    pub operator_id: OperatorId,
+    persistence_backend: P,
+    pub communication: Postbox<WorkerId>,
+}
+impl<P> BuildContext<P>
+where
+    P: PersistenceBackend,
+{
+    pub(crate) fn new(
+        worker_id: WorkerId,
+        operator_id: OperatorId,
+        persistence_backend: P,
+        communication: Postbox<WorkerId>,
+    ) -> Self {
+        Self {
+            worker_id,
+            operator_id,
+            persistence_backend,
+            communication,
+        }
+    }
+
+    pub fn load_state<S>(&self) -> Option<S> {
+        self.persistence_backend.load(self.operator_id)
+    }
+}
+
+// AppendableOperator -> BuildableOperator -> RunnableOperator
+
+/// An Operator which can have output added and can be turned
+/// into a FrontieredOperator
+/// This trait exists mainly for type erasure, so that the Jetstream
+/// need not know the input type of its last operator
+pub trait AppendableOperator<K, V, T, P> {
+    fn get_output_mut(&mut self) -> &mut Sender<K, V, T, P>;
+
+    fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator<P>>;
+}
+
+/// An operator which can be turned into a runnable operator, by supplying a BuildContext
+pub trait BuildableOperator<P> {
+    fn into_runnable(self: Box<Self>, context: BuildContext<P>) -> RunnableOperator;
+}
+
+/// Each runnable operator contains an object of this trait which is the actual logic that will get executed
+pub trait Operator {
+    /// Calling step instructs the operator, that it should attempt to make
+    /// progress. There is absolutely no assumption on what "progress" means,
+    /// but it is implied, that the operator reads its input and writes
+    /// to its output
+    fn step(&mut self, context: &mut OperatorContext);
+
+    /// still not happy with this function name
+    fn has_queued_work(&self) -> bool;
+}
+
+/// An Operator which does nothing except passing data along
+pub fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime, P>(
+) -> OperatorBuilder<K, V, T, K, V, T, P> {
+    OperatorBuilder::direct(|input, output, _ctx| {
+        if let Some(x) = input.recv() {
+            output.send(x)
+        }
+    })
+}
+
 /// A builder type to build generic operators
-pub struct StandardOperator<KI, VI, TI, KO, VO, TO, P> {
+pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO, P> {
     input: Receiver<KI, VI, TI, P>,
-    // VODO: get rid of the dynamic dispatch here
-    mapper: Box<dyn Mapper<KI, VI, TI, KO, VO, TO, P>>,
+    // TODO: get rid of the dynamic dispatch here
+    logic_builder: Box<dyn FnOnce(&BuildContext<P>) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO, P>>>,
     output: Sender<KO, VO, TO, P>,
 }
 
-pub trait Mapper<KI, VI, TI, KO, VO, TO, P>:
+pub trait Logic<KI, VI, TI, KO, VO, TO, P>:
     FnMut(&mut Receiver<KI, VI, TI, P>, &mut Sender<KO, VO, TO, P>, &mut OperatorContext) + 'static
 {
 }
@@ -63,39 +111,45 @@ impl<
         P,
         X: FnMut(&mut Receiver<KI, VI, TI, P>, &mut Sender<KO, VO, TO, P>, &mut OperatorContext)
             + 'static,
-    > Mapper<KI, VI, TI, KO, VO, TO, P> for X
+    > Logic<KI, VI, TI, KO, VO, TO, P> for X
 {
 }
 
-impl<KI, VI, TI, KO, VO, TO, P> StandardOperator<KI, VI, TI, KO, VO, TO, P>
+impl<KI, VI, TI, KO, VO, TO, P> OperatorBuilder<KI, VI, TI, KO, VO, TO, P>
 where
-    KI: Key,
+    KI: MaybeKey,
     VI: Data,
-    KO: Key,
+    KO: MaybeKey,
     VO: Data,
-    TI: Timestamp,
-    TO: Timestamp,
-    P: PersistenceBackend,
+    TI: MaybeTime,
+    TO: MaybeTime,
+    // P: PersistenceBackend,
 {
-    pub fn new(mapper: impl Mapper<KI, VI, TI, KO, VO, TO, P>) -> Self {
+    pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO, P>>(logic: M) -> Self {
+        Self::built_by(|_| Box::new(logic))
+    }
+
+    pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO, P>>(
+        logic_builder: impl FnOnce(&BuildContext<P>) -> M + 'static,
+    ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
         Self {
             input,
-            mapper: Box::new(mapper),
+            logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
         }
     }
 
-    pub fn new_with_output_partitioning(
-        mapper: impl Mapper<KI, VI, TI, KO, VO, TO, P>,
+    pub fn new_with_output_partitioning<M: Logic<KI, VI, TI, KO, VO, TO, P>>(
+        logic_builder: impl FnOnce(&BuildContext<P>) -> M + 'static,
         partitioner: impl OperatorPartitioner<KO, VO, TO>,
     ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(partitioner);
         Self {
             input,
-            mapper: Box::new(mapper),
+            logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
         }
     }
@@ -106,35 +160,55 @@ where
 }
 
 impl<KI, VI, TI, KO, VO, TO, P> AppendableOperator<KO, VO, TO, P>
-    for StandardOperator<KI, VI, TI, KO, VO, TO, P>
+    for OperatorBuilder<KI, VI, TI, KO, VO, TO, P>
 where
-    KI: Key,
+    KI: MaybeKey,
     VI: Data,
-    TI: Timestamp,
-    KO: Key,
+    TI: MaybeTime,
+    KO: MaybeKey,
     VO: Data,
-    TO: Timestamp,
-    P: PersistenceBackend,
+    TO: MaybeTime,
+    P: 'static,
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO, P> {
         &mut self.output
     }
 
-    fn build(self: Box<Self>) -> FrontieredOperator {
-        // let operator = StandardOperator{input: self.input, mapper: self.mapper, output: self.output};
-        FrontieredOperator::new(*self)
+    fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator<P>> {
+        self
     }
 }
 
-/// Type only used internally
-// struct StandardOperator<I, O> {
-//     input: Receiver<I, P>,
-//     mapper: Box<dyn FnMut(&mut Receiver<I, P>, &mut Sender<O, P>, &mut FrontierHandle)>,
-//     output: Sender<O, P>,
-// }
+impl<KI, VI, TI, KO, VO, TO, P> BuildableOperator<P> for OperatorBuilder<KI, VI, TI, KO, VO, TO, P>
+where
+    KI: MaybeKey,
+    VI: Data,
+    TI: MaybeTime,
+    KO: MaybeKey,
+    VO: Data,
+    TO: MaybeTime,
+    P: 'static,
+{
+    fn into_runnable(self: Box<Self>, context: BuildContext<P>) -> RunnableOperator {
+        let operator = StandardOperator {
+            input: self.input,
+            logic: (self.logic_builder)(&context),
+            output: self.output,
+        };
+        RunnableOperator::new(operator, context)
+    }
+}
+
+pub struct StandardOperator<KI, VI, TI, KO, VO, TO, P> {
+    input: Receiver<KI, VI, TI, P>,
+    // TODO: get rid of the dynamic dispatch here
+    logic: Box<dyn Logic<KI, VI, TI, KO, VO, TO, P>>,
+    output: Sender<KO, VO, TO, P>,
+}
+
 impl<KI, VI, TI, KO, VO, TO, P> Operator for StandardOperator<KI, VI, TI, KO, VO, TO, P> {
     fn step(&mut self, context: &mut OperatorContext) {
-        (self.mapper)(&mut self.input, &mut self.output, context);
+        (self.logic)(&mut self.input, &mut self.output, context);
     }
 
     fn has_queued_work(&self) -> bool {
@@ -142,41 +216,41 @@ impl<KI, VI, TI, KO, VO, TO, P> Operator for StandardOperator<KI, VI, TI, KO, VO
     }
 }
 
-pub struct FrontieredOperator {
-    operator: Box<dyn Operator>,
-}
+// pub struct FrontieredOperator {
+//     operator: Box<dyn Operator>,
+// }
 
-impl FrontieredOperator {
-    fn new<
-        KI: Key,
-        VI: Data,
-        TI: Timestamp,
-        KO: Key,
-        VO: Data,
-        TO: Timestamp,
-        P: PersistenceBackend,
-    >(
-        operator: StandardOperator<KI, VI, TI, KO, VO, TO, P>,
-    ) -> Self {
-        Self {
-            operator: Box::new(operator),
-        }
-    }
+// impl FrontieredOperator {
+//     fn new<
+//         KI: Key,
+//         VI: Data,
+//         TI: Timestamp,
+//         KO: Key,
+//         VO: Data,
+//         TO: Timestamp,
+//         P: PersistenceBackend,
+//     >(
+//         operator: OperatorBuilder<KI, VI, TI, KO, VO, TO, P>,
+//     ) -> Self {
+//         Self {
+//             operator: Box::new(operator),
+//         }
+//     }
 
-    pub fn build(
-        self,
-        worker_id: WorkerId,
-        operator_id: OperatorId,
-        communication: Postbox<WorkerId>,
-    ) -> RunnableOperator {
-        RunnableOperator {
-            worker_id,
-            operator_id,
-            communication,
-            operator: self.operator,
-        }
-    }
-}
+//     pub fn build(
+//         self,
+//         worker_id: WorkerId,
+//         operator_id: OperatorId,
+//         communication: Postbox<WorkerId>,
+//     ) -> RunnableOperator {
+//         RunnableOperator {
+//             worker_id,
+//             operator_id,
+//             communication,
+//             operator: self.operator,
+//         }
+//     }
+// }
 
 pub struct RunnableOperator {
     worker_id: WorkerId,
@@ -186,6 +260,15 @@ pub struct RunnableOperator {
 }
 
 impl RunnableOperator {
+    pub fn new<P>(operator: impl Operator + 'static, context: BuildContext<P>) -> Self {
+        RunnableOperator {
+            worker_id: context.worker_id,
+            operator_id: context.operator_id,
+            communication: context.communication,
+            operator: Box::new(operator),
+        }
+    }
+
     pub fn step(&mut self) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,
@@ -199,34 +282,3 @@ impl RunnableOperator {
         self.operator.has_queued_work()
     }
 }
-
-// impl<P> RuntimeFrontieredOperator<P> for FrontieredOperator<P>
-// where
-//     P: PersistenceBackend,
-// {
-
-// }
-
-/// The simplest trait in the world
-/// Any jetstream operator, MUST implement
-/// this trait
-pub trait Operator {
-    /// Calling step instructs the operator, that it should attempt to make
-    /// progress. There is absolutely no assumption on what "progress" means,
-    /// but it is implied, that the operator reads its input and writes
-    /// to its output
-    fn step(&mut self, context: &mut OperatorContext);
-
-    /// still not happy with this function name
-    fn has_queued_work(&self) -> bool;
-}
-// pub trait RuntimeFrontieredOperator<P>
-// where
-//     P: PersistenceBackend,
-// {
-//     fn get_probe(&self) -> Probe;
-
-//     fn step(&mut self, operator_id: usize);
-
-//     fn has_queued_work(&self) -> bool;
-// }
