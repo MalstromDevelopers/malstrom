@@ -1,13 +1,8 @@
-use itertools::Itertools;
-
-use super::operator::{
-    AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
-};
+use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
     channels::selective_broadcast::{self, Sender},
-    snapshot::PersistenceBackend,
     time::MaybeTime,
-    Data, Key, MaybeKey,
+    Data, MaybeKey,
 };
 
 pub struct JetStreamBuilder<K, V, T, P> {

@@ -1,8 +1,13 @@
 use std::{
-    collections::{HashMap, VecDeque}, net::{SocketAddr, SocketAddrV4}, path::Path, rc::Rc, sync::{
+    collections::{HashMap, VecDeque},
+    net::{SocketAddr, SocketAddrV4},
+    path::Path,
+    rc::Rc,
+    sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }, time::{Duration, Instant}
+    },
+    time::{Duration, Instant},
 };
 
 use apache_avro::{from_value, AvroSchema, Reader, Schema};
@@ -65,7 +70,6 @@ fn main() {
     for x in threads {
         let _ = x.join();
     }
-
 }
 
 fn run_stream_a(config: Config) {
@@ -75,7 +79,7 @@ fn run_stream_a(config: Config) {
     let eof = Rc::new(AtomicBool::new(false));
     let eof_moved = eof.clone();
     let start = Instant::now();
-    
+
     let stream = worker
         .new_stream()
         .then(OperatorBuilder::direct(move |input, output, ctx| {

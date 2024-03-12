@@ -10,8 +10,8 @@ pub mod channels;
 pub mod config;
 pub mod filter;
 pub mod keyed;
-pub mod snapshot;
 pub mod operators;
+pub mod snapshot;
 mod stateless_op;
 pub mod stream;
 pub mod time;
@@ -22,16 +22,12 @@ type WorkerId = usize;
 type Scale = usize;
 
 /// Marker trait for stream keys
-pub trait Key: Hash + Eq + PartialEq + Clone + 'static {
-}
-impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {
-}
+pub trait Key: Hash + Eq + PartialEq + Clone + 'static {}
+impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
 
 /// Marker trait to denote streams that may or may not be keyed
-pub trait MaybeKey: Clone + 'static {
-}
-impl<T: Clone + 'static> MaybeKey for T {
-}
+pub trait MaybeKey: Clone + 'static {}
+impl<T: Clone + 'static> MaybeKey for T {}
 
 #[derive(Clone)]
 pub struct NoKey;
@@ -102,7 +98,12 @@ pub enum Message<K, V, T, P> {
     Acquire(Acquire<K>),
     DropKey(K),
 }
-impl <K, V, T, P> Clone for Message<K, V, T, P> where K: Clone, V: Clone, T: Clone {
+impl<K, V, T, P> Clone for Message<K, V, T, P>
+where
+    K: Clone,
+    V: Clone,
+    T: Clone,
+{
     fn clone(&self) -> Self {
         // for some reason this could not be derived
         match self {

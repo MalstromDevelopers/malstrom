@@ -13,7 +13,10 @@ use itertools::{self};
 
 use crate::{snapshot::Barrier, Message, OperatorId, OperatorPartitioner, Scale};
 
-struct BarrierReceiver<K, V, T, P>(crossbeam::channel::Receiver<Message<K, V, T, P>>, Option<Barrier<P>>);
+struct BarrierReceiver<K, V, T, P>(
+    crossbeam::channel::Receiver<Message<K, V, T, P>>,
+    Option<Barrier<P>>,
+);
 
 impl<K, V, T, P> BarrierReceiver<K, V, T, P> {
     fn new(rx: crossbeam::channel::Receiver<Message<K, V, T, P>>) -> Self {

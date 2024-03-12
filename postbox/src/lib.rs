@@ -1,7 +1,7 @@
 mod grpc {
     tonic::include_proto!("postbox");
 }
-use std::fmt::{format, Debug};
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;

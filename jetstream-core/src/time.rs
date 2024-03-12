@@ -13,8 +13,7 @@ pub struct Epoch<T> {
 pub struct NoTime;
 
 pub trait MaybeTime: Clone + 'static {}
-impl<T:Clone + 'static> MaybeTime for T {
-}
+impl<T: Clone + 'static> MaybeTime for T {}
 
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {

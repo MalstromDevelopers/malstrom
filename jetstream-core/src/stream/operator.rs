@@ -8,7 +8,7 @@ use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// which can be used at runtime
 use crate::snapshot::PersistenceBackend;
 use crate::time::MaybeTime;
-use crate::{Key, MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
+use crate::{MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
 
 use crate::Data;
 

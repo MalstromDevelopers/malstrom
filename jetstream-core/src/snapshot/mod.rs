@@ -11,7 +11,7 @@ pub trait PersistenceBackend: 'static {
     fn get_version(&self) -> SnapshotVersion;
     fn load<S>(&self, operator_id: OperatorId) -> Option<S>;
     fn persist<S>(&mut self, state: &S, operator_id: OperatorId);
-    
+
     // fn commit(&mut self, snapshot_epoch: &SnapshotVersion) -> ();
     // fn get_last_committed(&self) -> Option<SnapshotVersion>;
 }
@@ -24,18 +24,24 @@ pub struct NoPersistence;
 
 #[derive(Debug)]
 pub struct Barrier<P> {
-    backend: Rc<Mutex<P>>
+    backend: Rc<Mutex<P>>,
 }
 impl<P> Clone for Barrier<P> {
     fn clone(&self) -> Self {
-        Self { backend: self.backend.clone() }
+        Self {
+            backend: self.backend.clone(),
+        }
     }
 }
 
-impl<P> Barrier<P> where P: PersistenceBackend {
-    
+impl<P> Barrier<P>
+where
+    P: PersistenceBackend,
+{
     pub(super) fn new(backend: P) -> Self {
-        Self { backend: Rc::new(Mutex::new(backend)) }
+        Self {
+            backend: Rc::new(Mutex::new(backend)),
+        }
     }
 
     pub fn persist<S>(&mut self, state: &S, operator_id: OperatorId) {
@@ -52,17 +58,24 @@ impl<P> Barrier<P> where P: PersistenceBackend {
 }
 #[derive(Debug)]
 pub struct Load<P> {
-    backend: Rc<Mutex<P>>
+    backend: Rc<Mutex<P>>,
 }
 impl<P> Clone for Load<P> {
     fn clone(&self) -> Self {
-        Self { backend: self.backend.clone() }
+        Self {
+            backend: self.backend.clone(),
+        }
     }
 }
 
-impl<P> Load<P> where P: PersistenceBackend {
+impl<P> Load<P>
+where
+    P: PersistenceBackend,
+{
     pub(super) fn new(backend: P) -> Self {
-        Self { backend: Rc::new(Mutex::new(backend)) }
+        Self {
+            backend: Rc::new(Mutex::new(backend)),
+        }
     }
     pub fn load<S>(&self, operator_id: OperatorId) -> Option<S> {
         self.backend.lock().unwrap().load(operator_id)
@@ -97,7 +110,7 @@ impl PersistenceBackend for NoopPersistenceBackend {
     // fn commit(&mut self, _snapshot_epoch: &SnapshotVersion) -> () {
     //     ()
     // }
-    
+
     // fn get_last_committed(&self) -> Option<SnapshotVersion> {
     //     None
     // }

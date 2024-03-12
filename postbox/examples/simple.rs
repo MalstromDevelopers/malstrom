@@ -27,7 +27,7 @@ fn main() {
 
     loop {
         match op_postbox.recv_all::<Vec<u8>>().next() {
-            Some(x) => {
+            Some(_x) => {
                 break;
             }
             None => {

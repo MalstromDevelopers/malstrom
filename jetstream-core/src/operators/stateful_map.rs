@@ -12,7 +12,7 @@ use crate::{
         operator::{BuildContext, OperatorBuilder, OperatorContext},
     },
     time::Timestamp,
-    Data, DataMessage, Key, Message, NoKey,
+    Data, DataMessage, Key, Message,
 };
 
 pub trait StatefulMap<K, VI, T, P> {
@@ -32,7 +32,7 @@ fn build_stateful_map<
 >(
     context: &BuildContext<P>,
     mut mapper: impl FnMut(VI, &mut S) -> VO + 'static,
-) -> impl FnMut(&mut Receiver<K, VI, T, P>, &mut Sender<K, VO, T, P>, &mut OperatorContext) -> () {
+) -> impl FnMut(&mut Receiver<K, VI, T, P>, &mut Sender<K, VO, T, P>, &mut OperatorContext) {
     let mut state: HashMap<K, S> = context.load_state().unwrap_or_default();
     move |input: &mut Receiver<K, VI, T, P>, output: &mut Sender<K, VO, T, P>, ctx| {
         let msg = match input.recv() {
@@ -89,9 +89,9 @@ where
 {
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
-        mut mapper: impl FnMut(VI, &mut S) -> VO + 'static,
+        mapper: impl FnMut(VI, &mut S) -> VO + 'static,
     ) -> JetStreamBuilder<K, VO, T, P> {
-        let mut state: Option<HashMap<K, S>> = None;
+        let _state: Option<HashMap<K, S>> = None;
 
         let op = OperatorBuilder::built_by(move |ctx| build_stateful_map(ctx, mapper));
         self.then(op)

@@ -1,5 +1,9 @@
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, keyed::distributed::DistData, snapshot::PersistenceBackend, stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder}, time::Timestamp, Data, DataMessage, Key, MaybeKey, Message, NoKey
+    channels::selective_broadcast::{Receiver, Sender},
+    snapshot::PersistenceBackend,
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
+    time::Timestamp,
+    Data, DataMessage, MaybeKey, Message,
 };
 
 /// A small wrapper around StandardOperator to make allow simpler
@@ -7,7 +11,7 @@ use crate::{
 pub trait StatelessOp<K, VI, T, P> {
     fn stateless_op<VO: Data>(
         self,
-        mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) -> () + 'static,
+        mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) + 'static,
     ) -> JetStreamBuilder<K, VO, T, P>;
 }
 
@@ -20,7 +24,7 @@ where
 {
     fn stateless_op<VO: Data>(
         self,
-        mut mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) -> () + 'static,
+        mut mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) + 'static,
     ) -> JetStreamBuilder<K, VO, T, P> {
         let op = OperatorBuilder::direct(
             move |input: &mut Receiver<K, VI, T, P>, output: &mut Sender<K, VO, T, P>, _ctx| {
