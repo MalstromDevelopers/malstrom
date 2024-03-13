@@ -1,14 +1,16 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    snapshot::PersistenceBackend,
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::Timestamp,
+    time::MaybeTime,
     Data, DataMessage, MaybeKey, Message,
 };
 
-/// A small wrapper around StandardOperator to make allow simpler
-/// implementations of stateless, time-unaware operators like map or filter
 pub trait StatelessOp<K, VI, T, P> {
+    /// A small wrapper around StandardOperator to make allow simpler
+    /// implementations of stateless, time-unaware operators like map or filter
+    ///
+    /// The mapper is only called for data messages, all other messages are passed
+    /// along as they are.
     fn stateless_op<VO: Data>(
         self,
         mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) + 'static,
@@ -19,8 +21,8 @@ impl<K, VI, T, P> StatelessOp<K, VI, T, P> for JetStreamBuilder<K, VI, T, P>
 where
     K: MaybeKey,
     VI: Data,
-    T: Timestamp,
-    P: PersistenceBackend,
+    T: MaybeTime,
+    P: 'static,
 {
     fn stateless_op<VO: Data>(
         self,

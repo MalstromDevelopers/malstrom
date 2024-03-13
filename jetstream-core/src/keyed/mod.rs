@@ -66,7 +66,7 @@ where
                     Some(Message::Data(d)) => {
                         let new_key = key_func(&d);
                         let new_msg = DataMessage {
-                            time: d.time,
+                            timestamp: d.timestamp,
                             key: new_key,
                             value: d.value,
                         };

@@ -16,12 +16,6 @@ pub trait PersistenceBackend: 'static {
     // fn get_last_committed(&self) -> Option<SnapshotVersion>;
 }
 
-/// This type is used to indicate that there isn't a persistence backend
-/// This is unlike the NoopPersistenceBackend, which will simply not persist
-/// anything. This type does not implement the PersistenceBackend trait and
-/// can therefore not be used with many operators
-pub struct NoPersistence;
-
 #[derive(Debug)]
 pub struct Barrier<P> {
     backend: Rc<Mutex<P>>,
@@ -83,16 +77,16 @@ where
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct NoopPersistenceBackend {
+pub struct NoPersistence {
     epoch: SnapshotVersion,
 }
-impl PersistenceBackend for NoopPersistenceBackend {
+impl PersistenceBackend for NoPersistence {
     fn new_latest(_worker_id: WorkerId) -> Self {
-        NoopPersistenceBackend::default()
+        NoPersistence::default()
     }
 
     fn new_for_version(_worker_id: WorkerId, snapshot_epoch: &SnapshotVersion) -> Self {
-        NoopPersistenceBackend {
+        NoPersistence {
             epoch: *snapshot_epoch,
         }
     }

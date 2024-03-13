@@ -13,19 +13,19 @@ use std::{
 use apache_avro::{from_value, AvroSchema, Reader, Schema};
 use glob::glob;
 use itertools::Itertools;
-use jetstream::time;
 use jetstream::{
     channels::selective_broadcast::{Receiver, Sender},
     config::Config,
     filter::Filter,
     keyed::{KeyDistribute, KeyLocal},
-    snapshot::NoopPersistenceBackend,
+    snapshot::NoPersistence,
     stateful_map::StatefulMap,
     stream::operator::OperatorBuilder,
     time::NoTime,
     worker::{self, Worker},
     DataMessage, Message, NoData, NoKey,
 };
+use jetstream::{operators::stateful_map::StatefulMap, time};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 use url::Url;
@@ -74,7 +74,7 @@ fn main() {
 
 fn run_stream_a(config: Config) {
     let mut globber = glob("/Users/damionwerner/Desktop/benchmark-data/*.avro").unwrap();
-    let mut worker = Worker::<NoopPersistenceBackend>::new(|| false);
+    let mut worker = Worker::<NoPersistence>::new(|| false);
 
     let eof = Rc::new(AtomicBool::new(false));
     let eof_moved = eof.clone();

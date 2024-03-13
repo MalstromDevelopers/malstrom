@@ -44,7 +44,7 @@ where
                     output.send(Message::Data(m.message));
                 } else if let Some(e) = self.hold.get_mut(&m.message.key) {
                     // Rule 1.2
-                    e.push((m.message.value, m.message.time))
+                    e.push((m.message.value, m.message.timestamp))
                 } else {
                     let new_target = *dist_func(&m.message.key, &self.new_worker_set);
                     let old_target = dist_func(&m.message.key, &self.old_worker_set);
@@ -105,7 +105,7 @@ where
                                     version: Some(self.version),
                                     sender: ctx.worker_id,
                                     message: DataMessage {
-                                        time: msg.0,
+                                        timestamp: msg.0,
                                         key: key.clone(),
                                         value: msg.1,
                                     },

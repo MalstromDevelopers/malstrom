@@ -5,18 +5,18 @@ use snapshot::{Barrier, Load};
 
 use std::{hash::Hash, rc::Rc};
 use time::Epoch;
+mod util;
 
 pub mod channels;
 pub mod config;
-pub mod filter;
 pub mod keyed;
 pub mod operators;
 pub mod snapshot;
-mod stateless_op;
+pub mod sources;
 pub mod stream;
 pub mod time;
-mod util;
 pub mod worker;
+
 type OperatorId = usize;
 type WorkerId = usize;
 type Scale = usize;
@@ -63,11 +63,11 @@ impl<K, V, T, U: Fn(&DataMessage<K, V, T>, Scale) -> IndexSet<OperatorId> + 'sta
 pub struct DataMessage<K, V, T> {
     pub key: K,
     pub value: V,
-    pub time: T,
+    pub timestamp: T,
 }
 impl<K, V, T> DataMessage<K, V, T> {
-    pub fn new(key: K, value: V, time: T) -> Self {
-        Self { time, key, value }
+    pub fn new(key: K, value: V, timestamp: T) -> Self {
+        Self { timestamp, key, value }
     }
 }
 /// Content variants of a JetStream message.

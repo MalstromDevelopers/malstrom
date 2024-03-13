@@ -9,6 +9,12 @@ pub struct Epoch<T> {
     timestamp: T,
 }
 
+impl<T> Epoch<T> {
+    pub fn new(timestamp: T) -> Self {
+        Self { timestamp }
+    }
+}
+
 #[derive(Clone)]
 pub struct NoTime;
 
@@ -94,7 +100,7 @@ where
                             output.send(Message::Data(DataMessage {
                                 key: d.key,
                                 value: d.value,
-                                time: new_ts,
+                                timestamp: new_ts,
                             }))
                         }
                         Message::Interrogate(x) => output.send(Message::Interrogate(x)),
