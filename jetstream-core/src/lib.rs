@@ -16,6 +16,9 @@ pub mod sources;
 pub mod stream;
 pub mod time;
 pub mod worker;
+pub mod sinks;
+
+pub use worker::Worker;
 
 type OperatorId = usize;
 type WorkerId = usize;
@@ -98,6 +101,7 @@ pub enum Message<K, V, T, P> {
     Acquire(Acquire<K>),
     DropKey(K),
 }
+
 impl<K, V, T, P> Clone for Message<K, V, T, P>
 where
     K: Clone,

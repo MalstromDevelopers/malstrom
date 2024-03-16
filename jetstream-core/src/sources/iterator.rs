@@ -1,33 +1,50 @@
-use crate::{operators::source::{DataCollector, DataSource, DataSourceBuilder, SourceMessage, SystemMessage}, stream::operator::{BuildContext, OperatorContext}, time::NoTime, Data, NoKey};
+use crate::{operators::source::IntoSource, stream::operator::{BuildContext, OperatorBuilder, OperatorContext}, time::{Epoch, NoTime}, Data, DataMessage, Message, NoData, NoKey};
 
-impl<T: Iterator<Item = V> + 'static, V, P> DataSourceBuilder<P> for T where V: Data{
-    type Source = IteratorDataSource<V>;
-    fn build(self, _ctx: &BuildContext<P>) -> IteratorDataSource<V> {
-        IteratorDataSource{inner: Box::new(self), last_given_index: None}
+impl<T: IntoIterator<Item = V> + 'static, V, P> IntoSource<NoKey, V, usize, P> for T where V: Data{
+    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize, P> {
+        let mut inner = self.into_iter().enumerate();
+        OperatorBuilder::direct(move |input, output, _ctx| {
+            if let Some(msg) = input.recv() {
+                if let Some(x) = inner.next() {
+                    output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
+                    output.send(Message::Epoch(Epoch::new(x.0)))
+                }
+                match msg {
+                    Message::Data(_) => (),
+                    Message::Epoch(_) => (),
+                    Message::AbsBarrier(x) =>  output.send(Message::AbsBarrier(x)),
+                    Message::Load(x) => output.send(Message::Load(x)),
+                    Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
+                    Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
+                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                    Message::Interrogate(x) => output.send(Message::Interrogate(x)),
+                    Message::Collect(x) => output.send(Message::Collect(x)),
+                    Message::Acquire(x) => output.send(Message::Acquire(x)),
+                    Message::DropKey(x) => output.send(Message::DropKey(x)),
+                }
+            }
+        })
     }
-    
 }
 
-/// Naive stateless source which simply yields elements from an iterator
-pub struct IteratorDataSource<V> {
-    inner: Box<dyn Iterator<Item = V>>,
-    last_given_index: Option<usize>
-}
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
 
-impl<V, P> DataSource<NoKey, V, usize, P> for IteratorDataSource<V> where V: Data{
+    use crate::{operators::{probe::{DataOrEpoch, Probe}, sink::Sink, source::Source}, stream::jetstream::JetStreamBuilder};
 
-    fn give(&mut self, _ctx: &OperatorContext, collector: &mut DataCollector<NoKey, V, usize, P>) -> () {
-        if let Some(value) = self.inner.next() {
-            let timestamp = self.last_given_index.get_or_insert(0).to_owned();
+    use super::*;
+    #[test]
+    /// The into_iter source should emit the previously sent index as an epoch
+    fn test_emits_epochs() {
+        let in_data: Vec<i32> = (0..100).collect();
+        let mut epochs: Vec<usize> = Vec::new();
+        let mut collected: Rc<Vec<DataMessage<NoKey, i32, usize>>> = Rc::new(Vec::new());
+        let stream = JetStreamBuilder::new_test()
+        // this should work since Vec is into_iter
+        .source(in_data)
+        .probe(|x| if let DataOrEpoch::Epoch(e) = x {epochs.push(e.clone())})
+        .sink(&mut collected);
 
-            collector.send_data(NoKey, value, timestamp);
-            collector.send_epoch(timestamp);
-            
-            self.last_given_index.map(|x| x + 1);
-        }
-    }
-
-    fn handle(&mut self, _sys_message: &mut SystemMessage<P>) -> () {
-        ()
     }
 }

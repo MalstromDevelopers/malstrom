@@ -6,7 +6,7 @@ pub trait Timestamp: PartialOrd + Clone + 'static {
 /// with this key will have a time <= timestamp.
 #[derive(Debug, Clone)]
 pub struct Epoch<T> {
-    timestamp: T,
+    pub timestamp: T,
 }
 
 impl<T> Epoch<T> {
