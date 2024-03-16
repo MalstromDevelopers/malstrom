@@ -1,6 +1,6 @@
 use crate::{
     operators::source::IntoSource,
-    stream::operator::{BuildContext, OperatorBuilder, OperatorContext},
+    stream::operator::{OperatorBuilder},
     time::{Epoch, NoTime},
     Data, DataMessage, Message, NoData, NoKey,
 };
@@ -44,24 +44,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, sync::Mutex};
+    
 
     use itertools::Itertools;
 
     use crate::{
-        config::Config,
         operators::{
             probe::{DataOrEpoch, Probe},
             sink::Sink,
             source::Source,
         },
-        snapshot::NoPersistence,
-        stream::jetstream::JetStreamBuilder,
         test::{get_test_configs, get_test_stream, VecCollector},
-        Worker,
     };
 
-    use super::*;
+    
 
     #[test]
     /// The into_iter source should emit the iterator values

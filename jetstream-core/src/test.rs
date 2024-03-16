@@ -17,6 +17,12 @@ use crate::{
 pub struct VecCollector<T> {
     inner: Rc<Mutex<Vec<T>>>,
 }
+impl<T> Default for VecCollector<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> VecCollector<T> {
     pub fn new() -> Self {
         VecCollector {
@@ -25,7 +31,7 @@ impl<T> VecCollector<T> {
     }
 
     /// Put a value into this collector
-    pub fn give(&self, value: T) -> () {
+    pub fn give(&self, value: T) {
         self.inner.lock().unwrap().push(value)
     }
 
@@ -55,18 +61,17 @@ pub fn get_test_stream() -> (
 /// The workers will use port 29091 + n with n being
 /// in range 0..N
 pub fn get_test_configs<const N: usize>() -> [Config; N] {
-    let ports = (0..N).into_iter().map(|i| 29091 + i).collect_vec();
+    let ports = (0..N).map(|i| 29091 + i).collect_vec();
     let addresses: Vec<tonic::transport::Uri> = ports
         .iter()
         .map(|x| format!("http://localhost:{x}").parse().unwrap())
         .collect_vec();
 
     (0..N)
-        .into_iter()
         .map(|i| Config {
             worker_id: i,
             port: 29091 + u16::try_from(i).unwrap(),
-            cluster_addresses: addresses.iter().map(|x| x.clone()).collect(),
+            cluster_addresses: addresses.to_vec(),
         })
         .collect_vec()
         .try_into()

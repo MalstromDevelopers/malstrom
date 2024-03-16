@@ -1,4 +1,4 @@
-use crate::{Scale, WorkerId};
+use crate::{WorkerId};
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer};
 use tonic::transport::Uri;
@@ -22,7 +22,7 @@ where
     let v: Vec<String> = Vec::deserialize(deser)?;
     let c = v
         .into_iter()
-        .map(|x| x.parse::<Uri>().map_err(|x| Error::custom(x)));
+        .map(|x| x.parse::<Uri>().map_err(Error::custom));
     c.try_collect()
 }
 

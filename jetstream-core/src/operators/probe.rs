@@ -1,7 +1,7 @@
-use super::stateless_op::StatelessOp;
+
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::{MaybeTime, Timestamp};
+use crate::time::{Timestamp};
 use crate::{Data, MaybeKey, Message};
 
 /// A container type which encodes whether a timestamp was
@@ -14,7 +14,7 @@ pub enum DataOrEpoch<'a, T> {
 pub trait Probe<K, V, T, P> {
     fn probe(
         self,
-        probe: impl FnMut(DataOrEpoch<T>) -> () + 'static,
+        probe: impl FnMut(DataOrEpoch<T>) + 'static,
     ) -> JetStreamBuilder<K, V, T, P>;
 }
 
@@ -27,7 +27,7 @@ where
 {
     fn probe(
         self,
-        mut probe: impl FnMut(DataOrEpoch<T>) -> () + 'static,
+        mut probe: impl FnMut(DataOrEpoch<T>) + 'static,
     ) -> JetStreamBuilder<K, V, T, P> {
         let operator = OperatorBuilder::direct(move |input, output, _ctx| {
             if let Some(x) = input.recv() {

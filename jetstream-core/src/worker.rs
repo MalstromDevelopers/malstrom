@@ -8,9 +8,9 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
-use crate::time::{MaybeTime, NoTime, Timestamp};
+use crate::time::{MaybeTime, NoTime};
 use crate::{
-    Data, Key, MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId,
+    MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId,
 };
 
 pub struct Worker<P> {
