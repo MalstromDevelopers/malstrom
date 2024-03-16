@@ -1,13 +1,24 @@
-use crate::{operators::sink::IntoSink, snapshot::PersistenceBackend, stream::operator::OperatorBuilder, time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData};
+use std::{rc::Rc, sync::Mutex};
 
-impl<K, V, T, P> IntoSink<K, V, T, P> for &'static mut Vec<DataMessage<K, V, T>> where K: MaybeKey, V: Data, T: MaybeTime, P: PersistenceBackend {
+use crate::{
+    operators::sink::IntoSink, snapshot::PersistenceBackend, stream::operator::OperatorBuilder,
+    test::VecCollector, time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
+};
+
+impl<K, V, T, P> IntoSink<K, V, T, P> for VecCollector<DataMessage<K, V, T>>
+where
+    K: MaybeKey,
+    V: Data,
+    T: MaybeTime,
+    P: PersistenceBackend,
+{
     fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T, P> {
-        OperatorBuilder::direct(|input, output, _ctx| {
+        OperatorBuilder::direct(move |input, output, _ctx| {
             if let Some(msg) = input.recv() {
                 match msg {
-                    Message::Data(x) => self.push(x),
+                    Message::Data(x) => self.give(x),
                     Message::Epoch(x) => output.send(Message::Epoch(x)),
-                    Message::AbsBarrier(x) =>  output.send(Message::AbsBarrier(x)),
+                    Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
                     Message::Load(x) => output.send(Message::Load(x)),
                     Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                     Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),

@@ -1,10 +1,14 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, snapshot::{Barrier, Load}, stream::{
+    channels::selective_broadcast::Sender,
+    snapshot::{Barrier, Load},
+    stream::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, Logic, OperatorBuilder, OperatorContext},
-    }, time::{Epoch, MaybeTime, NoTime}, Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId
+    },
+    time::{Epoch, MaybeTime, NoTime},
+    Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId,
 };
 
 pub trait IntoSource<K, V, T, P> {
@@ -22,7 +26,7 @@ where
     T: MaybeTime,
     P: 'static,
 {
-    fn source(self, source: impl IntoSource<K, V, T, P>) -> JetStreamBuilder<K, V, T, P>{
+    fn source(self, source: impl IntoSource<K, V, T, P>) -> JetStreamBuilder<K, V, T, P> {
         self.then(source.into_source())
     }
 }

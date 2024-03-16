@@ -74,7 +74,11 @@ fn build_stateful_map<
             None => return,
         };
         let mapped: Message<K, VO, T, P> = match msg {
-            Message::Data(DataMessage { key, value, timestamp: time }) => {
+            Message::Data(DataMessage {
+                key,
+                value,
+                timestamp: time,
+            }) => {
                 let st = state.remove(&key).unwrap_or_default();
                 let (mapped, mut new_state) = mapper(value, st);
                 if let Some(n) = new_state.take() {

@@ -1,9 +1,12 @@
-
 use crate::{
-    channels::selective_broadcast::Sender, snapshot::{Barrier, Load}, stream::{
+    channels::selective_broadcast::Sender,
+    snapshot::{Barrier, Load},
+    stream::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, OperatorBuilder, OperatorContext},
-    }, time::{Epoch, MaybeTime, NoTime}, Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId
+    },
+    time::{Epoch, MaybeTime, NoTime},
+    Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId,
 };
 
 pub trait IntoSink<K, V, T, P> {
@@ -21,7 +24,7 @@ where
     T: MaybeTime,
     P: 'static,
 {
-    fn sink(self, sink: impl IntoSink<K, V, T, P>) -> JetStreamBuilder<K, NoData, T, P>{
+    fn sink(self, sink: impl IntoSink<K, V, T, P>) -> JetStreamBuilder<K, NoData, T, P> {
         self.then(sink.into_sink())
     }
 }

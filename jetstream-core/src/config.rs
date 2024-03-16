@@ -1,5 +1,6 @@
 use crate::{Scale, WorkerId};
-use serde::Deserialize;
+use itertools::Itertools;
+use serde::{Deserialize, Deserializer};
 use tonic::transport::Uri;
 
 #[derive(Debug, Deserialize)]
@@ -9,12 +10,20 @@ pub struct Config {
     pub worker_id: WorkerId,
     // communication port for inter-worker comm
     pub port: u16,
-    // name of k8s statefulset
-    pub sts_name: Option<String>,
-    // total cluster size before any rescaling
-    pub initial_scale: Scale,
-
-    pub cluster_addresses: Option<Vec<String>>,
+    // Addresses of all other workers in the cluster
+    #[serde(deserialize_with = "deser_uri_vec")]
+    pub cluster_addresses: Vec<Uri>,
+}
+fn deser_uri_vec<'de, D>(deser: D) -> Result<Vec<Uri>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let v: Vec<String> = Vec::deserialize(deser)?;
+    let c = v
+        .into_iter()
+        .map(|x| x.parse::<Uri>().map_err(|x| Error::custom(x)));
+    c.try_collect()
 }
 
 impl Config {
@@ -33,19 +42,11 @@ impl Config {
     }
 
     pub fn get_peer_uris(&self) -> Vec<(WorkerId, Uri)> {
-        if let Some(sts_name) = &self.sts_name {
-            let port = self.port;
-            (0..self.initial_scale)
-                .filter(|i| *i != self.worker_id)
-                .map(|i| (i, format!("http://{sts_name}-{i}.{sts_name}:{port}")))
-                .map(|(i, x)| (i, x.parse::<Uri>().unwrap()))
-                .collect()
-        } else {
-            self.cluster_addresses.as_ref().expect(
-                "If not using kubernetes DNS discovery, cluster addresses must be set through the config"
-            ).iter().enumerate().filter(
-                |(i, _)| *i != self.worker_id).map(
-                    |(i, x)| (i, x.parse::<Uri>().unwrap())).collect()
-        }
+        self.cluster_addresses
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != self.worker_id)
+            .map(|x| (x.0, x.1.clone()))
+            .collect()
     }
 }

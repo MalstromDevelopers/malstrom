@@ -1,6 +1,11 @@
-use super::operator::{pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder};
+use super::operator::{
+    pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder,
+};
 use crate::{
-    channels::selective_broadcast::{self, Sender}, snapshot::NoPersistence, time::{MaybeTime, NoTime}, Data, MaybeKey, NoData, NoKey
+    channels::selective_broadcast::{self, Sender},
+    snapshot::NoPersistence,
+    time::{MaybeTime, NoTime},
+    Data, MaybeKey, NoData, NoKey,
 };
 
 pub struct JetStreamBuilder<K, V, T, P> {
@@ -10,10 +15,9 @@ pub struct JetStreamBuilder<K, V, T, P> {
 }
 
 impl JetStreamBuilder<NoKey, NoData, NoTime, NoPersistence> {
-
     /// Create a new JetStreamBuilder which does not produce any data, keys,
     /// timestamps and does not have any persistence.
-    /// 
+    ///
     /// This method is intented for construction streams in unit tests.
     /// For actual deployments you should use [`jetstream::Worker::new_stream`]
     pub fn new_test() -> Self {

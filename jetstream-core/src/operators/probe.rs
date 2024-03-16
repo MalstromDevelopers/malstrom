@@ -8,12 +8,14 @@ use crate::{Data, MaybeKey, Message};
 ///  extracted from a data message or an epoch
 pub enum DataOrEpoch<'a, T> {
     Data(&'a T),
-    Epoch(&'a T)
+    Epoch(&'a T),
 }
 
 pub trait Probe<K, V, T, P> {
-
-    fn probe(self, probe: impl FnMut(DataOrEpoch<T>) -> () + 'static) -> JetStreamBuilder<K, V, T, P>;
+    fn probe(
+        self,
+        probe: impl FnMut(DataOrEpoch<T>) -> () + 'static,
+    ) -> JetStreamBuilder<K, V, T, P>;
 }
 
 impl<K, V, T, P> Probe<K, V, T, P> for JetStreamBuilder<K, V, T, P>
@@ -23,20 +25,22 @@ where
     T: Timestamp,
     P: 'static,
 {
-    fn probe(self,  mut probe: impl FnMut(DataOrEpoch<T>) -> () + 'static) -> JetStreamBuilder<K, V, T, P> {
+    fn probe(
+        self,
+        mut probe: impl FnMut(DataOrEpoch<T>) -> () + 'static,
+    ) -> JetStreamBuilder<K, V, T, P> {
         let operator = OperatorBuilder::direct(move |input, output, _ctx| {
             if let Some(x) = input.recv() {
                 match x {
                     Message::Data(d) => {
                         probe(DataOrEpoch::Data(&d.timestamp));
                         output.send(Message::Data(d))
-                    },
+                    }
                     Message::Epoch(e) => {
                         probe(DataOrEpoch::Epoch(&e.timestamp));
                         output.send(Message::Epoch(e))
-
-                    },
-                    m => output.send(m)
+                    }
+                    m => output.send(m),
                 }
             }
         });

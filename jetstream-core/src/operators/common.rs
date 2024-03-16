@@ -1,10 +1,14 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender, snapshot::{Barrier, Load}, stream::{
+    channels::selective_broadcast::Sender,
+    snapshot::{Barrier, Load},
+    stream::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, OperatorBuilder, OperatorContext},
-    }, time::{Epoch, MaybeTime, NoTime}, Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId
+    },
+    time::{Epoch, MaybeTime, NoTime},
+    Data, DataMessage, MaybeKey, Message, NoData, NoKey, ShutdownMarker, WorkerId,
 };
 /// Same as the normal jetstream messages but without Epochs, Data,
 /// or key related messages, since those can not reach the source.
@@ -25,10 +29,8 @@ pub enum SystemMessage<P> {
     ShutdownMarker(ShutdownMarker),
 }
 
-
 // #[derive(Debug, Clone)]
 // pub(super) struct NotSystemMessage<K, V, T, P>(pub Message<K, V, T, P>);
-
 
 impl<K, V, T, P> TryFrom<Message<K, V, T, P>> for SystemMessage<P> {
     type Error = Message<K, V, T, P>;
@@ -59,7 +61,7 @@ impl<K, V, T, P> From<SystemMessage<P>> for Message<K, V, T, P> {
 #[derive(Debug)]
 pub enum SourceMessage<K, V, T> {
     Data(DataMessage<K, V, T>),
-    Epoch(Epoch<T>)
+    Epoch(Epoch<T>),
 }
 
 impl<K, V, T, P> From<SourceMessage<K, V, T>> for Message<K, V, T, P> {

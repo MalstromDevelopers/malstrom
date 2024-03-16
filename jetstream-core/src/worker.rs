@@ -8,8 +8,10 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
-use crate::time::{NoTime, Timestamp};
-use crate::{Data, Key, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
+use crate::time::{MaybeTime, NoTime, Timestamp};
+use crate::{
+    Data, Key, MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId,
+};
 
 pub struct Worker<P> {
     operators: Vec<Box<dyn BuildableOperator<P>>>,
@@ -34,7 +36,7 @@ where
         JetStreamBuilder::from_operator(new_op)
     }
 
-    pub fn add_stream<K: Key, V: Data, T: Timestamp>(
+    pub fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
         stream: JetStreamBuilder<K, V, T, P>,
     ) {
@@ -43,7 +45,7 @@ where
     }
 
     /// Unions N streams with identical output types into a single stream
-    pub fn union<K: Key, V: Data, T: Timestamp>(
+    pub fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
         streams: Vec<JetStreamBuilder<K, V, T, P>>,
     ) -> JetStreamBuilder<K, V, T, P> {
@@ -57,7 +59,7 @@ where
         JetStreamBuilder::from_operator(unioned)
     }
 
-    pub fn split_n<const N: usize, K: Key, V: Data, T: Timestamp>(
+    pub fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
         input: JetStreamBuilder<K, V, T, P>,
         partitioner: impl OperatorPartitioner<K, V, T>,

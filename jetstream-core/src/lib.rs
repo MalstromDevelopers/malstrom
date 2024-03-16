@@ -11,12 +11,13 @@ pub mod channels;
 pub mod config;
 pub mod keyed;
 pub mod operators;
+pub mod sinks;
 pub mod snapshot;
 pub mod sources;
 pub mod stream;
+pub mod test;
 pub mod time;
 pub mod worker;
-pub mod sinks;
 
 pub use worker::Worker;
 
@@ -32,19 +33,16 @@ impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
 pub trait MaybeKey: Clone + 'static {}
 impl<T: Clone + 'static> MaybeKey for T {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NoKey;
 
 /// Data which may move through a stream
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
 
-// /// Zero sized indicator for an unkeyed stream
-// #[derive(Clone)]
-// pub struct NoKey;
-// impl Key for NoKey {
-//     type KeyType = ()
-// }
+/// Marker trait to denote streams that may or may not have data
+pub trait MaybeData: Clone + 'static {}
+impl<T: Clone + 'static> MaybeData for T {}
 
 /// Zero sized indicator for a stream with no data
 #[derive(Clone)]
@@ -70,7 +68,11 @@ pub struct DataMessage<K, V, T> {
 }
 impl<K, V, T> DataMessage<K, V, T> {
     pub fn new(key: K, value: V, timestamp: T) -> Self {
-        Self { timestamp, key, value }
+        Self {
+            timestamp,
+            key,
+            value,
+        }
     }
 }
 /// Content variants of a JetStream message.
