@@ -1,7 +1,8 @@
-
+use crate::channels::selective_broadcast::{Receiver, Sender};
+use crate::channels::watch;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::{Timestamp};
+use crate::time::Timestamp;
 use crate::{Data, MaybeKey, Message};
 
 /// A container type which encodes whether a timestamp was
@@ -11,39 +12,32 @@ pub enum DataOrEpoch<'a, T> {
     Epoch(&'a T),
 }
 
-pub trait Probe<K, V, T, P> {
-    fn probe(
-        self,
-        probe: impl FnMut(DataOrEpoch<T>) + 'static,
-    ) -> JetStreamBuilder<K, V, T, P>;
+pub trait ProbeEpoch<K, V, T, P> {
+    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T, P>, watch::Receiver<Option<T>>);
 }
 
-impl<K, V, T, P> Probe<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T, P> ProbeEpoch<K, V, T, P> for JetStreamBuilder<K, V, T, P>
 where
     K: MaybeKey,
     V: Data,
-    T: Timestamp,
+    T: Timestamp + Clone,
     P: 'static,
 {
-    fn probe(
-        self,
-        mut probe: impl FnMut(DataOrEpoch<T>) + 'static,
-    ) -> JetStreamBuilder<K, V, T, P> {
-        let operator = OperatorBuilder::direct(move |input, output, _ctx| {
-            if let Some(x) = input.recv() {
-                match x {
-                    Message::Data(d) => {
-                        probe(DataOrEpoch::Data(&d.timestamp));
-                        output.send(Message::Data(d))
+    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T, P>, watch::Receiver<Option<T>>) {
+        let (tx, rx) = watch::channel::<Option<T>>(None);
+        let operator = OperatorBuilder::direct(
+            move |input: &mut Receiver<K, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
+                if let Some(x) = input.recv() {
+                    match x {
+                        Message::Epoch(e) => {
+                            tx.send(Some(e.timestamp.clone()));
+                            output.send(Message::Epoch(e))
+                        }
+                        m => output.send(m),
                     }
-                    Message::Epoch(e) => {
-                        probe(DataOrEpoch::Epoch(&e.timestamp));
-                        output.send(Message::Epoch(e))
-                    }
-                    m => output.send(m),
                 }
-            }
-        });
-        self.then(operator)
+            },
+        );
+        (self.then(operator), rx)
     }
 }

@@ -2,7 +2,8 @@ use indexmap::IndexSet;
 
 use crate::{
     snapshot::{Barrier, Load},
-    time::{Epoch}, DataMessage, Message, ShutdownMarker, WorkerId,
+    time::Epoch,
+    DataMessage, Message, ShutdownMarker, WorkerId,
 };
 /// Same as the normal jetstream messages but without Epochs, Data,
 /// or key related messages, since those can not reach the source.
@@ -31,7 +32,7 @@ impl<K, V, T, P> TryFrom<Message<K, V, T, P>> for SystemMessage<P> {
     fn try_from(value: Message<K, V, T, P>) -> Result<Self, Self::Error> {
         match value {
             Message::AbsBarrier(x) => Ok(Self::AbsBarrier(x)),
-            Message::Load(x) => Ok(Self::Load(x)),
+            // Message::Load(x) => Ok(Self::Load(x)),
             Message::ScaleRemoveWorker(x) => Ok(Self::ScaleRemoveWorker(x)),
             Message::ScaleAddWorker(x) => Ok(Self::ScaleAddWorker(x)),
             Message::ShutdownMarker(x) => Ok(Self::ShutdownMarker(x)),
@@ -43,7 +44,7 @@ impl<K, V, T, P> From<SystemMessage<P>> for Message<K, V, T, P> {
     fn from(value: SystemMessage<P>) -> Message<K, V, T, P> {
         match value {
             SystemMessage::AbsBarrier(x) => Message::AbsBarrier(x),
-            SystemMessage::Load(x) => Message::Load(x),
+            SystemMessage::Load(x) => todo!(), // Message::Load(x),
             SystemMessage::ScaleRemoveWorker(x) => Message::ScaleRemoveWorker(x),
             SystemMessage::ScaleAddWorker(x) => Message::ScaleAddWorker(x),
             SystemMessage::ShutdownMarker(x) => Message::ShutdownMarker(x),

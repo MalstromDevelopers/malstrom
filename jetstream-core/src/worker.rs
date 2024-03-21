@@ -9,9 +9,7 @@ use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
 use crate::time::{MaybeTime, NoTime};
-use crate::{
-    MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId,
-};
+use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 
 pub struct Worker<P> {
     operators: Vec<Box<dyn BuildableOperator<P>>>,
@@ -105,7 +103,7 @@ where
         let operator_ids: Vec<OperatorId> =
             (0..(self.operators.len() + self.root_stream.operator_count())).collect();
         let communication_backend =
-            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 128);
+            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 4096);
 
         let operators: Vec<RunnableOperator> = self
             .root_stream

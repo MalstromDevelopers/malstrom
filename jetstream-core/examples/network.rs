@@ -1,34 +1,29 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    net::{SocketAddr, SocketAddrV4},
+    collections::VecDeque,
     path::Path,
     rc::Rc,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::{Duration, Instant},
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
 };
 
 use apache_avro::{from_value, AvroSchema, Reader, Schema};
 use glob::glob;
-use itertools::Itertools;
 use jetstream::{
-    channels::selective_broadcast::{Receiver, Sender},
     config::Config,
-    filter::Filter,
-    keyed::{KeyDistribute, KeyLocal},
+    keyed::KeyDistribute,
+    operators::{
+        filter::Filter,
+        flat_map::FlatMap,
+        map::Map,
+        probe::{DataOrEpoch, ProbeEpoch},
+        source::Source,
+        stateful_map::StatefulMap,
+    },
     snapshot::NoPersistence,
-    stateful_map::StatefulMap,
-    stream::operator::OperatorBuilder,
-    time::NoTime,
-    worker::{self, Worker},
-    DataMessage, Message, NoData, NoKey,
+    test::get_test_configs,
+    Worker,
 };
-use jetstream::{operators::stateful_map::StatefulMap, time};
 use serde::{Deserialize, Serialize};
-use tonic::transport::Uri;
-use url::Url;
 
 static ALLOWED_OUT_OF_BOUNDNESS: u64 = 20 * 1000; // seconds
 static STATE_SIZE: usize = 10;
@@ -36,36 +31,8 @@ static PREDICTION_NUM: usize = 5;
 
 /// Code I stole from Nico
 fn main() {
-    let config = Config {
-        worker_id: 0,
-        port: 29090,
-        cluster_addresses: Some(vec![
-            "http://localhost:29091".into(),
-            "http://localhost:29092".into(),
-            "http://localhost:29093".into(),
-            "http://localhost:29094".into(),
-        ]),
-        initial_scale: 2,
-        sts_name: None,
-    };
-    let base_port: u16 = 29091;
-    let range = 0..10u16;
-    let addresses = range
-        .clone()
-        .map(|x| x + base_port)
-        .map(|x| format!("http://localhost:{x}"))
-        .collect_vec();
-    let configs = range.map(|x| Config {
-        worker_id: x.try_into().unwrap(),
-        port: base_port + x,
-        cluster_addresses: Some(addresses.clone()),
-        initial_scale: addresses.len(),
-        sts_name: None,
-    });
-    let start = Instant::now();
-    let threads = configs
-        .map(|c| std::thread::spawn(move || run_stream_a(c)))
-        .collect_vec();
+    let configs = get_test_configs::<8>();
+    let threads = configs.map(|c| std::thread::spawn(move || run_stream_a(c)));
 
     for x in threads {
         let _ = x.join();
@@ -75,72 +42,80 @@ fn main() {
 fn run_stream_a(config: Config) {
     let mut globber = glob("/Users/damionwerner/Desktop/benchmark-data/*.avro").unwrap();
     let mut worker = Worker::<NoPersistence>::new(|| false);
+    let wid = config.worker_id.clone();
 
     let eof = Rc::new(AtomicBool::new(false));
-    let eof_moved = eof.clone();
+    let eof1 = eof.clone();
+    let eof2 = eof.clone();
     let start = Instant::now();
 
     let stream = worker
         .new_stream()
-        .then(OperatorBuilder::direct(move |input, output, ctx| {
-            if ctx.worker_id != 0 {
-                return;
-            }
-
-            if let Some(x) = globber.next() {
-                let x = x.unwrap();
-                let t = Instant::now();
-                println!("{x:?} @ {t:?}");
-                let content = read_avro(&x);
-                for c in content {
-                    output.send(jetstream::Message::Data(DataMessage::new(NoKey, c, 0)));
+        .source(globber.map(|x| x.unwrap()))
+        .probe_epoch(move |x| match x {
+            DataOrEpoch::Epoch(t) => {
+                if *t == usize::MAX {
+                    eof1.store(true, Ordering::Relaxed)
                 }
-                let t = Instant::now();
-                println!("{t:?}");
-            } else {
-                eof_moved.store(true, Ordering::Relaxed);
-                let elapsed = Instant::now().duration_since(start);
-                println!("That took {elapsed:?}");
             }
-        }))
+            _ => (),
+        })
+        .key_distribute(
+            |x| x.value.clone(),
+            |x, workers| {
+                let i = calculate_hash(&x) as usize;
+                let idx = i % workers.len();
+                workers.get_index(idx).unwrap()
+            },
+        )
+        .map(|x| {
+            println!("{x:?}");
+            x
+        })
+        .flat_map(|x| read_avro(&x))
         .key_distribute(
             |msg| calculate_hash(&msg.value.icao24),
             |key, targets| {
-                let len = targets.len() - 1;
+                let len = targets.len();
                 let key: usize = (*key).try_into().unwrap();
-                targets.get_index((key % len) + 1).unwrap()
+                targets.get_index(key % len).unwrap()
             },
         )
         .filter(|value| {
             value.longitude.is_some() && value.time_position.is_some() && value.velocity.is_some()
         })
         // acumulate state
-        .stateful_map(|val, state: &mut VecDeque<StateVector>| {
+        .stateful_map(|val, mut state: VecDeque<StateVector>| {
             state.push_back(val);
             if state.len() > STATE_SIZE {
                 // remove the oldest position
                 state.pop_front();
             }
-            state.clone()
+            (state.clone(), Some(state))
         })
         .filter(|value| value.len() > 2)
-        .stateful_map(|mut trajectory, state: &mut ()| {
+        .map(move |mut trajectory| {
             // println!("Predicting...");
             for _ in 0..PREDICTION_NUM {
                 let new_sv = trajectory.predict();
                 trajectory.push_back(new_sv);
             }
+            // if eof2.load(Ordering::Relaxed) {
+            if wid == 0 {
+                let elapsed = Instant::now().duration_since(start);
+                println!("Took {elapsed:?}");
+            }
+            // }
             trajectory
-        })
-        // destruct all the messages
-        .filter(|_| false);
-
+        });
     worker.add_stream(stream);
     let mut worker = worker.build(config).unwrap();
-
-    while !eof.load(Ordering::Relaxed) {
+    loop {
         worker.step()
     }
+    // while !eof.load(Ordering::Relaxed) {
+    //     worker.step()
+    // }
 }
 
 #[derive(Debug, AvroSchema, Serialize, Deserialize, Clone)]

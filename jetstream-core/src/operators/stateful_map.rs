@@ -108,10 +108,10 @@ fn build_stateful_map<
             }
             // necessary to convince Rust it is a different generic type now
             Message::AbsBarrier(b) => Message::AbsBarrier(b),
-            Message::Load(l) => {
-                state = l.load(ctx.operator_id).unwrap_or_default();
-                Message::Load(l)
-            }
+            // Message::Load(l) => {
+            //     state = l.load(ctx.operator_id).unwrap_or_default();
+            //     Message::Load(l)
+            // }
             Message::ScaleAddWorker(x) => Message::ScaleAddWorker(x),
             Message::ScaleRemoveWorker(x) => Message::ScaleRemoveWorker(x),
             Message::ShutdownMarker(x) => Message::ShutdownMarker(x),

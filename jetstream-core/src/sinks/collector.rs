@@ -1,5 +1,3 @@
-
-
 use crate::{
     operators::sink::IntoSink, snapshot::PersistenceBackend, stream::operator::OperatorBuilder,
     test::VecCollector, time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
@@ -19,7 +17,7 @@ where
                     Message::Data(x) => self.give(x),
                     Message::Epoch(x) => output.send(Message::Epoch(x)),
                     Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
-                    Message::Load(x) => output.send(Message::Load(x)),
+                    // Message::Load(x) => output.send(Message::Load(x)),
                     Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                     Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),

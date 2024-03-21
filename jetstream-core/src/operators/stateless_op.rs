@@ -42,7 +42,7 @@ where
                     Message::DropKey(k) => output.send(Message::DropKey(k)),
                     // necessary to convince Rust it is a different generic type now
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
-                    Message::Load(l) => output.send(Message::Load(l)),
+                    // Message::Load(l) => output.send(Message::Load(l)),
                     Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
                     Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),

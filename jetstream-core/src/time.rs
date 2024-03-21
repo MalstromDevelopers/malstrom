@@ -15,7 +15,7 @@ impl<T> Epoch<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NoTime;
 
 pub trait MaybeTime: Clone + 'static {}
@@ -30,6 +30,24 @@ impl PartialEq for NoTime {
     fn eq(&self, _other: &Self) -> bool {
         true
     }
+}
+
+// TODO: Maybe make it so we always give out two streams: OnTime/Late
+
+pub trait TimestampAssigner<K, V, T, TO> {
+    fn assign_timestamp(
+        &self,
+        msg: &DataMessage<K, V, T>,
+        last_epoch: &Epoch<TO>,
+        ctx: &OperatorContext,
+    ) -> TO;
+
+    fn issue_epochs(
+        &self,
+        msg: &DataMessage<K, V, TO>,
+        last_epoch: &Epoch<TO>,
+        ctx: &OperatorContext,
+    ) -> Option<Epoch<TO>>;
 }
 
 macro_rules! timestamp_impl {
@@ -61,7 +79,10 @@ timestamp_impl!(f32);
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     snapshot::PersistenceBackend,
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
+    stream::{
+        jetstream::JetStreamBuilder,
+        operator::{OperatorBuilder, OperatorContext},
+    },
     Data, DataMessage, Message, NoKey,
 };
 
@@ -112,7 +133,7 @@ where
                         Message::DropKey(x) => output.send(Message::DropKey(x)),
                         // necessary to convince Rust it is a different generic type now
                         Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
-                        Message::Load(l) => output.send(Message::Load(l)),
+                        // Message::Load(l) => output.send(Message::Load(l)),
                         Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
                         Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                         Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),

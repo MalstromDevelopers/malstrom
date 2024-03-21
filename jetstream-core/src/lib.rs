@@ -1,5 +1,5 @@
 use indexmap::IndexSet;
-use keyed::distributed::{Acquire, Collect, Interrogate};
+use keyed::distributed::messages::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
 use snapshot::{Barrier, Load};
 
@@ -86,7 +86,7 @@ pub enum Message<K, V, T, P> {
     /// Barrier used for asynchronous snapshotting
     AbsBarrier(Barrier<P>),
     /// Instruction to load state
-    Load(Load<P>),
+    // Load(Load<P>),
     /// Information that the worker of this ID will soon be removed
     /// from the computation. Triggers Rescaling procedure
     ScaleRemoveWorker(IndexSet<WorkerId>),
@@ -116,7 +116,7 @@ where
             Self::Data(x) => Self::Data(x.clone()),
             Self::Epoch(x) => Self::Epoch(x.clone()),
             Self::AbsBarrier(x) => Self::AbsBarrier(x.clone()),
-            Self::Load(x) => Self::Load(x.clone()),
+            // Self::Load(x) => Self::Load(x.clone()),
             Self::ScaleRemoveWorker(x) => Self::ScaleRemoveWorker(x.clone()),
             Self::ScaleAddWorker(x) => Self::ScaleAddWorker(x.clone()),
             Self::ShutdownMarker(x) => Self::ShutdownMarker(x.clone()),
@@ -142,7 +142,7 @@ impl ShutdownMarker {
     /// Get the count of strong reference to the inner Rc
     /// Note that this includes the instance you are calling
     /// this method on.
-    pub(crate) fn get_count(&self) -> usize {
+    pub(crate) fn strong_count(&self) -> usize {
         Rc::strong_count(&self.rc)
     }
 }

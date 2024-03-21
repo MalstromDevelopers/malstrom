@@ -1,10 +1,5 @@
-
-
 use crate::{
-    stream::{
-        jetstream::JetStreamBuilder,
-        operator::{OperatorBuilder},
-    },
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
     time::{MaybeTime, NoTime},
     Data, MaybeKey, NoData, NoKey,
 };

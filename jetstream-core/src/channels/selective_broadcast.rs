@@ -100,13 +100,22 @@ where
         match msg {
             Message::Data(x) => {
                 let indices = (self.partitioner)(&x, recipient_len);
-                for (sender, elem) in self
-                    .senders
-                    .iter_mut()
-                    .zip(itertools::repeat_n(Message::Data(x), indices.len()))
+                let l = indices.len();
+                for (i, msg) in indices
+                    .into_iter()
+                    .zip(itertools::repeat_n(Message::Data(x), l))
                 {
-                    let _ = sender.send(elem);
+                    let s = self.senders.get(i).expect("Partitioner index out of range");
+                    let _ = s.send(msg);
                 }
+
+                // for (sender, elem) in self
+                //     .senders
+                //     .iter_mut()
+                //     .zip(itertools::repeat_n(Message::Data(x), indices.len()))
+                // {
+                //     let _ = sender.send(elem);
+                // }
             }
             _ => {
                 // repeat_n will clone for every iteration except the last

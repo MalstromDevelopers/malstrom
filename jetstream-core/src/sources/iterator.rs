@@ -1,26 +1,21 @@
 use crate::{
     operators::source::IntoSource,
-    stream::operator::{OperatorBuilder},
+    stream::operator::OperatorBuilder,
     time::{Epoch, NoTime},
     Data, DataMessage, Message, NoData, NoKey,
 };
 
-impl<T: IntoIterator<Item = V> + 'static, V, P> IntoSource<NoKey, V, usize, P> for T
+impl<T: IntoIterator<Item = V> + 'static, V, P> IntoSource<NoKey, V, NoTime, P> for T
 where
     V: Data,
 {
-    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize, P> {
-        let mut inner = self.into_iter().enumerate();
-
-        let mut has_ended = false;
-        OperatorBuilder::direct(move |input, output, _ctx| {
-            if let Some(x) = inner.next() {
-                output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
-                output.send(Message::Epoch(Epoch::new(x.0)))
-            } else if !has_ended {
-                has_ended = true;
-                // send a MAX epoch to indicate the stream has ended
-                output.send(Message::Epoch(Epoch::new(usize::MAX)))
+    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, NoTime, P> {
+        let mut inner = self.into_iter();
+        OperatorBuilder::direct(move |input, output, ctx| {
+            if ctx.worker_id == 0 {
+                if let Some(x) = inner.next() {
+                    output.send(Message::Data(DataMessage::new(NoKey, x, NoTime)));
+                }
             }
 
             if let Some(msg) = input.recv() {
@@ -28,7 +23,7 @@ where
                     Message::Data(_) => (),
                     Message::Epoch(_) => (),
                     Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
-                    Message::Load(x) => output.send(Message::Load(x)),
+                    // Message::Load(x) => output.send(Message::Load(x)),
                     Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
                     Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
@@ -44,20 +39,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    
 
     use itertools::Itertools;
 
     use crate::{
         operators::{
-            probe::{DataOrEpoch, Probe},
+            probe::{DataOrEpoch, ProbeEpoch},
             sink::Sink,
             source::Source,
         },
+        snapshot::NoPersistence,
         test::{get_test_configs, get_test_stream, VecCollector},
+        Worker,
     };
-
-    
 
     #[test]
     /// The into_iter source should emit the iterator values
@@ -89,42 +83,34 @@ mod tests {
     }
 
     #[test]
-    /// The into_iter source should emit thi index as a a message timestamp,
-    /// followed by the index as an epoch
-    /// and finally the MAX epoch when the iterator ends
-    fn test_emits_time() {
+    /// It should only emit records on worker 0 to avoid duplicats
+    fn test_emits_only_on_worker_0() {
+        let [config0, config1] = get_test_configs();
         let (mut worker, stream) = get_test_stream();
+
         let in_data: Vec<i32> = (0..100).collect();
+        let collector = VecCollector::new();
 
-        // we expect to get the data message with the index first
-        // directly followed by the epoch
-        // if the timestamp comes from an epoch we will just make
-        // it negative as an indicator
-        let mut expected: Vec<i128> = (0..in_data.len().try_into().unwrap())
-            .flat_map(|i| [i, -i])
-            .collect();
-        
-        // at the end of the iterator a MAX epoch should be sent
-        expected.push(-i128::try_from(usize::MAX).unwrap());
+        let stream = stream.source(in_data).sink(collector.clone());
 
-        let epoch_collector = VecCollector::new();
-        let epoch_collector_out = epoch_collector.clone();
-
-        let stream = stream.source(in_data).probe(move |x| match x {
-            DataOrEpoch::Data(t) => epoch_collector.give((*t).try_into().unwrap()),
-            DataOrEpoch::Epoch(t) => epoch_collector.give(-i128::try_from(*t).unwrap()),
+        // we need to start up a new thread with another worker
+        // since the .build method will try to establish communication
+        let _ = std::thread::spawn(move || {
+            let worker = Worker::<NoPersistence>::new(|| false);
+            worker.build(config0).unwrap();
         });
 
         worker.add_stream(stream);
-        let [conf] = get_test_configs();
-        let mut runtime = worker.build(conf).unwrap();
+        let mut runtime = worker.build(config1).unwrap();
 
-        while epoch_collector_out.len() < expected.len() {
+        for _ in 0..100 {
             runtime.step()
         }
-
-        let e = epoch_collector_out.drain_vec(..);
-        assert_eq!(e, expected)
+        let c = collector
+            .drain_vec(..)
+            .into_iter()
+            .map(|x| x.value)
+            .collect_vec();
+        assert_eq!(c, Vec::<i32>::new())
     }
-
 }

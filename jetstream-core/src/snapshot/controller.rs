@@ -51,9 +51,9 @@ fn pass_messages<K: Clone, V: Clone, T: Clone, P>(
         Some(Message::AbsBarrier(_)) => {
             unimplemented!("Barriers must not cross persistance regions!")
         }
-        Some(Message::Load(_)) => {
-            unimplemented!("Loads must not cross persistance regions!")
-        }
+        // Some(Message::Load(_)) => {
+        //     unimplemented!("Loads must not cross persistance regions!")
+        // }
         Some(x) => output.send(x),
         None => (),
     };
@@ -172,9 +172,10 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persis
                     in_progress.insert(barrier.clone());
                     output.send(Message::AbsBarrier(barrier))
                 }
-                ComsMessage::LoadSnapshot(i) => output.send(Message::Load(Load::new(
-                    P::new_for_version(ctx.worker_id, &i),
-                ))),
+                ComsMessage::LoadSnapshot(i) => todo!(),
+                // output.send(Message::Load(Load::new(
+                //     P::new_for_version(ctx.worker_id, &i),
+                // ))),
                 ComsMessage::CommitSnapshot(_wid, _version) => {
                     unreachable!("Follower node can not receive a snapshot commit")
                 }

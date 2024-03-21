@@ -39,10 +39,19 @@ impl<T> VecCollector<T> {
     pub fn drain_vec<R: RangeBounds<usize>>(&self, range: R) -> Vec<T> {
         self.inner.lock().unwrap().drain(range).collect()
     }
-
     /// Returns the len of the contained vec
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap().len()
+    }
+}
+
+impl<T> IntoIterator for VecCollector<T> {
+    type Item = T;
+
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.drain_vec(..).into_iter()
     }
 }
 

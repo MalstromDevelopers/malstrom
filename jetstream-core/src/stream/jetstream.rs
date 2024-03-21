@@ -8,6 +8,8 @@ use crate::{
     Data, MaybeKey, NoData, NoKey,
 };
 
+#[must_use]
+// must use is intended here to guard from forgetting to add the stream to a worker
 pub struct JetStreamBuilder<K, V, T, P> {
     operators: Vec<Box<dyn BuildableOperator<P>>>,
     // these are probes for every operator in operators

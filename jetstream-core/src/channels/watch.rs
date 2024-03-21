@@ -61,7 +61,7 @@ impl<T> Sender<T>
 where
     T: Clone,
 {
-    pub fn write(&self, new: T) {
+    pub fn send(&self, new: T) {
         *self.shared.value.write().unwrap() = new;
     }
     pub fn subscribe(&self) -> Receiver<T> {
@@ -86,7 +86,7 @@ mod tests {
     fn test_send_recv() {
         let (tx, rx) = channel(0);
         assert_eq!(rx.read(), 0);
-        tx.write(1);
+        tx.send(1);
         assert_eq!(rx.read(), 1);
     }
 
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(rx.read(), 0);
         assert_eq!(rx_2.read(), 0);
 
-        tx.write(1);
+        tx.send(1);
 
         assert_eq!(rx.read(), 1);
         assert_eq!(rx_2.read(), 1);
@@ -109,7 +109,7 @@ mod tests {
         let (tx, _) = channel(0);
         let rx = tx.subscribe();
         assert_eq!(rx.read(), 0);
-        tx.write(1);
+        tx.send(1);
         assert_eq!(rx.read(), 1);
     }
 }

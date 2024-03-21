@@ -1,9 +1,6 @@
 use crate::{
-    stream::{
-        jetstream::JetStreamBuilder,
-        operator::{OperatorBuilder},
-    },
-    time::{MaybeTime},
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
+    time::MaybeTime,
     Data, MaybeKey, NoData,
 };
 

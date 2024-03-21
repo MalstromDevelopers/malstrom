@@ -1,4 +1,4 @@
-use crate::{WorkerId};
+use crate::WorkerId;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer};
 use tonic::transport::Uri;

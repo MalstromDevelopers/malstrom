@@ -1,7 +1,6 @@
 use indexmap::IndexSet;
 
 use crate::channels::selective_broadcast::{Receiver, Sender};
-use crate::keyed::distributed::Distributor;
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
@@ -79,7 +78,7 @@ where
                     Some(Message::DropKey(_)) => (),
                     // necessary to convince Rust it is a different generic type now
                     Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
-                    Some(Message::Load(l)) => output.send(Message::Load(l)),
+                    // Some(Message::Load(l)) => output.send(Message::Load(l)),
                     Some(Message::ScaleAddWorker(x)) => output.send(Message::ScaleAddWorker(x)),
                     Some(Message::ScaleRemoveWorker(x)) => {
                         output.send(Message::ScaleRemoveWorker(x))
@@ -107,10 +106,11 @@ where
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
         partitioner: impl WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T, P> {
-        let mut distributor = Distributor::new(partitioner);
+        // let mut distributor = Distributor::new(partitioner);
         let keyed = self.key_local(key_func);
         keyed.then(OperatorBuilder::direct(move |input, output, ctx| {
-            distributor.run(input, output, ctx)
+            todo!()
+            // distributor.run(input, output, ctx)
         }))
     }
 }
