@@ -57,7 +57,7 @@ pub trait StatefulMap<K, VI, T, P> {
 }
 
 fn build_stateful_map<
-    K: Key,
+    K: Key + Serialize + DeserializeOwned,
     VI,
     T: Clone,
     P: PersistenceBackend,
@@ -123,7 +123,7 @@ fn build_stateful_map<
 
 impl<K, VI, T, P> StatefulMap<K, VI, T, P> for JetStreamBuilder<K, VI, T, P>
 where
-    K: Key,
+    K: Key + Serialize + DeserializeOwned,
     VI: DistData,
     T: Timestamp,
     P: PersistenceBackend,

@@ -134,7 +134,7 @@ where
 /// to this marker goes to 0, the worker will shut down. Operators wishing
 /// to delay shut down, must therefore hold onto a clone of this marker as long
 /// as necessary
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ShutdownMarker {
     rc: Rc<()>,
 }

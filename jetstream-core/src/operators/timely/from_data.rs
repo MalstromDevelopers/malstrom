@@ -1,10 +1,18 @@
 use std::time::{Duration, Instant};
 
+use serde::{de::DeserializeOwned, Serialize};
+
 use crate::{
-    snapshot::PersistenceBackend, stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder}, time::{Epoch, NoTime, Timestamp}, DataMessage, MaybeData, MaybeKey, Message, Worker
+    snapshot::PersistenceBackend,
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
+    time::{Epoch, NoTime, Timestamp},
+    DataMessage, MaybeData, MaybeKey, Message, Worker,
 };
 
-use super::{util::{handle_maybe_late_msg, split_mixed_stream}, NeedsEpochs};
+use super::{
+    util::{handle_maybe_late_msg, split_mixed_stream},
+    NeedsEpochs,
+};
 
 pub trait GenerateEpochs<K, V, T, P> {
     /// Generates Epochs from data. This operator takes a function which may create a new epoch for any
@@ -22,7 +30,7 @@ pub trait GenerateEpochs<K, V, T, P> {
         worker: &mut Worker<P>,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) ->(
+    ) -> (
         JetStreamBuilder<K, V, T, P>,
         JetStreamBuilder<K, V, NoTime, P>,
     );
@@ -31,7 +39,7 @@ pub trait GenerateEpochs<K, V, T, P> {
 impl<K, V, T, P> GenerateEpochs<K, V, T, P> for NeedsEpochs<K, V, T, P>
 where
     K: MaybeKey,
-    T: Timestamp,
+    T: Timestamp + Serialize + DeserializeOwned,
     V: MaybeData,
     P: PersistenceBackend,
 {
@@ -50,7 +58,7 @@ where
 impl<K, V, T, P> GenerateEpochs<K, V, T, P> for JetStreamBuilder<K, V, T, P>
 where
     K: MaybeKey,
-    T: Timestamp,
+    T: Timestamp + Serialize + DeserializeOwned,
     V: MaybeData,
     P: PersistenceBackend,
 {
@@ -94,7 +102,7 @@ where
                             };
                         }
                         Message::AbsBarrier(mut b) => {
-                            b.persist(&prev_epoch, ctx.operator_id);
+                            b.persist(&prev_epoch, &ctx.operator_id);
                             output.send(Message::AbsBarrier(b))
                         }
                         Message::Epoch(_) => (),

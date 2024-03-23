@@ -1,6 +1,8 @@
 pub mod controller;
 use std::{rc::Rc, sync::Mutex};
 
+use serde::{de::DeserializeOwned, Serialize};
+
 use crate::{OperatorId, WorkerId};
 
 pub type SnapshotVersion = usize;
@@ -9,8 +11,8 @@ pub trait PersistenceBackend: 'static {
     fn new_latest(worker_id: WorkerId) -> Self;
     fn new_for_version(worker_id: WorkerId, snapshot_epoch: &SnapshotVersion) -> Self;
     fn get_version(&self) -> SnapshotVersion;
-    fn load<S>(&self, operator_id: OperatorId) -> Option<S>;
-    fn persist<S>(&mut self, state: &S, operator_id: OperatorId);
+    fn load<S: Serialize + DeserializeOwned>(&self, operator_id: &OperatorId) -> Option<S>;
+    fn persist<S: Serialize + DeserializeOwned>(&mut self, state: &S, operator_id: &OperatorId);
 
     // fn commit(&mut self, snapshot_epoch: &SnapshotVersion) -> ();
     // fn get_last_committed(&self) -> Option<SnapshotVersion>;
@@ -38,7 +40,11 @@ where
         }
     }
 
-    pub fn persist<S>(&mut self, state: &S, operator_id: OperatorId) {
+    pub fn persist<S: Serialize + DeserializeOwned>(
+        &mut self,
+        state: &S,
+        operator_id: &OperatorId,
+    ) {
         self.backend.lock().unwrap().persist(state, operator_id)
     }
 
@@ -71,8 +77,8 @@ where
             backend: Rc::new(Mutex::new(backend)),
         }
     }
-    pub fn load<S>(&self, operator_id: OperatorId) -> Option<S> {
-        self.backend.lock().unwrap().load(operator_id)
+    pub fn load<S: Serialize + DeserializeOwned>(&self, operator_id: OperatorId) -> Option<S> {
+        self.backend.lock().unwrap().load(&operator_id)
     }
 }
 
@@ -95,11 +101,11 @@ impl PersistenceBackend for NoPersistence {
         self.epoch
     }
 
-    fn load<S>(&self, _operator_id: OperatorId) -> Option<S> {
+    fn load<S>(&self, _operator_id: &OperatorId) -> Option<S> {
         None
     }
 
-    fn persist<S>(&mut self, _state: &S, _operator_id: OperatorId) {}
+    fn persist<S>(&mut self, _state: &S, _operator_id: &OperatorId) {}
 
     // fn commit(&mut self, _snapshot_epoch: &SnapshotVersion) -> () {
     //     ()

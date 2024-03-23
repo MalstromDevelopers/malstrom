@@ -1,4 +1,6 @@
 use postbox::Postbox;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use crate::channels::selective_broadcast::{full_broadcast, Receiver, Sender};
 /// Operators:
@@ -45,8 +47,8 @@ where
         }
     }
 
-    pub fn load_state<S>(&self) -> Option<S> {
-        self.persistence_backend.load(self.operator_id)
+    pub fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
+        self.persistence_backend.load(&self.operator_id)
     }
 }
 

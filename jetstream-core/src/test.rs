@@ -1,11 +1,15 @@
-use std::{ops::RangeBounds, rc::Rc, sync::Mutex};
+use std::{any::Any, collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
 /// Test utilities for JetStream
 use itertools::Itertools;
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    config::Config, snapshot::NoPersistence, stream::jetstream::JetStreamBuilder, time::NoTime,
-    NoData, NoKey, Worker,
+    config::Config,
+    snapshot::{NoPersistence, PersistenceBackend},
+    stream::jetstream::JetStreamBuilder,
+    time::NoTime,
+    NoData, NoKey, OperatorId, Worker,
 };
 
 /// A Helper to write values into a shared vector and take them out
@@ -87,6 +91,48 @@ pub fn get_test_configs<const N: usize>() -> [Config; N] {
         .unwrap()
 }
 
+#[derive(Default, Clone)]
+/// A backend which simply captures any state it is given into a shared
+/// HashMap.
+/// If you have a clone of this backend you can retrieve the state using
+/// the corresponding operator_id
+pub struct CapturingPersistenceBackend {
+    capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
+}
+
+impl PersistenceBackend for CapturingPersistenceBackend {
+    fn new_latest(worker_id: crate::WorkerId) -> Self {
+        Self::default()
+    }
+
+    fn new_for_version(
+        worker_id: crate::WorkerId,
+        snapshot_epoch: &crate::snapshot::SnapshotVersion,
+    ) -> Self {
+        Self::default()
+    }
+
+    fn get_version(&self) -> crate::snapshot::SnapshotVersion {
+        0
+    }
+
+    fn load<S: DeserializeOwned>(&self, operator_id: &OperatorId) -> Option<S> {
+        let content = self.capture.lock().unwrap().remove(operator_id)?;
+        let decoded: S = bincode::serde::decode_from_slice(&content, bincode::config::standard())
+            .unwrap()
+            .0;
+        Some(decoded)
+    }
+
+    fn persist<S: Serialize>(&mut self, state: &S, operator_id: &OperatorId) {
+        let encoded = bincode::serde::encode_to_vec(state, bincode::config::standard()).unwrap();
+        self.capture
+            .lock()
+            .unwrap()
+            .insert(operator_id.clone(), encoded);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +184,15 @@ mod tests {
         // the cloned one should return these values
         let collected = col_a.drain_vec(..);
         assert_eq!(collected, (0..5).collect_vec())
+    }
+
+    #[test]
+    fn capturing_persistence_backend() {
+        let backend = CapturingPersistenceBackend::new_latest(0);
+        let mut other = backend.clone();
+
+        let val = "hello world".to_string();
+        other.persist(&val, &42);
+        assert_eq!(backend.load::<String>(&42).unwrap(), val);
     }
 }

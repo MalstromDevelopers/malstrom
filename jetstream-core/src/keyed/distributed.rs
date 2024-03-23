@@ -4,22 +4,26 @@ use derive_new::new;
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, snapshot::{Barrier, Load, PersistenceBackend}, stream::operator::OperatorContext, time::{Epoch, Timestamp}, Data, DataMessage, Key, Message, OperatorId, ShutdownMarker, WorkerId
+    channels::selective_broadcast::{Receiver, Sender},
+    snapshot::{Barrier, Load, PersistenceBackend},
+    stream::operator::OperatorContext,
+    time::{Epoch, Timestamp},
+    Data, DataMessage, Key, Message, OperatorId, ShutdownMarker, WorkerId,
 };
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use self::{
-    collect::CollectDistributor, interrogate::InterrogateDistributor, normal::NormalDistributor,
+    collect::CollectDistributor, dist_trait::DistributorKind, interrogate::InterrogateDistributor, messages::{OutgoingMessage, RemoteMessage}, normal::NormalDistributor
 };
 
 use super::WorkerPartitioner;
 mod collect;
-mod interrogate;
-mod normal;
 mod dist_trait;
+mod interrogate;
 pub mod messages;
+mod normal;
 // use super::normal_dist::NormalDistributor;
 
 pub(super) type Version = usize;
@@ -34,11 +38,33 @@ impl<T: Data + Serialize + DeserializeOwned> DistData for T {}
 pub trait DistTimestamp: Timestamp + Serialize + DeserializeOwned {}
 impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 
+struct Distributor<K, V, T, P> {
+    worker_id: WorkerId,
+    inner_dist: DistributorKind<K, V, T>,
+    remote_worker_versions: IndexMap<WorkerId, Version>,
+    self_version: Version,
+    target_version: Version,
 
+}
+
+impl <K, V, T, P> Distributor<K, V, T, P> where K: Key {
+    
+    fn run(&mut self) {
+        match self.inner_dist {
+            DistributorKind::Collect(x) => {
+                for msg in x.run() {
+                    if matches!(msg, OutgoingMessage::Remote(RemoteMessage::Done(_))) {
+                        self.self_version = self.target_version;
+                    }
+                }
+            }
+        }
+    }
+}
 
 // / Enum which contains either data messages or instructions to change
 // / the cluster scale
-// / 
+// /
 // / This exists because are the only message types our phase distributors need to handle
 // enum ScalableMessage<K, V, T> {
 //     Data(VersionedMessage<K, V, T>),
@@ -51,7 +77,6 @@ impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 //     /// Sent by remote worker to indicate they are don with the current migration
 //     Done(WorkerId),
 // }
-
 
 // struct VersionedMessage<K, V, T, P> {
 //     version: Option<usize>,
@@ -72,7 +97,7 @@ impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 //     ScaleRemoveWorker(IndexSet<usize>),
 //     ScaleAddWorker(IndexSet<usize>),
 //     BarrierAlign(WorkerId),
-//     Acquire(NetworkAcquire<K>),  
+//     Acquire(NetworkAcquire<K>),
 //     Done(WorkerId),
 // }
 
@@ -89,7 +114,6 @@ impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 //         }
 //     }
 // }
-
 
 // /// Enum of value distributors for different ICADD
 // /// phases
@@ -163,12 +187,11 @@ impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 //                 Message::Collect(_) => todo!(),
 //                 Message::Acquire(_) => todo!(),
 //                 Message::DropKey(_) => todo!(),
-                
+
 //             }
 //         }
 
 //         // let scalable_message = match input.recv() {
-
 
 //         //     // simply ignore all keying related messages, since they may not cross here
 //         // };
@@ -234,4 +257,3 @@ impl<T: Timestamp + Serialize + DeserializeOwned> DistTimestamp for T {}
 //         output.send(Message::Data(msg.message))
 //     }
 // }
-

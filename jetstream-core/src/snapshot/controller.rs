@@ -132,7 +132,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persiste
 
             if commits.values().all(|x| *x) {
                 // all workers have responded with a commit
-                backend.persist(&snapshot_version, ctx.operator_id);
+                backend.persist(&snapshot_version, &ctx.operator_id);
                 last_committed = Some(snapshot_version);
                 in_progress_snapshot = None;
             }

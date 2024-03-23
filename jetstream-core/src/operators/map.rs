@@ -1,5 +1,6 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
+use crate::stream::operator_trait::OperatorTrait;
 use crate::time::MaybeTime;
 use crate::{Data, DataMessage, MaybeKey};
 
