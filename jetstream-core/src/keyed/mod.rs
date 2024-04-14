@@ -1,16 +1,22 @@
+use std::rc::Rc;
+
 use indexmap::IndexSet;
 
 use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::Timestamp;
+use crate::time::{MaybeTime, Timestamp};
 use crate::{Data, DataMessage, Key, MaybeKey, Message, WorkerId};
 
-use self::distributed::{DistData, DistKey, DistTimestamp};
+use self::distributed::{downstream_exchanger, epoch_aligner, upstream_exchanger, versioner};
+use self::distributed::{icadd, DistData, DistKey, DistTimestamp};
 
 pub mod distributed;
+// mod exchange;
+
 /// Marker trait for functions which determine inter-worker routing
+/// TODO: Maybe this should just be a function pointer
 pub trait WorkerPartitioner<K>:
     for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static
 {
@@ -20,7 +26,7 @@ impl<K, U: for<'a> Fn(&K, &'a IndexSet<WorkerId>) -> &'a WorkerId + 'static> Wor
 {
 }
 
-pub trait KeyDistribute<X, K: Key, V, T, P: PersistenceBackend> {
+pub trait KeyDistribute<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and distribute
     /// messages across workers via the partitioning function.
     /// The keyed stream returned by this method is capable
@@ -30,9 +36,9 @@ pub trait KeyDistribute<X, K: Key, V, T, P: PersistenceBackend> {
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
         partitioner: impl WorkerPartitioner<K>,
-    ) -> JetStreamBuilder<K, V, T, P>;
+    ) -> JetStreamBuilder<K, V, T>;
 }
-pub trait KeyLocal<X, K: Key, V, T, P> {
+pub trait KeyLocal<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and **do not** distribute
     /// messages across workers.
     /// # ⚠️ Warning:
@@ -44,23 +50,22 @@ pub trait KeyLocal<X, K: Key, V, T, P> {
     fn key_local(
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-    ) -> JetStreamBuilder<K, V, T, P>;
+    ) -> JetStreamBuilder<K, V, T>;
 }
 
-impl<X, K, V, T, P> KeyLocal<X, K, V, T, P> for JetStreamBuilder<X, V, T, P>
+impl<X, K, V, T> KeyLocal<X, K, V, T> for JetStreamBuilder<X, V, T>
 where
     X: MaybeKey,
     K: Key,
     V: Data,
-    T: Timestamp,
-    P: PersistenceBackend,
+    T: MaybeTime,
 {
     fn key_local(
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-    ) -> JetStreamBuilder<K, V, T, P> {
+    ) -> JetStreamBuilder<K, V, T> {
         let op = OperatorBuilder::direct(
-            move |input: &mut Receiver<X, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
+            move |input: &mut Receiver<X, V, T>, output: &mut Sender<K, V, T>, _ctx| {
                 match input.recv() {
                     Some(Message::Data(d)) => {
                         let new_key = key_func(&d);
@@ -79,10 +84,7 @@ where
                     // necessary to convince Rust it is a different generic type now
                     Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
                     // Some(Message::Load(l)) => output.send(Message::Load(l)),
-                    Some(Message::ScaleAddWorker(x)) => output.send(Message::ScaleAddWorker(x)),
-                    Some(Message::ScaleRemoveWorker(x)) => {
-                        output.send(Message::ScaleRemoveWorker(x))
-                    }
+                    Some(Message::Rescale(x)) => output.send(Message::Rescale(x)),
                     Some(Message::ShutdownMarker(x)) => output.send(Message::ShutdownMarker(x)),
                     Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),
                     None => (),
@@ -93,24 +95,28 @@ where
     }
 }
 
-impl<X, K, V, T, P> KeyDistribute<X, K, V, T, P> for JetStreamBuilder<X, V, T, P>
+impl<X, K, V, T> KeyDistribute<X, K, V, T> for JetStreamBuilder<X, V, T>
 where
     X: MaybeKey,
     K: DistKey,
     V: DistData,
     T: DistTimestamp,
-    P: PersistenceBackend,
 {
     fn key_distribute(
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
         partitioner: impl WorkerPartitioner<K>,
-    ) -> JetStreamBuilder<K, V, T, P> {
+    ) -> JetStreamBuilder<K, V, T> {
         // let mut distributor = Distributor::new(partitioner);
         let keyed = self.key_local(key_func);
-        keyed.then(OperatorBuilder::direct(move |input, output, ctx| {
-            todo!()
-            // distributor.run(input, output, ctx)
-        }))
+        keyed
+            .then(OperatorBuilder::built_by(versioner))
+            .then(OperatorBuilder::built_by(epoch_aligner))
+            .then(OperatorBuilder::built_by(upstream_exchanger))
+            .then(OperatorBuilder::built_by(move |ctx| {
+                icadd(Rc::new(partitioner), ctx)
+            }))
+            .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx)))
+
     }
 }

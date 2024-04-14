@@ -4,22 +4,21 @@ use crate::{
     Data, MaybeKey, NoData,
 };
 
-pub trait IntoSink<K, V, T, P> {
-    fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T, P>;
+pub trait IntoSink<K, V, T> {
+    fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T>;
 }
 
-pub trait Sink<K, V, T, P> {
-    fn sink(self, sink: impl IntoSink<K, V, T, P>) -> JetStreamBuilder<K, NoData, T, P>;
+pub trait Sink<K, V, T> {
+    fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T>;
 }
 
-impl<K, V, T, P> Sink<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T> Sink<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: MaybeTime,
-    P: 'static,
 {
-    fn sink(self, sink: impl IntoSink<K, V, T, P>) -> JetStreamBuilder<K, NoData, T, P> {
+    fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
         self.then(sink.into_sink())
     }
 }

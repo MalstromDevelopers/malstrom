@@ -2,14 +2,23 @@ use std::{any::Any, collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex}
 
 /// Test utilities for JetStream
 use itertools::Itertools;
+use postbox::{CommunicationBackend, Postbox, RecvIterator};
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::stream::operator::BuildableOperator;
 use crate::{
+    channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
-    snapshot::{NoPersistence, PersistenceBackend},
-    stream::jetstream::JetStreamBuilder,
-    time::NoTime,
-    NoData, NoKey, OperatorId, Worker,
+    snapshot::{NoPersistence, PersistenceBackend, PersistenceBackendBuilder},
+    stream::{
+        jetstream::JetStreamBuilder,
+        operator::{
+            AppendableOperator, BuildContext, Logic, OperatorBuilder, OperatorContext,
+            RunnableOperator, StandardOperator,
+        },
+    },
+    time::{MaybeTime, NoTime},
+    MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, Worker, WorkerId,
 };
 
 /// A Helper to write values into a shared vector and take them out
@@ -61,11 +70,8 @@ impl<T> IntoIterator for VecCollector<T> {
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
-pub fn get_test_stream() -> (
-    Worker<NoPersistence>,
-    JetStreamBuilder<NoKey, NoData, NoTime, NoPersistence>,
-) {
-    let mut worker = Worker::new(|| false);
+pub fn get_test_stream() -> (Worker, JetStreamBuilder<NoKey, NoData, NoTime>) {
+    let mut worker = Worker::new(NoPersistence::default(), || false);
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -91,7 +97,7 @@ pub fn get_test_configs<const N: usize>() -> [Config; N] {
         .unwrap()
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 /// A backend which simply captures any state it is given into a shared
 /// HashMap.
 /// If you have a clone of this backend you can retrieve the state using
@@ -99,42 +105,162 @@ pub fn get_test_configs<const N: usize>() -> [Config; N] {
 pub struct CapturingPersistenceBackend {
     capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
 }
-
-impl PersistenceBackend for CapturingPersistenceBackend {
-    fn new_latest(worker_id: crate::WorkerId) -> Self {
-        Self::default()
+impl PersistenceBackendBuilder for CapturingPersistenceBackend {
+    fn latest(&self, worker_id: crate::WorkerId) -> Box<dyn PersistenceBackend> {
+        Box::new(self.clone())
     }
 
-    fn new_for_version(
+    fn for_version(
+        &self,
         worker_id: crate::WorkerId,
         snapshot_epoch: &crate::snapshot::SnapshotVersion,
-    ) -> Self {
-        Self::default()
+    ) -> Box<dyn PersistenceBackend> {
+        Box::new(self.clone())
     }
+}
 
+impl PersistenceBackend for CapturingPersistenceBackend {
     fn get_version(&self) -> crate::snapshot::SnapshotVersion {
         0
     }
 
-    fn load<S: DeserializeOwned>(&self, operator_id: &OperatorId) -> Option<S> {
-        let content = self.capture.lock().unwrap().remove(operator_id)?;
-        let decoded: S = bincode::serde::decode_from_slice(&content, bincode::config::standard())
-            .unwrap()
-            .0;
-        Some(decoded)
+    fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>> {
+        self.capture.lock().unwrap().remove(operator_id)
     }
 
-    fn persist<S: Serialize>(&mut self, state: &S, operator_id: &OperatorId) {
-        let encoded = bincode::serde::encode_to_vec(state, bincode::config::standard()).unwrap();
+    fn persist(&mut self, state: &[u8], operator_id: &OperatorId) {
         self.capture
             .lock()
             .unwrap()
-            .insert(operator_id.clone(), encoded);
+            .insert(operator_id.clone(), state.into());
+    }
+}
+
+/// Test helper to simulate a two Worker cluster with this local
+/// worker being index 0 and the other being index 1
+pub struct OperatorTester<KI, VI, TI, KO, VO, TO> {
+    op: RunnableOperator,
+    // Use this to send messages into the distributor
+    local_in: Sender<KI, VI, TI>,
+
+    /// Use this to get local messages out of the distributor
+    local_out: Receiver<KO, VO, TO>,
+
+    local_postbox: Postbox<WorkerId, OperatorId>,
+    // used to emulate another worker sending messages
+    remote_postbox: Postbox<WorkerId, OperatorId>,
+    // need to keep them around so they don't get dropped
+    backends: (CommunicationBackend, CommunicationBackend),
+    persistence_backend: Box<dyn PersistenceBackend>,
+}
+
+impl<KI, VI, TI, KO, VO, TO> OperatorTester<KI, VI, TI, KO, VO, TO>
+where
+    KI: MaybeKey,
+    VI: MaybeData,
+    TI: MaybeTime,
+    KO: MaybeKey,
+    VO: MaybeData,
+    TO: MaybeTime,
+{
+    pub fn new_built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
+        logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
+    ) -> Self {
+        let op_id: usize = 42;
+        let postbox_local_builder = postbox::BackendBuilder::new(
+            0,
+            "127.0.0.1:29091".parse().unwrap(),
+            vec![(1, "http://127.0.0.1:29092".parse().unwrap())],
+            vec![op_id],
+            4096,
+        );
+        let postbox_local = postbox_local_builder.for_operator(op_id).unwrap();
+        let persistence = CapturingPersistenceBackend::default();
+        let buildcontext = BuildContext::new(0, op_id, persistence.latest(0), postbox_local);
+        let mut op = OperatorBuilder::built_by(logic_builder);
+        let mut local_in = Sender::new_unlinked(full_broadcast);
+        let mut local_out = Receiver::new_unlinked();
+        link(&mut local_in, op.get_input_mut());
+        link(op.get_output_mut(), &mut local_out);
+        let op = Box::new(op).into_runnable(buildcontext);
+
+        let postbox_remote_builder = postbox::BackendBuilder::new(
+            1,
+            "127.0.0.1:29092".parse().unwrap(),
+            vec![(0, "http://127.0.0.1:29091".parse().unwrap())],
+            vec![op_id],
+            4096,
+        );
+        let local_postbox = postbox_local_builder.for_operator(op_id).unwrap();
+        let postbox_remote = postbox_remote_builder.for_operator(op_id).unwrap();
+        let backend_local_build =
+            std::thread::spawn(move || postbox_local_builder.connect().unwrap());
+        let backend_remote_build =
+            std::thread::spawn(move || postbox_remote_builder.connect().unwrap());
+
+        let backend_local = backend_local_build.join().unwrap();
+        let backend_remote = backend_remote_build.join().unwrap();
+
+        Self {
+            op,
+            local_in,
+            local_out,
+            local_postbox,
+            remote_postbox: postbox_remote,
+            backends: (backend_local, backend_remote),
+            persistence_backend: persistence.latest(0),
+        }
+    }
+
+    pub fn new_direct<M: Logic<KI, VI, TI, KO, VO, TO>>(logic: M) -> Self {
+        Self::new_built_by(|_| Box::new(logic))
+    }
+}
+
+impl<KI, VI, TI, KO, VO, TO> OperatorTester<KI, VI, TI, KO, VO, TO>
+where
+    KI: MaybeKey,
+    VI: MaybeData,
+    TI: MaybeTime,
+    KO: MaybeKey,
+    VO: MaybeData,
+    TO: MaybeTime,
+{
+    /// Schedule the operator
+    pub fn step(&mut self) -> () {
+        self.op.step()
+    }
+
+    /// Give a message to the distributor as if it where coming from a local upstream
+    pub fn send_from_local(&mut self, message: Message<KI, VI, TI>) {
+        self.local_in.send(message)
+    }
+
+    /// Receive a message from the distributor local downstream
+    pub fn receive_on_local(&mut self) -> Option<Message<KO, VO, TO>> {
+        self.local_out.recv()
+    }
+
+    /// places a message into the operatorcontext postbox, as if it was sent by a remote
+    pub fn send_from_remote<T: Serialize + DeserializeOwned>(&mut self, message: T) {
+        self.remote_postbox.send_same(&0, message).unwrap();
+    }
+
+    /// receive all the messages for the remote worker
+    pub fn receive_on_remote<T: Serialize + DeserializeOwned>(
+        &mut self,
+    ) -> RecvIterator<WorkerId, OperatorId, T> {
+        self.remote_postbox.recv_all()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        snapshot::{deserialize_state, serialize_state},
+        DataMessage,
+    };
+
     use super::*;
 
     #[test]
@@ -188,11 +314,60 @@ mod tests {
 
     #[test]
     fn capturing_persistence_backend() {
-        let backend = CapturingPersistenceBackend::new_latest(0);
-        let mut other = backend.clone();
+        let backend = CapturingPersistenceBackend::default();
+        let a = backend.latest(0);
+        let mut b = backend.latest(0);
 
         let val = "hello world".to_string();
-        other.persist(&val, &42);
-        assert_eq!(backend.load::<String>(&42).unwrap(), val);
+        let ser = serialize_state(&val);
+        b.persist(&ser, &42);
+
+        let deser: String = a.load(&42).map(deserialize_state).unwrap();
+        assert_eq!(deser, val);
+    }
+
+    #[test]
+    fn test_operator_tester() {
+        let mut tester = OperatorTester::new_direct(
+            |input: &mut Receiver<NoKey, i32, NoTime>,
+             output: &mut Sender<NoKey, i32, NoTime>,
+             ctx: &mut OperatorContext| {
+                if let Some(Message::Data(d)) = input.recv() {
+                    let v = d.value * 2;
+                    output.send(Message::Data(DataMessage::new(d.key, v, d.timestamp)));
+                };
+                for x in ctx.communication.recv_all() {
+                    let value = x.data;
+                    output.send(Message::Data(DataMessage::new(NoKey, value, NoTime)))
+                }
+            },
+        );
+
+        tester.send_from_local(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
+        tester.step();
+        let out = tester.receive_on_local().unwrap();
+        assert!(matches!(
+            out,
+            Message::Data(DataMessage {
+                key: _,
+                value: 84,
+                timestamp: _
+            })
+        ));
+        tester.send_from_remote(555i32);
+        loop {
+            tester.step();
+            if let Some(x) = tester.receive_on_local() {
+                assert!(matches!(
+                    x,
+                    Message::Data(DataMessage {
+                        key: _,
+                        value: 555,
+                        timestamp: _
+                    })
+                ));
+                break;
+            }
+        }
     }
 }

@@ -10,10 +10,10 @@ use crate::{
 use super::{OnTimeLate, TimelyStream};
 
 #[inline(always)]
-pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp, P>(
+pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
     prev_epoch: Option<&T>,
     d: DataMessage<K, V, T>,
-    output: &mut Sender<K, OnTimeLate<V>, T, P>,
+    output: &mut Sender<K, OnTimeLate<V>, T>,
 ) {
     let wrapped = if let Some(prev) = prev_epoch.as_ref() {
         if **prev < d.timestamp {
@@ -28,13 +28,10 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp, P>(
     output.send(Message::Data(DataMessage::new(d.key, wrapped, d.timestamp)));
 }
 
-pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp, P: PersistenceBackend>(
-    mixed: JetStreamBuilder<K, OnTimeLate<V>, T, P>,
-    worker: &mut Worker<P>,
-) -> (
-    JetStreamBuilder<K, V, T, P>,
-    JetStreamBuilder<K, V, NoTime, P>,
-) {
+pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
+    mixed: JetStreamBuilder<K, OnTimeLate<V>, T>,
+    worker: &mut Worker,
+) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
     let [ontime, late] = worker.split_n(mixed, |x, _| match x.value {
         OnTimeLate::OnTime(_) => [0].into_iter().collect(),
         OnTimeLate::Late(_) => [1].into_iter().collect(),

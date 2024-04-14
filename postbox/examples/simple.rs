@@ -19,15 +19,18 @@ fn main() {
         vec![0],
         128,
     );
-    let op_postbox = backend.for_operator(&0).unwrap();
+    let op_postbox = backend.for_operator(0).unwrap();
 
     let _backend = backend.connect().unwrap();
 
-    op_postbox.send(&worker_id, vec![1u8, 2, 3, 4]).unwrap();
+    op_postbox
+        .send_same(&worker_id, "Hello World!".to_string())
+        .unwrap();
 
     loop {
-        match op_postbox.recv_all::<Vec<u8>>().next() {
-            Some(_x) => {
+        match op_postbox.recv_all::<String>().next() {
+            Some(x) => {
+                println!("{:?}", x.data);
                 break;
             }
             None => {

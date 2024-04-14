@@ -11,11 +11,11 @@ use crate::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, OperatorBuilder, OperatorContext},
     },
-    time::Timestamp,
+    time::{MaybeTime, Timestamp},
     Data, DataMessage, Key, Message,
 };
 
-pub trait StatefulMap<K, VI, T, P> {
+pub trait StatefulMap<K, VI, T> {
     /// Transforms data utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.
@@ -52,41 +52,41 @@ pub trait StatefulMap<K, VI, T, P> {
     /// ```
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
-        mapper: impl FnMut(VI, S) -> (VO, Option<S>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P>;
+        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
+    ) -> JetStreamBuilder<K, VO, T>;
 }
 
 fn build_stateful_map<
     K: Key + Serialize + DeserializeOwned,
     VI,
-    T: Clone,
-    P: PersistenceBackend,
+    T: MaybeTime,
     VO: Clone,
     S: Default + Serialize + DeserializeOwned,
 >(
-    context: &BuildContext<P>,
-    mut mapper: impl FnMut(VI, S) -> (VO, Option<S>) + 'static,
-) -> impl FnMut(&mut Receiver<K, VI, T, P>, &mut Sender<K, VO, T, P>, &mut OperatorContext) {
+    context: &BuildContext,
+    mut mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
+) -> impl FnMut(&mut Receiver<K, VI, T>, &mut Sender<K, VO, T>, &mut OperatorContext) {
     let mut state: HashMap<K, S> = context.load_state().unwrap_or_default();
-    move |input: &mut Receiver<K, VI, T, P>, output: &mut Sender<K, VO, T, P>, ctx| {
+    move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, ctx| {
         let msg = match input.recv() {
             Some(x) => x,
             None => return,
         };
-        let mapped: Message<K, VO, T, P> = match msg {
+        let mapped: Message<K, VO, T> = match msg {
             Message::Data(DataMessage {
                 key,
                 value,
                 timestamp: time,
             }) => {
                 let st = state.remove(&key).unwrap_or_default();
-                let (mapped, mut new_state) = mapper(value, st);
+                let (mapped, mut new_state) = mapper(&key, value, st);
                 if let Some(n) = new_state.take() {
                     state.insert(key.to_owned(), n);
                 }
                 Message::Data(DataMessage::new(key, mapped, time))
             }
             Message::Interrogate(mut x) => {
+                println!("Adding state to interrogate");
                 x.add_keys(&(state.keys().map(|k| k.to_owned()).collect_vec()));
                 Message::Interrogate(x)
             }
@@ -112,8 +112,7 @@ fn build_stateful_map<
             //     state = l.load(ctx.operator_id).unwrap_or_default();
             //     Message::Load(l)
             // }
-            Message::ScaleAddWorker(x) => Message::ScaleAddWorker(x),
-            Message::ScaleRemoveWorker(x) => Message::ScaleRemoveWorker(x),
+            Message::Rescale(x) => Message::Rescale(x),
             Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
             Message::Epoch(x) => Message::Epoch(x),
         };
@@ -121,17 +120,16 @@ fn build_stateful_map<
     }
 }
 
-impl<K, VI, T, P> StatefulMap<K, VI, T, P> for JetStreamBuilder<K, VI, T, P>
+impl<K, VI, T> StatefulMap<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
     VI: DistData,
-    T: Timestamp,
-    P: PersistenceBackend,
+    T: MaybeTime,
 {
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
-        mapper: impl FnMut(VI, S) -> (VO, Option<S>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P> {
+        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
+    ) -> JetStreamBuilder<K, VO, T> {
         let op = OperatorBuilder::built_by(move |ctx| build_stateful_map(ctx, mapper));
         self.then(op)
     }

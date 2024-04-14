@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +11,8 @@ use crate::{Data, MaybeKey, Message, NoData, NoKey, WorkerId};
 
 use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorBuilder};
 
-use super::SnapshotVersion;
 use super::{Load, PersistenceBackend};
+use super::{PersistenceBackendBuilder, SnapshotVersion};
 
 #[derive(Serialize, Deserialize)]
 pub enum ComsMessage {
@@ -19,12 +21,12 @@ pub enum ComsMessage {
     CommitSnapshot(WorkerId, SnapshotVersion),
 }
 
-type BackchannelTx<P> = Sender<NoData, NoKey, NoTime, P>;
-type BackchannelRx<P> = Receiver<NoData, NoKey, NoTime, P>;
+type BackchannelTx = Sender<NoData, NoKey, NoTime>;
+type BackchannelRx = Receiver<NoData, NoKey, NoTime>;
 
 // #[derive(Clone)]
-// pub struct RegionHandle<P> {
-//     sender: BackchannelTx<P>
+// pub struct RegionHandle {
+//     sender: BackchannelTx
 // }
 
 #[derive(Default)]
@@ -32,20 +34,25 @@ struct ControllerState {
     commited_snapshots: IndexMap<WorkerId, SnapshotVersion>,
 }
 
-fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: PersistenceBackend>(
-    build_context: &BuildContext<P>,
+fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
+    build_context: &BuildContext,
+    backend_builder: Rc<dyn PersistenceBackendBuilder>,
     timer: impl FnMut() -> bool + 'static,
-) -> Box<dyn Logic<K, V, T, K, V, T, P>> {
+) -> Box<dyn Logic<K, V, T, K, V, T>> {
     // TODO: Commit snapshot to backend
     if build_context.worker_id == 0 {
-        Box::new(build_leader_controller_logic(build_context, timer))
+        Box::new(build_leader_controller_logic(
+            build_context,
+            backend_builder,
+            timer,
+        ))
     } else {
-        Box::new(build_follower_controller_logic())
+        Box::new(build_follower_controller_logic(backend_builder))
     }
 }
-fn pass_messages<K: Clone, V: Clone, T: Clone, P>(
-    input: &mut Receiver<K, V, T, P>,
-    output: &mut Sender<K, V, T, P>,
+fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
+    input: &mut Receiver<K, V, T>,
+    output: &mut Sender<K, V, T>,
 ) {
     match input.recv() {
         Some(Message::AbsBarrier(_)) => {
@@ -59,28 +66,28 @@ fn pass_messages<K: Clone, V: Clone, T: Clone, P>(
     };
 }
 
-fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: PersistenceBackend>(
-    build_context: &BuildContext<P>,
+fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
+    build_context: &BuildContext,
+    backend_builder: Rc<dyn PersistenceBackendBuilder>,
     mut timer: impl FnMut() -> bool + 'static,
-) -> impl Logic<K, V, T, K, V, T, P> {
+) -> impl Logic<K, V, T, K, V, T> {
     let mut last_committed: Option<SnapshotVersion> = build_context.load_state();
 
     // this is ephemeral state which lets us know if a worker has already committed
     // the currently executing snapshot
     // it also serves double duty as a flag showing whether a snapshot is in progress:
     // A snapshot is in progress if this is Some
-    let mut in_progress_snapshot: Option<(IndexMap<WorkerId, bool>, SnapshotVersion, Barrier<P>)> =
+    let mut in_progress_snapshot: Option<(IndexMap<WorkerId, bool>, SnapshotVersion, Barrier)> =
         None;
 
-    move |input: &mut Receiver<K, V, T, P>,
-          output: &mut Sender<K, V, T, P>,
-          ctx: &mut OperatorContext| {
+    move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
         pass_messages(input, output);
 
         if in_progress_snapshot.is_some() && timer() {
             // start a new global snapshot
             let snapshot_version = last_committed.unwrap_or(0);
-            let barrier = Barrier::new(P::new_for_version(ctx.worker_id, &snapshot_version));
+            let backend = backend_builder.for_version(ctx.worker_id, &snapshot_version);
+            let barrier = Barrier::new(backend);
 
             let _ = in_progress_snapshot.insert(
                 // add workerid 0 for this worker
@@ -112,7 +119,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persiste
                 commits.insert(ctx.worker_id, true);
             }
 
-            for msg in ctx.communication.recv_all() {
+            for msg in ctx.communication.recv_all().map(|x| x.data) {
                 match msg {
                     ComsMessage::StartSnapshot(_i) => {
                         unreachable!(
@@ -140,13 +147,12 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persiste
     }
 }
 
-fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: PersistenceBackend>(
-) -> impl Logic<K, V, T, K, V, T, P> {
-    let mut in_progress: Option<Barrier<P>> = None;
+fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
+    backend_builder: Rc<dyn PersistenceBackendBuilder>,
+) -> impl Logic<K, V, T, K, V, T> {
+    let mut in_progress: Option<Barrier> = None;
 
-    move |input: &mut Receiver<K, V, T, P>,
-          output: &mut Sender<K, V, T, P>,
-          ctx: &mut OperatorContext| {
+    move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
         pass_messages(input, output);
 
         in_progress = match in_progress.take() {
@@ -155,7 +161,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persis
                     let version = b.get_version();
                     println!("Completed snapshot at {version}");
                     ctx.communication
-                        .send(&0, ComsMessage::CommitSnapshot(ctx.worker_id, version))
+                        .send_same(&0, ComsMessage::CommitSnapshot(ctx.worker_id, version))
                         .unwrap();
                     None
                 } else {
@@ -165,10 +171,10 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persis
             None => None,
         };
 
-        for msg in ctx.communication.recv_all() {
+        for msg in ctx.communication.recv_all().map(|x| x.data) {
             match msg {
                 ComsMessage::StartSnapshot(i) => {
-                    let barrier = Barrier::new(P::new_for_version(ctx.worker_id, &i));
+                    let barrier = Barrier::new(backend_builder.for_version(ctx.worker_id, &i));
                     in_progress.insert(barrier.clone());
                     output.send(Message::AbsBarrier(barrier))
                 }
@@ -184,17 +190,18 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime, P: Persis
     }
 }
 
-pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime, P: PersistenceBackend>(
+pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
+    backend_builder: Rc<dyn PersistenceBackendBuilder>,
     timer: impl FnMut() -> bool + 'static,
-) -> OperatorBuilder<K, V, T, K, V, T, P> {
-    OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, timer))
+) -> OperatorBuilder<K, V, T, K, V, T> {
+    OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend_builder, timer))
 }
 
 // pub fn end_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
-//     stream: JetStreamBuilder<K, V, T, P>,
-//     region_handle: RegionHandle<P>,
-// ) -> JetStreamBuilder<K, V, T, P> {
-//     let op = OperatorBuilder::direct(move |input: &mut Receiver<K, V, T, P>, output, _ctx| {
+//     stream: JetStreamBuilder<K, V, T>,
+//     region_handle: RegionHandle,
+// ) -> JetStreamBuilder<K, V, T> {
+//     let op = OperatorBuilder::direct(move |input: &mut Receiver<K, V, T>, output, _ctx| {
 //         match input.recv() {
 //             Some(Message::AbsBarrier(b)) => region_handle.sender.send(b).unwrap(),
 //             Some(x) => output.send(x),

@@ -10,13 +10,13 @@ use crate::{
 
 #[must_use]
 // must use is intended here to guard from forgetting to add the stream to a worker
-pub struct JetStreamBuilder<K, V, T, P> {
-    operators: Vec<Box<dyn BuildableOperator<P>>>,
+pub struct JetStreamBuilder<K, V, T> {
+    operators: Vec<Box<dyn BuildableOperator>>,
     // these are probes for every operator in operators
-    tail: Box<dyn AppendableOperator<K, V, T, P>>,
+    tail: Box<dyn AppendableOperator<K, V, T>>,
 }
 
-impl JetStreamBuilder<NoKey, NoData, NoTime, NoPersistence> {
+impl JetStreamBuilder<NoKey, NoData, NoTime> {
     /// Create a new JetStreamBuilder which does not produce any data, keys,
     /// timestamps and does not have any persistence.
     ///
@@ -27,16 +27,15 @@ impl JetStreamBuilder<NoKey, NoData, NoTime, NoPersistence> {
     }
 }
 
-impl<K, V, T, P> JetStreamBuilder<K, V, T, P>
+impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: MaybeTime,
-    P: 'static,
 {
     pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: MaybeTime>(
-        operator: OperatorBuilder<KI, VI, TI, K, V, T, P>,
-    ) -> JetStreamBuilder<K, V, T, P> {
+        operator: OperatorBuilder<KI, VI, TI, K, V, T>,
+    ) -> JetStreamBuilder<K, V, T> {
         JetStreamBuilder {
             operators: Vec::new(),
             tail: Box::new(operator),
@@ -44,14 +43,13 @@ where
     }
 }
 
-impl<K, V, T, P> JetStreamBuilder<K, V, T, P>
+impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: MaybeTime,
-    P: 'static,
 {
-    pub fn get_output_mut(&mut self) -> &mut Sender<K, V, T, P> {
+    pub fn get_output_mut(&mut self) -> &mut Sender<K, V, T> {
         self.tail.get_output_mut()
     }
 
@@ -59,8 +57,8 @@ where
     /// and return a new stream where the new operator is last_op
     pub fn then<KO: MaybeKey, VO: Data, TO: MaybeTime>(
         mut self,
-        mut operator: OperatorBuilder<K, V, T, KO, VO, TO, P>,
-    ) -> JetStreamBuilder<KO, VO, TO, P> {
+        mut operator: OperatorBuilder<K, V, T, KO, VO, TO>,
+    ) -> JetStreamBuilder<KO, VO, TO> {
         // let (tx, rx) = selective_broadcast::<O>();
         selective_broadcast::link(self.tail.get_output_mut(), operator.get_input_mut());
 
@@ -73,7 +71,7 @@ where
         }
     }
 
-    pub(crate) fn into_operators(mut self) -> Vec<Box<dyn BuildableOperator<P>>> {
+    pub(crate) fn into_operators(mut self) -> Vec<Box<dyn BuildableOperator>> {
         self.operators.push(self.tail.into_buildable());
         self.operators
     }

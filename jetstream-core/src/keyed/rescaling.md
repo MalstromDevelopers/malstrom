@@ -60,7 +60,7 @@ stream
 
 # Not reimplementing statefulmap
 
-Statefulmap could be implemented for any Stream<K, V, P>.
+Statefulmap could be implemented for any Stream<K, V>.
 To make this work with the distributed Stream we could turn "Stream"
 into a trait, which has the ".then" and ".build" methods
 

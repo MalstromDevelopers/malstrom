@@ -5,7 +5,7 @@ use crate::{
     Data, DataMessage, MaybeKey, Message,
 };
 
-pub trait StatelessOp<K, VI, T, P> {
+pub trait StatelessOp<K, VI, T> {
     /// A small wrapper around StandardOperator to make allow simpler
     /// implementations of stateless, time-unaware operators like map or filter
     ///
@@ -13,23 +13,22 @@ pub trait StatelessOp<K, VI, T, P> {
     /// along as they are.
     fn stateless_op<VO: Data>(
         self,
-        mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P>;
+        mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) + 'static,
+    ) -> JetStreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T, P> StatelessOp<K, VI, T, P> for JetStreamBuilder<K, VI, T, P>
+impl<K, VI, T> StatelessOp<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     VI: Data,
     T: MaybeTime,
-    P: 'static,
 {
     fn stateless_op<VO: Data>(
         self,
-        mut mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T, P>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P> {
+        mut mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) + 'static,
+    ) -> JetStreamBuilder<K, VO, T> {
         let op = OperatorBuilder::direct(
-            move |input: &mut Receiver<K, VI, T, P>, output: &mut Sender<K, VO, T, P>, _ctx| {
+            move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, _ctx| {
                 let msg = match input.recv() {
                     Some(x) => x,
                     None => return,
@@ -43,8 +42,7 @@ where
                     // necessary to convince Rust it is a different generic type now
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
-                    Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
-                    Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
+                    Message::Rescale(x) => output.send(Message::Rescale(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
                     Message::Epoch(x) => output.send(Message::Epoch(x)),
                 };

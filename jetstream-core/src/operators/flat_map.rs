@@ -3,25 +3,21 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::time::MaybeTime;
 use crate::{Data, DataMessage, MaybeKey};
 
-pub trait FlatMap<K, V, T, VO, P> {
-    fn flat_map(
-        self,
-        mapper: impl (FnMut(V) -> Vec<VO>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P>;
+pub trait FlatMap<K, V, T, VO> {
+    fn flat_map(self, mapper: impl (FnMut(V) -> Vec<VO>) + 'static) -> JetStreamBuilder<K, VO, T>;
 }
 
-impl<K, V, T, VO, P> FlatMap<K, V, T, VO, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T, VO> FlatMap<K, V, T, VO> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     VO: Data,
     T: MaybeTime,
-    P: 'static,
 {
     fn flat_map(
         self,
         mut mapper: impl (FnMut(V) -> Vec<VO>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T, P> {
+    ) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(move |item, out| {
             let k = item.key;
             let t = item.timestamp;

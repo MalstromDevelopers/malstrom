@@ -1,15 +1,13 @@
 use crate::{
-    operators::source::IntoSource,
-    stream::operator::OperatorBuilder,
-    time::{Epoch, NoTime},
-    Data, DataMessage, Message, NoData, NoKey,
+    operators::source::IntoSource, stream::operator::OperatorBuilder, time::NoTime, Data,
+    DataMessage, Message, NoData, NoKey,
 };
 
-impl<T: IntoIterator<Item = V> + 'static, V, P> IntoSource<NoKey, V, NoTime, P> for T
+impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, NoTime> for T
 where
     V: Data,
 {
-    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, NoTime, P> {
+    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, NoTime> {
         let mut inner = self.into_iter();
         OperatorBuilder::direct(move |input, output, ctx| {
             if ctx.worker_id == 0 {
@@ -24,8 +22,7 @@ where
                     Message::Epoch(_) => (),
                     Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
                     // Message::Load(x) => output.send(Message::Load(x)),
-                    Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
-                    Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
+                    Message::Rescale(x) => output.send(Message::Rescale(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(x) => output.send(Message::Collect(x)),
@@ -96,7 +93,7 @@ mod tests {
         // we need to start up a new thread with another worker
         // since the .build method will try to establish communication
         let _ = std::thread::spawn(move || {
-            let worker = Worker::<NoPersistence>::new(|| false);
+            let worker = Worker::new(NoPersistence::default(), || false);
             worker.build(config0).unwrap();
         });
 

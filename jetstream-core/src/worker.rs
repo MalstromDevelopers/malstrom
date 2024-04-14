@@ -1,9 +1,10 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::rc::Rc;
 
 use crate::channels::selective_broadcast::{self};
 use crate::operators::void::Void;
 use crate::snapshot::controller::make_snapshot_controller;
-use crate::snapshot::PersistenceBackend;
+use crate::snapshot::{NoPersistence, PersistenceBackend, PersistenceBackendBuilder};
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
@@ -11,24 +12,27 @@ use crate::stream::operator::{
 use crate::time::{MaybeTime, NoTime};
 use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 
-pub struct Worker<P> {
-    operators: Vec<Box<dyn BuildableOperator<P>>>,
-    root_stream: JetStreamBuilder<NoKey, NoData, NoTime, P>,
+pub struct Worker {
+    operators: Vec<Box<dyn BuildableOperator>>,
+    root_stream: JetStreamBuilder<NoKey, NoData, NoTime>,
+    persistence_backend: Rc<dyn PersistenceBackendBuilder>,
 }
-impl<P> Worker<P>
-where
-    P: PersistenceBackend,
-{
-    pub fn new(snapshot_timer: impl FnMut() -> bool + 'static) -> Worker<P> {
-        let snapshot_op = make_snapshot_controller(snapshot_timer);
+impl Worker {
+    pub fn new(
+        persistence_backend: impl PersistenceBackendBuilder,
+        snapshot_timer: impl FnMut() -> bool + 'static,
+    ) -> Worker {
+        let persistence_backend = Rc::new(persistence_backend);
+        let snapshot_op = make_snapshot_controller(persistence_backend.clone(), snapshot_timer);
 
         Worker {
             operators: Vec::new(),
             root_stream: JetStreamBuilder::from_operator(snapshot_op),
+            persistence_backend,
         }
     }
 
-    pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime, P> {
+    pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
         let mut new_op = pass_through_operator();
         selective_broadcast::link(self.root_stream.get_output_mut(), new_op.get_input_mut());
         JetStreamBuilder::from_operator(new_op)
@@ -36,7 +40,7 @@ where
 
     pub fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
-        stream: JetStreamBuilder<K, V, T, P>,
+        stream: JetStreamBuilder<K, V, T>,
     ) {
         // call void to destroy all remaining messages
         self.operators.extend(stream.void().into_operators())
@@ -45,8 +49,8 @@ where
     /// Unions N streams with identical output types into a single stream
     pub fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
-        streams: Vec<JetStreamBuilder<K, V, T, P>>,
-    ) -> JetStreamBuilder<K, V, T, P> {
+        streams: Vec<JetStreamBuilder<K, V, T>>,
+    ) -> JetStreamBuilder<K, V, T> {
         // this is the operator which reveives the union stream
         let mut unioned = pass_through_operator();
 
@@ -59,9 +63,9 @@ where
 
     pub fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
-        input: JetStreamBuilder<K, V, T, P>,
+        input: JetStreamBuilder<K, V, T>,
         partitioner: impl OperatorPartitioner<K, V, T>,
-    ) -> [JetStreamBuilder<K, V, T, P>; N] {
+    ) -> [JetStreamBuilder<K, V, T>; N] {
         let partition_op = OperatorBuilder::new_with_output_partitioning(
             |_| {
                 |input, output, _ctx| {
@@ -74,7 +78,7 @@ where
         );
         let mut input = input.then(partition_op);
 
-        let new_streams: Vec<JetStreamBuilder<K, V, T, P>> = (0..N)
+        let new_streams: Vec<JetStreamBuilder<K, V, T>> = (0..N)
             .map(|_| {
                 let mut operator = pass_through_operator();
                 selective_broadcast::link(input.get_output_mut(), operator.get_input_mut());
@@ -115,8 +119,8 @@ where
                 x.into_runnable(BuildContext::new(
                     config.worker_id,
                     i,
-                    P::new_latest(config.worker_id),
-                    communication_backend.for_operator(&i).unwrap(),
+                    self.persistence_backend.latest(config.worker_id),
+                    communication_backend.for_operator(i.clone()).unwrap(),
                 ))
             })
             .collect();

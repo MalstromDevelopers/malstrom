@@ -30,12 +30,12 @@ where
     V: DistData,
     T: DistTimestamp,
 {
-    pub(super) fn new<P>(
+    pub(super) fn new(
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
         finished: IndexSet<WorkerId>,
-        output: &mut Sender<K, V, T, P>,
+        output: &mut Sender<K, V, T>,
     ) -> Self {
         let whitelist = Rc::new(Mutex::new(IndexSet::new()));
         let interrogate = Interrogate { shared: whitelist };
@@ -51,11 +51,11 @@ where
             running_interrogate: interrogate,
         }
     }
-    fn send_local<P>(
+    fn send_local(
         &self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: DataMessage<K, V, T>,
-        output: &mut Sender<K, V, T, P>,
+        output: &mut Sender<K, V, T>,
         local_wid: WorkerId,
     ) {
         if *(dist_func)(&msg.key, &self.new_worker_set) != local_wid {
@@ -77,11 +77,11 @@ where
             .expect("Network Send Error");
     }
 
-    pub(super) fn run<P>(
+    pub(super) fn run(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, V, T>>,
-        output: &mut Sender<K, V, T, P>,
+        output: &mut Sender<K, V, T>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, V, T> {
         match msg {

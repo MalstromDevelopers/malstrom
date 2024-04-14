@@ -13,7 +13,6 @@ message ExchangeResponse {
 
 message ExchangeMessage {
     // TODO figure out how to use tonic without protobuf
-    bytes sender_worker = 1;
-    bytes sender_operator = 2;
-    bytes data = 3;
+    bytes data = 1;
+    bytes recipient_operator = 2;
 }

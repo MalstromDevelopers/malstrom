@@ -18,30 +18,29 @@ enum OnTimeLate<V> {
     Late(V),
 }
 
-pub trait TimelyStream<K, V, T, P> {
+pub trait TimelyStream<K, V, T> {
     /// Assigns a new timestamp to every message.
     /// NOTE: Any Epochs arriving at this operator are dropped
     fn assign_timestamps<TO: MaybeTime>(
         self,
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
-    ) -> NeedsEpochs<K, V, TO, P>;
+    ) -> NeedsEpochs<K, V, TO>;
 
     /// Turns a timestamped stream into an untimestamped stream by
     /// removing all message timestamps and epochs    
-    fn remove_timestamps(self) -> JetStreamBuilder<K, V, NoTime, P>;
+    fn remove_timestamps(self) -> JetStreamBuilder<K, V, NoTime>;
 }
 
-impl<K, V, T, P> TimelyStream<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T> TimelyStream<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: MaybeTime,
-    P: PersistenceBackend,
 {
     fn assign_timestamps<TO: MaybeTime>(
         self,
         mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
-    ) -> NeedsEpochs<K, V, TO, P> {
+    ) -> NeedsEpochs<K, V, TO> {
         let operator = OperatorBuilder::direct(move |input, output, _| {
             if let Some(msg) = input.recv() {
                 match msg {
@@ -57,8 +56,7 @@ where
                     Message::DropKey(k) => output.send(Message::DropKey(k)),
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
-                    Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
-                    Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
+                    Message::Rescale(x) => output.send(Message::Rescale(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
                 }
             }
@@ -66,7 +64,7 @@ where
         NeedsEpochs(self.then(operator))
     }
 
-    fn remove_timestamps(self) -> JetStreamBuilder<K, V, NoTime, P> {
+    fn remove_timestamps(self) -> JetStreamBuilder<K, V, NoTime> {
         let operator = OperatorBuilder::direct(|input, output, _| {
             if let Some(msg) = input.recv() {
                 match msg {
@@ -82,8 +80,7 @@ where
                     Message::DropKey(k) => output.send(Message::DropKey(k)),
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
-                    Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
-                    Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
+                    Message::Rescale(x) => output.send(Message::Rescale(x)),
                     Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
                 }
             }
@@ -191,7 +188,7 @@ mod tests {
         let stream = stream.then(OperatorBuilder::direct(move |input, out, _| {
             match input.recv() {
                 Some(Message::Epoch(t)) => {
-                    collector_moved.give(t.timestamp);
+                    collector_moved.give(t);
                 }
                 Some(x) => out.send(x),
                 None => (),
@@ -231,7 +228,7 @@ mod tests {
         let stream = stream.then(OperatorBuilder::direct(move |input, output, _| {
             match input.recv() {
                 Some(Message::Epoch(t)) => {
-                    collector_moved.give(t.timestamp);
+                    collector_moved.give(t);
                 }
                 Some(x) => output.send(x),
                 None => (),
@@ -266,7 +263,7 @@ mod tests {
         let collector = VecCollector::new();
         let collector_moved = collector.clone();
         let ontime = ontime.then(OperatorBuilder::direct(
-            move |input: &mut Receiver<NoKey, i32, i32, NoPersistence>, out, _| {
+            move |input: &mut Receiver<NoKey, i32, i32>, out, _| {
                 match input.recv() {
                     // encode epoch to -T
                     Some(Message::Data(d)) => {
@@ -274,7 +271,7 @@ mod tests {
                         out.send(Message::Data(d))
                     }
                     Some(Message::Epoch(e)) => {
-                        collector_moved.give(-e.timestamp.clone());
+                        collector_moved.give(-e.clone());
                         out.send(Message::Epoch(e))
                     }
                     Some(x) => out.send(x),

@@ -5,7 +5,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::{
     snapshot::PersistenceBackend,
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::{Epoch, NoTime, Timestamp},
+    time::{NoTime, Timestamp},
     DataMessage, MaybeData, MaybeKey, Message, Worker,
 };
 
@@ -14,7 +14,7 @@ use super::{
     NeedsEpochs,
 };
 
-pub trait GenerateEpochs<K, V, T, P> {
+pub trait GenerateEpochs<K, V, T> {
     /// Generates Epochs from data. This operator takes a function which may create a new epoch for any
     /// DataMessage arriving at this Operator. To not create a new Epoch, the function must return `None`.
     ///
@@ -27,49 +27,38 @@ pub trait GenerateEpochs<K, V, T, P> {
     /// NOTE: If the returned epoch is smaller than the previous epoch, it is ignored
     fn generate_epochs(
         self,
-        worker: &mut Worker<P>,
+        worker: &mut Worker,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (
-        JetStreamBuilder<K, V, T, P>,
-        JetStreamBuilder<K, V, NoTime, P>,
-    );
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>);
 }
 
-impl<K, V, T, P> GenerateEpochs<K, V, T, P> for NeedsEpochs<K, V, T, P>
+impl<K, V, T> GenerateEpochs<K, V, T> for NeedsEpochs<K, V, T>
 where
     K: MaybeKey,
     T: Timestamp + Serialize + DeserializeOwned,
     V: MaybeData,
-    P: PersistenceBackend,
 {
     fn generate_epochs(
         self,
-        worker: &mut Worker<P>,
+        worker: &mut Worker,
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (
-        JetStreamBuilder<K, V, T, P>,
-        JetStreamBuilder<K, V, NoTime, P>,
-    ) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
         self.0.generate_epochs(worker, gen)
     }
 }
 
-impl<K, V, T, P> GenerateEpochs<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T> GenerateEpochs<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     T: Timestamp + Serialize + DeserializeOwned,
     V: MaybeData,
-    P: PersistenceBackend,
 {
     fn generate_epochs(
         self,
-        worker: &mut Worker<P>,
+        worker: &mut Worker,
         mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (
-        JetStreamBuilder<K, V, T, P>,
-        JetStreamBuilder<K, V, NoTime, P>,
-    ) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
         let operator = OperatorBuilder::built_by(|build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
 
@@ -86,13 +75,13 @@ where
                                 (None, None) => None,
                                 (None, Some(x)) => Some(x),
                                 (Some(x), None) => {
-                                    output.send(Message::Epoch(Epoch::new(x.clone())));
+                                    output.send(Message::Epoch(x.clone()));
                                     Some(x)
                                 }
                                 (Some(x), Some(y)) => {
                                     if x > y {
                                         {
-                                            output.send(Message::Epoch(Epoch::new(x.clone())));
+                                            output.send(Message::Epoch(x.clone()));
                                             Some(x)
                                         }
                                     } else {
@@ -111,8 +100,7 @@ where
                         Message::Acquire(a) => output.send(Message::Acquire(a)),
                         Message::DropKey(k) => output.send(Message::DropKey(k)),
                         // Message::Load(l) => todo!(),
-                        Message::ScaleAddWorker(x) => output.send(Message::ScaleAddWorker(x)),
-                        Message::ScaleRemoveWorker(x) => output.send(Message::ScaleRemoveWorker(x)),
+                        Message::Rescale(x) => output.send(Message::Rescale(x)),
                         Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
                     }
                 }

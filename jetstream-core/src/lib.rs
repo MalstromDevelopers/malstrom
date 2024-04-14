@@ -1,10 +1,10 @@
 use indexmap::IndexSet;
-use keyed::distributed::messages::{Acquire, Collect, Interrogate};
+use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
-use snapshot::{Barrier, Load};
+use snapshot::Barrier;
 
 use std::{hash::Hash, rc::Rc};
-use time::Epoch;
+// use time::Epoch;
 mod util;
 
 pub mod channels;
@@ -33,7 +33,7 @@ impl<T: Hash + Eq + PartialEq + Clone + 'static> Key for T {}
 pub trait MaybeKey: Clone + 'static {}
 impl<T: Clone + 'static> MaybeKey for T {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoKey;
 
 /// Data which may move through a stream
@@ -45,15 +45,15 @@ pub trait MaybeData: Clone + 'static {}
 impl<T: Clone + 'static> MaybeData for T {}
 
 /// Zero sized indicator for a stream with no data
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NoData;
 
 /// Marker trait for functions which determine inter-operator routing
 pub trait OperatorPartitioner<K, V, T>:
-    Fn(&DataMessage<K, V, T>, Scale) -> IndexSet<OperatorId> + 'static
+    Fn(&DataMessage<K, V, T>, Scale) -> Vec<OperatorId> + 'static
 {
 }
-impl<K, V, T, U: Fn(&DataMessage<K, V, T>, Scale) -> IndexSet<OperatorId> + 'static>
+impl<K, V, T, U: Fn(&DataMessage<K, V, T>, Scale) -> Vec<OperatorId> + 'static>
     OperatorPartitioner<K, V, T> for U
 {
 }
@@ -80,19 +80,12 @@ impl<K, V, T> DataMessage<K, V, T> {
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
 #[derive(Debug)]
-pub enum Message<K, V, T, P> {
+pub enum Message<K, V, T> {
     Data(DataMessage<K, V, T>),
-    Epoch(Epoch<T>),
+    Epoch(T),
     /// Barrier used for asynchronous snapshotting
-    AbsBarrier(Barrier<P>),
-    /// Instruction to load state
-    // Load(Load<P>),
-    /// Information that the worker of this ID will soon be removed
-    /// from the computation. Triggers Rescaling procedure
-    ScaleRemoveWorker(IndexSet<WorkerId>),
-    /// Information that the worker of this ID will be added to the
-    /// computation. Triggers Rescaling procedure
-    ScaleAddWorker(IndexSet<WorkerId>),
+    AbsBarrier(Barrier),
+    Rescale(RescaleMessage),
     /// Information that this worker plans on shutting down
     /// See struct docstring for more information
     ShutdownMarker(ShutdownMarker),
@@ -104,7 +97,13 @@ pub enum Message<K, V, T, P> {
     DropKey(K),
 }
 
-impl<K, V, T, P> Clone for Message<K, V, T, P>
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub enum RescaleMessage {
+    ScaleRemoveWorker(IndexSet<WorkerId>),
+    ScaleAddWorker(IndexSet<WorkerId>),
+}
+
+impl<K, V, T> Clone for Message<K, V, T>
 where
     K: Clone,
     V: Clone,
@@ -117,8 +116,7 @@ where
             Self::Epoch(x) => Self::Epoch(x.clone()),
             Self::AbsBarrier(x) => Self::AbsBarrier(x.clone()),
             // Self::Load(x) => Self::Load(x.clone()),
-            Self::ScaleRemoveWorker(x) => Self::ScaleRemoveWorker(x.clone()),
-            Self::ScaleAddWorker(x) => Self::ScaleAddWorker(x.clone()),
+            Self::Rescale(x) => Self::Rescale(x.clone()),
             Self::ShutdownMarker(x) => Self::ShutdownMarker(x.clone()),
             Self::Interrogate(x) => Self::Interrogate(x.clone()),
             Self::Collect(x) => Self::Collect(x.clone()),

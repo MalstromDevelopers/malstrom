@@ -4,30 +4,9 @@ use derive_new::new;
 use indexmap::{IndexMap, IndexSet};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{
-    snapshot::Barrier, time::Epoch, DataMessage, Key, OperatorId, ShutdownMarker, WorkerId,
-};
+use crate::{snapshot::Barrier, DataMessage, Key, Message, OperatorId, ShutdownMarker, WorkerId};
 
 use super::Version;
-
-/// These are all message types which must be handled by the
-/// distributor, coming from either locally or remotely
-/// Either locally or remotely
-// pub(super) enum IncomingMessage<K, V, T> {
-//     /// Optionally with a version if it comes from remote
-//     Data(DataMessage<K, V, T>, Option<Version>),
-//     Done(DoneMessage),
-//     //these we can handle without the distributor
-//     // Epoch(Epoch<T>),
-//     // Acquire(NetworkAcquire<K>)
-//     // AbsBarrier(Barrier<P>),
-//     // ShutdownMarker(ShutdownMarker),
-//     // Rescale(RescaleMessage),
-
-//     // Interrogate, Collect, DropKey and the "normal" Acquire
-//     // can not come into here, since this is the start of the
-//     // key region
-// }
 
 /// Messages which may go out of a distributor and flow downstream
 #[derive(Clone)]
@@ -38,15 +17,19 @@ pub(super) enum LocalOutgoingMessage<K, V, T> {
     DropKey(K),
 }
 
-#[derive(Debug)]
-pub(super) enum RescaleMessage {
-    ScaleRemoveWorker(IndexSet<WorkerId>),
-    ScaleAddWorker(IndexSet<WorkerId>),
+impl<K, V, T> LocalOutgoingMessage<K, V, T> {
+    pub(super) fn into_message(self) -> Message<K, V, T> {
+        match self {
+            LocalOutgoingMessage::Data(x) => Message::Data(x),
+            LocalOutgoingMessage::Interrogate(x) => Message::Interrogate(x),
+            LocalOutgoingMessage::Collect(x) => Message::Collect(x),
+            LocalOutgoingMessage::DropKey(x) => Message::DropKey(x),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, new, Clone)]
-pub(super) struct TargetedMessage<K, V, T> {
-    pub(super) target: WorkerId,
+pub(super) struct VersionedMessage<K, V, T> {
     pub(super) version: Version,
     pub(super) message: DataMessage<K, V, T>,
 }
@@ -55,16 +38,21 @@ pub(super) struct TargetedMessage<K, V, T> {
 /// Or come in from a remote worker
 #[derive(Serialize, Deserialize, Clone)]
 pub(super) enum RemoteMessage<K, V, T> {
-    Data(TargetedMessage<K, V, T>),
+    Data(VersionedMessage<K, V, T>),
+    Epoch(T),
     Done(DoneMessage),
     Acquire(NetworkAcquire<K>),
+    AbsBarrier(WorkerId),
+    // sent by a worker when it is shutting down
+    // no other messages must follow this one
+    Shutdown(WorkerId),
 }
 
-/// Messages which may flow out of this operator
+/// Messages which may flow out of the distributor
 #[derive(Clone)]
 pub(super) enum OutgoingMessage<K, V, T> {
     Local(LocalOutgoingMessage<K, V, T>),
-    Remote(RemoteMessage<K, V, T>),
+    Remote(WorkerId, VersionedMessage<K, V, T>),
     None,
 }
 
@@ -77,14 +65,8 @@ impl<K> Interrogate<K>
 where
     K: Key,
 {
-    pub(super) fn new(
-        shared: Rc<Mutex<IndexSet<K>>>,
-        tester: impl Fn(&K) -> bool + 'static,
-    ) -> Self {
-        Self {
-            shared,
-            tester: Rc::new(tester),
-        }
+    pub(super) fn new(shared: Rc<Mutex<IndexSet<K>>>, tester: Rc<dyn Fn(&K) -> bool>) -> Self {
+        Self { shared, tester }
     }
 
     pub fn add_keys(&mut self, keys: &[K]) {
@@ -142,7 +124,10 @@ where
     pub(super) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
         match Rc::try_unwrap(self.collection).map(|mutex| mutex.into_inner().unwrap()) {
             Ok(collection) => Ok((self.key, collection)),
-            Err(collection) => Err(Self{key: self.key, collection})
+            Err(collection) => Err(Self {
+                key: self.key,
+                collection,
+            }),
         }
     }
 }
@@ -184,6 +169,7 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize, new)]
 pub(super) struct NetworkAcquire<K> {
+    pub(super) target: WorkerId,
     pub(super) key: K,
     collection: IndexMap<OperatorId, Vec<u8>>,
 }

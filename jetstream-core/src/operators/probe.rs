@@ -12,25 +12,24 @@ pub enum DataOrEpoch<'a, T> {
     Epoch(&'a T),
 }
 
-pub trait ProbeEpoch<K, V, T, P> {
-    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T, P>, watch::Receiver<Option<T>>);
+pub trait ProbeEpoch<K, V, T> {
+    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T>, watch::Receiver<Option<T>>);
 }
 
-impl<K, V, T, P> ProbeEpoch<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T> ProbeEpoch<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: Timestamp + Clone,
-    P: 'static,
 {
-    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T, P>, watch::Receiver<Option<T>>) {
+    fn probe_epoch(self) -> (JetStreamBuilder<K, V, T>, watch::Receiver<Option<T>>) {
         let (tx, rx) = watch::channel::<Option<T>>(None);
         let operator = OperatorBuilder::direct(
-            move |input: &mut Receiver<K, V, T, P>, output: &mut Sender<K, V, T, P>, _ctx| {
+            move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, _ctx| {
                 if let Some(x) = input.recv() {
                     match x {
                         Message::Epoch(e) => {
-                            tx.send(Some(e.timestamp.clone()));
+                            tx.send(Some(e.clone()));
                             output.send(Message::Epoch(e))
                         }
                         m => output.send(m),

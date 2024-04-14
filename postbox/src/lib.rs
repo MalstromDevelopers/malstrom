@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ use grpc::generic_communication_server::GenericCommunicationServer;
 use grpc::{ExchangeMessage, ExchangeResponse};
 
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const CONFIG: bincode::config::Configuration = bincode::config::standard();
@@ -49,6 +50,7 @@ pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 
 type Binary = Vec<u8>;
+type EncodedOperator = Vec<u8>;
 
 #[derive(Error, Debug)]
 pub enum SendError {
@@ -71,71 +73,119 @@ pub enum BuildError {
     #[error("Recipient not found {0}")]
     OperatorNotFound(String),
     #[error("WorkerId could not be serialized")]
-    EncodingError(#[from] bincode::error::EncodeError),
+    WorkerEncodingError,
+    #[error("OperatorId could not be serialized")]
+    OperatorEncodingError,
     #[error("Error creating tokio runtime")]
     RuntimeCreationFailed,
 }
 
 #[derive(Clone)]
 struct MessageWrapper {
-    sender_operator: Binary,
+    recv_operator: Binary,
     message: Binary,
 }
 
-pub struct Postbox<W> {
-    this_operator: Binary,
-    incoming: flume::Receiver<(W, Binary)>,
+pub struct Postbox<W, O> {
+    this_worker: W,
+    this_operator: O,
+    // serialized representation of O
+    this_operator_enc: EncodedOperator,
+    incoming: flume::Receiver<Binary>,
     outgoing: IndexMap<W, flume::Sender<MessageWrapper>>,
 }
 
-pub struct RecvIterator<'a, W, D>(&'a Postbox<W>, PhantomData<D>);
+pub struct RecvIterator<'a, W, O, D>(&'a Postbox<W, O>, PhantomData<D>);
 
-impl<'a, W, D> Iterator for RecvIterator<'a, W, D>
+#[derive(Serialize, Deserialize)]
+pub struct NetworkMessage<W, O, D> {
+    pub sender_worker: W,
+    pub sender_operator: O,
+    pub data: D,
+    // private field to prevent public construction
+    private: PhantomData<()>,
+}
+
+impl<'a, W, O, D> Iterator for RecvIterator<'a, W, O, D>
 where
     W: WorkerId,
+    O: OperatorId,
     D: Data,
 {
-    type Item = D;
+    type Item = NetworkMessage<W, O, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.recv::<D>().expect("Postbox error")
     }
 }
 
-impl<W> Postbox<W>
+impl<W, O> Postbox<W, O>
 where
     W: WorkerId,
+    O: OperatorId,
 {
-    fn recv<D: Data>(&self) -> Result<Option<D>, RecvError> {
-        Ok(self.recv_with_sender::<D>()?.map(|x| x.1))
-    }
-
-    pub fn recv_all<D: Data>(&self) -> RecvIterator<'_, W, D> {
-        RecvIterator(self, PhantomData)
-    }
-
-    pub fn recv_with_sender<D: Data>(&self) -> Result<Option<(W, D)>, RecvError> {
+    fn recv<D: Data>(&self) -> Result<Option<NetworkMessage<W, O, D>>, RecvError> {
         match self.incoming.try_recv() {
-            Ok(x) => {
-                let sender = x.0;
-                let data = decode_from_slice(&x.1, CONFIG)?.0;
-                Ok(Some((sender, data)))
-            }
+            Ok(x) => Ok(Some(decode_from_slice(&x, CONFIG)?.0)),
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => Err(RecvError::ReceiverLost),
         }
     }
 
+    pub fn recv_all<D: Data>(&self) -> RecvIterator<'_, W, O, D> {
+        RecvIterator(self, PhantomData)
+    }
+
+    // pub fn recv_with_sender<D: Data>(&self) -> Result<Option<(W, D)>, RecvError> {
+    //     match self.incoming.try_recv() {
+    //         Ok(x) => {
+    //             let sender = x.0;
+    //             let data = decode_from_slice(&x.1, CONFIG)?.0;
+    //             Ok(Some((sender, data)))
+    //         }
+    //         Err(TryRecvError::Empty) => Ok(None),
+    //         Err(TryRecvError::Disconnected) => Err(RecvError::ReceiverLost),
+    //     }
+    // }
+
     pub fn get_peers(&self) -> Vec<&W> {
         self.outgoing.keys().collect()
     }
 
-    pub fn send<D: Data>(&self, recipient: &W, message: D) -> Result<(), SendError> {
-        let encoded = encode_to_vec(message, CONFIG)?;
+    pub fn send_same<D: Data>(&self, recipient: &W, message: D) -> Result<(), SendError> {
+        let net_msg = NetworkMessage {
+            sender_worker: self.this_worker.clone(),
+            sender_operator: self.this_operator.clone(),
+            data: message,
+            private: PhantomData,
+        };
+        let encoded = encode_to_vec(net_msg, CONFIG)?;
         self.send_encoded(
             recipient,
             MessageWrapper {
-                sender_operator: self.this_operator.clone(),
+                recv_operator: self.this_operator_enc.clone(),
+                message: encoded,
+            },
+        )
+    }
+
+    pub fn send_other_operator<D: Data>(
+        &self,
+        recipient: &W,
+        recipient_op: &O,
+        message: D,
+    ) -> Result<(), SendError> {
+        let net_msg = NetworkMessage {
+            sender_worker: self.this_worker.clone(),
+            sender_operator: self.this_operator.clone(),
+            data: message,
+            private: PhantomData,
+        };
+        let encoded = encode_to_vec(net_msg, CONFIG)?;
+        self.send_encoded(
+            recipient,
+            MessageWrapper {
+                recv_operator: bincode::serde::encode_to_vec(recipient_op, CONFIG)?,
                 message: encoded,
             },
         )
@@ -151,9 +201,15 @@ where
 
     pub fn broadcast<D: Data>(&self, message: D) -> Result<(), SendError> {
         let targets = self.get_peers();
-        let encoded = MessageWrapper {
+        let net_msg = NetworkMessage {
+            sender_worker: self.this_worker.clone(),
             sender_operator: self.this_operator.clone(),
-            message: encode_to_vec(message, CONFIG)?,
+            data: message,
+            private: PhantomData,
+        };
+        let encoded = MessageWrapper {
+            recv_operator: self.this_operator_enc.clone(),
+            message: encode_to_vec(net_msg, CONFIG)?,
         };
         let messages = itertools::repeat_n(encoded, targets.len());
         let res: Result<Vec<()>, SendError> = itertools::zip_eq(targets, messages)
@@ -163,7 +219,7 @@ where
     }
 }
 
-pub struct BackendBuilder<O, W> {
+pub struct BackendBuilder<W, O> {
     this_worker: W,
     connection_timeout: Duration,
     retry_interval: Duration,
@@ -171,14 +227,15 @@ pub struct BackendBuilder<O, W> {
     listen_addr: SocketAddr,
     outgoing: IndexMap<W, flume::Sender<MessageWrapper>>,
     outgoing_rx: IndexMap<(W, Uri), flume::Receiver<MessageWrapper>>,
-    incoming: IndexMap<O, flume::Receiver<(W, Binary)>>,
-    incoming_tx: Vec<(O, flume::Sender<(W, Binary)>)>,
+    incoming: IndexMap<O, flume::Receiver<Binary>>,
+    incoming_tx: Vec<(O, flume::Sender<Binary>)>,
+    operator_id: PhantomData<O>,
 }
 
-impl<O, W> BackendBuilder<O, W>
+impl<W, O> BackendBuilder<W, O>
 where
-    O: OperatorId,
     W: WorkerId,
+    O: OperatorId,
 {
     pub fn new(
         this_worker: W,
@@ -189,10 +246,10 @@ where
     ) -> Self {
         let mut incoming = IndexMap::with_capacity(operators.len());
         let mut incoming_tx = Vec::with_capacity(operators.len());
-        for op in operators.iter() {
+        for op in operators.into_iter() {
             let (tx, rx) = flume::bounded(queue_size);
             incoming_tx.push((op.clone(), tx));
-            incoming.insert(op.clone(), rx);
+            incoming.insert(op, rx);
         }
         let mut outgoing = IndexMap::with_capacity(peers.len());
         let mut outgoing_rx = IndexMap::with_capacity(peers.len());
@@ -211,6 +268,7 @@ where
             outgoing_rx,
             incoming,
             incoming_tx,
+            operator_id: PhantomData,
         }
     }
 
@@ -229,22 +287,27 @@ where
         self
     }
 
-    pub fn for_operator(&self, operator_id: &O) -> Result<Postbox<W>, BuildError> {
+    pub fn for_operator(&self, operator_id: O) -> Result<Postbox<W, O>, BuildError> {
         let incoming = self
             .incoming
-            .get(operator_id)
+            .get(&operator_id)
             .ok_or(BuildError::OperatorNotFound(format!("{operator_id:?}")))?
             .clone();
-        let op_encoded = encode_to_vec(operator_id, CONFIG)?;
+        let op_enc =
+            encode_to_vec(&operator_id, CONFIG).map_err(|_| BuildError::OperatorEncodingError)?;
         Ok(Postbox {
-            this_operator: op_encoded,
+            this_worker: self.this_worker.clone(),
+            this_operator: operator_id,
+            // this_operator: operator_id,
+            this_operator_enc: op_enc,
             incoming,
             outgoing: self.outgoing.clone(),
         })
     }
 
     pub fn connect(self) -> Result<CommunicationBackend, BuildError> {
-        let this_worker = encode_to_vec(self.this_worker, CONFIG)?;
+        let this_worker =
+            encode_to_vec(self.this_worker, CONFIG).map_err(|_| BuildError::WorkerEncodingError)?;
         CommunicationBackend::new_connect(
             this_worker,
             self.connection_timeout,
@@ -264,14 +327,14 @@ pub struct CommunicationBackend {
 }
 
 impl CommunicationBackend {
-    fn new_connect<O: OperatorId, W: WorkerId>(
+    fn new_connect<W: WorkerId, O: OperatorId>(
         this_worker: Binary,
         connection_timeout: Duration,
         retry_interval: Duration,
         retry_count: usize,
         listen_addr: SocketAddr,
         outgoing_rx: IndexMap<(W, Uri), flume::Receiver<MessageWrapper>>,
-        incoming_tx: Vec<(O, flume::Sender<(W, Binary)>)>,
+        incoming_tx: Vec<(O, flume::Sender<Binary>)>,
     ) -> Result<Self, BuildError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -280,6 +343,7 @@ impl CommunicationBackend {
 
         let server = GrpcReceiver::new(incoming_tx);
         let _guard = rt.enter();
+
         let server_task = rt.spawn(async move {
             Server::builder()
                 .add_service(GenericCommunicationServer::new(server))
@@ -338,11 +402,9 @@ impl GrpcSender {
             let mut retries_left = retry_count;
             let stream = stream! {
                 for await value in recv.into_stream() {
-
-                    yield ExchangeMessage{
-                        sender_worker: this_worker.clone(),
-                        sender_operator: value.sender_operator,
-                        data: value.message
+                    yield ExchangeMessage {
+                        data: value.message,
+                        recipient_operator: value.recv_operator
                     };
                 }
             };
@@ -391,24 +453,37 @@ impl GrpcSender {
     }
 }
 
-struct GrpcReceiver<W, O> {
-    channels: IndexMap<O, Sender<(W, Binary)>>,
+impl Drop for GrpcSender {
+    fn drop(&mut self) {
+        // we need to wait a bit to wait for the stream to end
+        // so the async task finishes and we don't blurp out a giant
+        // tokio stacktrace on drop
+        for _ in 0..200 {
+            // this is hacky
+            if self._task.is_finished() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
-impl<W, O> GrpcReceiver<W, O>
+
+struct GrpcReceiver<O> {
+    channels: IndexMap<O, Sender<Binary>>,
+}
+impl<O> GrpcReceiver<O>
 where
-    W: WorkerId,
     O: OperatorId,
 {
-    fn new(senders: Vec<(O, Sender<(W, Binary)>)>) -> Self {
+    fn new(senders: Vec<(O, Sender<Binary>)>) -> Self {
         let inner = IndexMap::from_iter(senders);
         Self { channels: inner }
     }
 }
 
 #[tonic::async_trait]
-impl<W, O> GenericCommunication for GrpcReceiver<W, O>
+impl<O> GenericCommunication for GrpcReceiver<O>
 where
-    W: WorkerId,
     O: OperatorId,
 {
     async fn generic_exchange(
@@ -420,17 +495,14 @@ where
 
         while let Some(msg) = stream.next().await {
             let msg = msg?;
-            let worker_id: W = decode_from_slice(&msg.sender_worker, CONFIG)
-                .map_err(|_| Status::invalid_argument("Error decoding sender worker"))?
-                .0;
-            let operator_id: O = decode_from_slice(&msg.sender_operator, CONFIG)
-                .map_err(|_| Status::invalid_argument("Error decoding sender operator"))?
+            let operator_id: O = decode_from_slice(&msg.recipient_operator, CONFIG)
+                .map_err(|_| Status::invalid_argument("Error decoding operator id"))?
                 .0;
             let sender = channels
                 .get(&operator_id)
-                .ok_or(Status::unauthenticated("Operator ID unknown"))?;
+                .ok_or(Status::out_of_range("Operator ID unknown"))?;
             sender
-                .send_async((worker_id, msg.data))
+                .send_async(msg.data)
                 .await
                 .map_err(|_| Status::internal("Receivers dropped"))
                 .expect("All receivers have been dropped, no one is listening.");

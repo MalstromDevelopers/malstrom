@@ -26,7 +26,7 @@ pub(super) struct NormalDistributor<K> {
     state: NormalDistributorState
 }
 impl<K> NormalDistributor<K> {
-    pub(super) fn new<P: PersistenceBackend>(dist_func: impl WorkerPartitioner<K>, ctx: &BuildContext<P>) -> Self {
+    pub(super) fn new<P: PersistenceBackend>(dist_func: impl WorkerPartitioner<K>, ctx: &BuildContext) -> Self {
         let mut state: NormalDistributorState = ctx.load_state().unwrap_or_default();
         state.this_operator_id = ctx.operator_id;
         
@@ -38,9 +38,9 @@ impl<K> NormalDistributor<K> {
     }
 }
 
-impl<K, V, T, P> Distributor<K, V, T, P> for NormalDistributor<K> where K: DistKey, V: DistData, T: DistTimestamp {
+impl<K, V, T> Distributor<K, V, T> for NormalDistributor<K> where K: DistKey, V: DistData, T: DistTimestamp {
     
-    fn handle_msg(self, msg: VersionedMessage<K, V, T, P>) -> (impl Distributor<K, V, T, P>, TargetedMessage<K, V, T, P>) {
+    fn handle_msg(self, msg: VersionedMessage<K, V, T>) -> (impl Distributor<K, V, T>, TargetedMessage<K, V, T>) {
         let version = msg.version;
         match msg.message {
             Message::Data(_) => todo!(),
@@ -56,14 +56,14 @@ impl<K, V, T, P> Distributor<K, V, T, P> for NormalDistributor<K> where K: DistK
         }
     }
     
-    fn run(self, ctx: &OperatorContext) -> impl Distributor<K, V, T, P> {
+    fn run(self, ctx: &OperatorContext) -> impl Distributor<K, V, T> {
         
     }
 
     // fn run(
     //     mut self,
     //     msg: Option<ScalableMessage<K, V, T>>,
-    //     output: &mut Sender<K, V, T, P>,
+    //     output: &mut Sender<K, V, T>,
     //     ctx: &OperatorContext,
     // ) -> PhaseDistributor<K, V, T> {
         

@@ -3,7 +3,7 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::time::MaybeTime;
 use crate::{Data, MaybeKey};
 
-pub trait FilterMap<K, V, T, P> {
+pub trait FilterMap<K, V, T> {
     /// Filters the datastream based on a given predicate.
     ///
     /// The given function receives an immutable reference to the value
@@ -19,17 +19,17 @@ pub trait FilterMap<K, V, T, P> {
     /// stream: JetStreamBuilder<NoKey, i64, NoTime, NoPersistence>
     /// stream.filter(|x| *x <= 42) 
     /// ````
-    fn filter_map(self, filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T, P>;
+    fn filter_map(self, filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T>;
 }
 
-impl<K, V, T, P> Filter<K, V, T, P> for JetStreamBuilder<K, V, T, P>
+impl<K, V, T> Filter<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
     T: MaybeTime,
-    P: 'static,
+
 {
-    fn filter(self, mut filter: impl FnMut(V) -> Option<VO> + 'static) -> JetStreamBuilder<K, V, T, P> {
+    fn filter(self, mut filter: impl FnMut(V) -> Option<VO> + 'static) -> JetStreamBuilder<K, V, T> {
         self.m
     }
 }

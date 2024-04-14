@@ -31,11 +31,11 @@ where
     V: DistData,
     T: DistTimestamp,
 {
-    pub(super) fn run<P>(
+    pub(super) fn run(
         mut self,
         dist_func: &impl WorkerPartitioner<K>,
         msg: Option<ScalableMessage<K, V, T>>,
-        output: &mut Sender<K, V, T, P>,
+        output: &mut Sender<K, V, T>,
         ctx: &mut OperatorContext,
     ) -> PhaseDistributor<K, V, T> {
         match msg {
