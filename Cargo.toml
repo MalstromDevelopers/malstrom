@@ -1,6 +1,6 @@
 [workspace]
 
 members = [
-    "jetstream-core",
+    "jetstream-core", "jetstream-kafka",
     "postbox"
 ]

@@ -45,6 +45,7 @@ impl<'a> OperatorContext<'a> {
 pub struct BuildContext {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
+    pub label: String,
     persistence_backend: Box<dyn PersistenceBackend>,
     pub communication: Postbox<WorkerId, OperatorId>,
 }
@@ -52,12 +53,14 @@ impl BuildContext {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
+        label: String,
         persistence_backend: Box<dyn PersistenceBackend>,
         communication: Postbox<WorkerId, OperatorId>,
     ) -> Self {
         Self {
             worker_id,
             operator_id,
+            label,
             persistence_backend,
             communication,
         }
@@ -80,11 +83,15 @@ pub trait AppendableOperator<K, V, T> {
     fn get_output_mut(&mut self) -> &mut Sender<K, V, T>;
 
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
+
+    /// Add a label to this operator which will show up in traces
+    fn label(&mut self, label: String) -> ();
 }
 
 /// An operator which can be turned into a runnable operator, by supplying a BuildContext
 pub trait BuildableOperator {
     fn into_runnable(self: Box<Self>, context: BuildContext) -> RunnableOperator;
+    fn get_label(&self) -> Option<String>;
 }
 
 /// Each runnable operator contains an object of this trait which is the actual logic that will get executed
@@ -121,6 +128,7 @@ pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     // TODO: get rid of the dynamic dispatch here
     logic_builder: Box<dyn FnOnce(&BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>>,
     output: Sender<KO, VO, TO>,
+    label: Option<String>
 }
 
 pub trait Logic<KI, VI, TI, KO, VO, TO>:
@@ -162,6 +170,7 @@ where
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
+            label: None
         }
     }
 
@@ -175,6 +184,7 @@ where
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
+            label: None,
         }
     }
 
@@ -200,6 +210,10 @@ where
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {
         self
     }
+    
+    fn label(&mut self, label: String) -> () {
+        self.label = Some(label)
+    }
 }
 
 impl<KI, VI, TI, KO, VO, TO> BuildableOperator for OperatorBuilder<KI, VI, TI, KO, VO, TO>
@@ -217,7 +231,11 @@ where
             logic: (self.logic_builder)(&context),
             output: self.output,
         };
-        RunnableOperator::new(operator, context)
+        RunnableOperator::new(operator, self.label, context)
+    }
+    
+    fn get_label(&self) -> Option<String> {
+        self.label.clone()
     }
 }
 
@@ -294,27 +312,23 @@ pub struct RunnableOperator {
     operator_id: OperatorId,
     communication: Postbox<WorkerId, OperatorId>,
     operator: Box<dyn Operator>,
+    label: String,
 }
 
-pub(crate) struct StepResponse {
-    // true if this operator should be kept in the operator graph
-    keep: bool,
-    // Number of duplicates of this operator to create
-    duplicate: usize,
-}
 
 impl RunnableOperator {
-    pub fn new(operator: impl Operator + 'static, context: BuildContext) -> Self {
+    pub fn new(operator: impl Operator + 'static, label: Option<String>, context: BuildContext) -> Self {
         RunnableOperator {
             worker_id: context.worker_id,
             operator_id: context.operator_id,
             communication: context.communication,
             operator: Box::new(operator),
+            label: label.unwrap_or("NO_LABEL".into())
         }
     }
 
     pub fn step(&mut self) {
-        let span = tracing::info_span!("Running Operator ", %self.operator_id);
+        let span = tracing::info_span!("scheduling::run_operator", operator_id = self.operator_id, label = self.label);
         let _span_guard = span.enter();
         let mut context = OperatorContext {
             worker_id: self.worker_id,

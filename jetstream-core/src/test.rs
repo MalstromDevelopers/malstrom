@@ -176,7 +176,7 @@ where
         );
         let postbox_local = postbox_local_builder.for_operator(op_id).unwrap();
         let persistence = CapturingPersistenceBackend::default();
-        let buildcontext = BuildContext::new(0, op_id, persistence.latest(0), postbox_local);
+        let buildcontext = BuildContext::new(0, op_id, "NO_LABEL".to_owned(), persistence.latest(0), postbox_local);
         let mut op = OperatorBuilder::built_by(logic_builder);
         let mut local_in = Sender::new_unlinked(full_broadcast);
         let mut local_out = Receiver::new_unlinked();

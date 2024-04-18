@@ -108,15 +108,15 @@ where
         partitioner: impl WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T> {
         // let mut distributor = Distributor::new(partitioner);
-        let keyed = self.key_local(key_func);
+        let keyed = self.key_local(key_func).label("jetstream::key_distribute::key_local");
         keyed
-            .then(OperatorBuilder::built_by(versioner))
-            .then(OperatorBuilder::built_by(epoch_aligner))
-            .then(OperatorBuilder::built_by(upstream_exchanger))
+            .then(OperatorBuilder::built_by(versioner)).label("jetstream::key_distribute::versioner")
+            .then(OperatorBuilder::built_by(epoch_aligner)).label("jetstream::key_distribute::epoch_aligner")
+            .then(OperatorBuilder::built_by(upstream_exchanger)).label("jetstream::key_distribute::upstream_exchanger")
             .then(OperatorBuilder::built_by(move |ctx| {
                 icadd(Rc::new(partitioner), ctx)
-            }))
-            .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx)))
+            })).label("jetstream::key_distribute::icadd")
+            .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx))).label("jetstream::key_distribute::downstream_exchanger")
 
     }
 }

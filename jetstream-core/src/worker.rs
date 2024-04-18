@@ -27,7 +27,7 @@ impl Worker {
 
         Worker {
             operators: Vec::new(),
-            root_stream: JetStreamBuilder::from_operator(snapshot_op),
+            root_stream: JetStreamBuilder::from_operator(snapshot_op).label("jetstream::stream_root"),
             persistence_backend,
         }
     }
@@ -35,7 +35,7 @@ impl Worker {
     pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
         let mut new_op = pass_through_operator();
         selective_broadcast::link(self.root_stream.get_output_mut(), new_op.get_input_mut());
-        JetStreamBuilder::from_operator(new_op)
+        JetStreamBuilder::from_operator(new_op).label("jetstream::pass_through")
     }
 
     pub fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
@@ -43,7 +43,7 @@ impl Worker {
         stream: JetStreamBuilder<K, V, T>,
     ) {
         // call void to destroy all remaining messages
-        self.operators.extend(stream.void().into_operators())
+        self.operators.extend(stream.void().label("jetstream::stream_end").into_operators())
     }
 
     /// Unions N streams with identical output types into a single stream
@@ -96,7 +96,7 @@ impl Worker {
     pub fn build(
         self,
         config: crate::config::Config,
-    ) -> Result<RuntimeWorker, postbox::BuildError> {
+    ) -> Result<Runtime, postbox::BuildError> {
         // TODO: Add a `void` sink at the end of every dataflow to swallow
         // unused messages
 
@@ -116,15 +116,17 @@ impl Worker {
             .chain(self.operators)
             .enumerate()
             .map(|(i, x)| {
+                let label = x.get_label().unwrap_or(format!("operator_id_{}", i));
                 x.into_runnable(BuildContext::new(
                     config.worker_id,
                     i,
+                    label,
                     self.persistence_backend.latest(config.worker_id),
                     communication_backend.for_operator(i.clone()).unwrap(),
                 ))
             })
             .collect();
-        Ok(RuntimeWorker {
+        Ok(Runtime {
             worker_id: config.worker_id,
             operators,
             communication: communication_backend.connect()?,
@@ -132,12 +134,12 @@ impl Worker {
     }
 }
 
-pub struct RuntimeWorker {
+pub struct Runtime {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,
     communication: postbox::CommunicationBackend,
 }
-impl RuntimeWorker {
+impl Runtime {
     // pub fn get_frontier(&self) -> Option<Timestamp> {
     //     self.probes.last().map(|x| x.read())
     // }
@@ -147,6 +149,8 @@ impl RuntimeWorker {
     // }
 
     pub fn step(&mut self) {
+        let span = tracing::info_span!("scheduling::run_graph");
+        let _span_guard = span.enter();
         for op in self.operators.iter_mut().rev() {
             op.step();
             while op.has_queued_work() {

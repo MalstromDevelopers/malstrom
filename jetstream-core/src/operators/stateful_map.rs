@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use itertools::Itertools;
+use metrics::gauge;
 use serde::{de::DeserializeOwned, Serialize};
+use tracing::{event, Level};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -67,6 +69,8 @@ fn build_stateful_map<
     mut mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
 ) -> impl FnMut(&mut Receiver<K, VI, T>, &mut Sender<K, VO, T>, &mut OperatorContext) {
     let mut state: HashMap<K, S> = context.load_state().unwrap_or_default();
+    let state_size = gauge!("{}.stateful_map.state_size", "label" => format!("{}", context.label));
+        
     move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, ctx| {
         let msg = match input.recv() {
             Some(x) => x,
@@ -78,6 +82,7 @@ fn build_stateful_map<
                 value,
                 timestamp: time,
             }) => {
+                event!(Level::INFO, state_key_space = state.len());
                 let st = state.remove(&key).unwrap_or_default();
                 let (mapped, mut new_state) = mapper(&key, value, st);
                 if let Some(n) = new_state.take() {
@@ -107,7 +112,9 @@ fn build_stateful_map<
                 Message::DropKey(k)
             }
             // necessary to convince Rust it is a different generic type now
-            Message::AbsBarrier(b) => Message::AbsBarrier(b),
+            Message::AbsBarrier(mut b) => {
+                b.persist(&state, &ctx.operator_id);
+                Message::AbsBarrier(b)},
             // Message::Load(l) => {
             //     state = l.load(ctx.operator_id).unwrap_or_default();
             //     Message::Load(l)
@@ -116,6 +123,8 @@ fn build_stateful_map<
             Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
             Message::Epoch(x) => Message::Epoch(x),
         };
+
+        state_size.set(state.len() as f64);
         output.send(mapped)
     }
 }

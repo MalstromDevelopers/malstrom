@@ -80,4 +80,11 @@ where
         // + 1 for the tail
         self.operators.len() + 1
     }
+
+    /// Add a label to the last operator in this stream.
+    /// This can be useful when tracing operator execution
+    pub fn label(mut self, label: &str) -> Self {
+        self.tail.label(label.into());
+        self
+    } 
 }
