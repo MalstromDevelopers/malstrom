@@ -1,419 +1,221 @@
-mod grpc {
-    tonic::include_proto!("postbox");
-}
+use async_stream::stream;
+use errors::{BuildError, ClientCreationError, ConnectionError, RecvError, SendError};
+use grpc::generic_communication_client::GenericCommunicationClient;
+use grpc::generic_communication_server::{GenericCommunication, GenericCommunicationServer};
+use grpc::{ExchangeMessage, ExchangeResponse};
+use indexmap::IndexMap;
+use serde::{de::DeserializeOwned, Serialize};
+use tokio_stream::StreamExt;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use async_stream::stream;
-use flume::{Receiver, Sender, TryRecvError};
-use indexmap::IndexMap;
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
+use tonic::metadata::{Binary, BinaryMetadataKey, MetadataValue};
 use tonic::transport::{Server, Uri};
 use tonic::{Request, Response, Status};
+use tracing::log::warn;
 
-use bincode::serde::{decode_from_slice, encode_to_vec};
-use grpc::generic_communication_client::GenericCommunicationClient;
-use grpc::generic_communication_server::GenericCommunication;
-use grpc::generic_communication_server::GenericCommunicationServer;
-use grpc::{ExchangeMessage, ExchangeResponse};
+mod grpc {
+    tonic::include_proto!("postbox");
+}
+pub mod errors;
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
+const BC_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
-const CONFIG: bincode::config::Configuration = bincode::config::standard();
-
-pub trait WorkerId:
+pub trait Address:
     Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> WorkerId
-    for T
-{
-}
-pub trait OperatorId:
-    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
-{
-}
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> OperatorId
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> Address
     for T
 {
 }
 pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 
-type Binary = Vec<u8>;
-type EncodedOperator = Vec<u8>;
-
-#[derive(Error, Debug)]
-pub enum SendError {
-    #[error("Recipient not found {0}")]
-    RecipientNotFound(String),
-    #[error("Channel receiving end at the GRPC sender has been dropped")]
-    GrpcSenderDropped,
-    #[error("Message could not be serialized")]
-    EncodingError(#[from] bincode::error::EncodeError),
-}
-#[derive(Error, Debug)]
-pub enum RecvError {
-    #[error("Receiver task paniced")]
-    ReceiverLost,
-    #[error("Message could not be deserialized")]
-    DecodingError(#[from] bincode::error::DecodeError),
-}
-#[derive(Error, Debug)]
-pub enum BuildError {
-    #[error("Recipient not found {0}")]
-    OperatorNotFound(String),
-    #[error("WorkerId could not be serialized")]
-    WorkerEncodingError,
-    #[error("OperatorId could not be serialized")]
-    OperatorEncodingError,
-    #[error("Error creating tokio runtime")]
-    RuntimeCreationFailed,
-}
+type Raw = Vec<u8>;
 
 #[derive(Clone)]
-struct MessageWrapper {
-    recv_operator: Binary,
-    message: Binary,
-}
-
-pub struct Postbox<W, O> {
-    this_worker: W,
-    this_operator: O,
-    // serialized representation of O
-    this_operator_enc: EncodedOperator,
-    incoming: flume::Receiver<Binary>,
-    outgoing: IndexMap<W, flume::Sender<MessageWrapper>>,
-}
-
-pub struct RecvIterator<'a, W, O, D>(&'a Postbox<W, O>, PhantomData<D>);
-
-#[derive(Serialize, Deserialize)]
-pub struct NetworkMessage<W, O, D> {
-    pub sender_worker: W,
-    pub sender_operator: O,
-    pub data: D,
-    // private field to prevent public construction
-    private: PhantomData<()>,
-}
-
-impl<'a, W, O, D> Iterator for RecvIterator<'a, W, O, D>
-where
-    W: WorkerId,
-    O: OperatorId,
-    D: Data,
-{
-    type Item = NetworkMessage<W, O, D>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.recv::<D>().expect("Postbox error")
-    }
-}
-
-impl<W, O> Postbox<W, O>
-where
-    W: WorkerId,
-    O: OperatorId,
-{
-    fn recv<D: Data>(&self) -> Result<Option<NetworkMessage<W, O, D>>, RecvError> {
-        match self.incoming.try_recv() {
-            Ok(x) => Ok(Some(decode_from_slice(&x, CONFIG)?.0)),
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Err(RecvError::ReceiverLost),
-        }
-    }
-
-    pub fn recv_all<D: Data>(&self) -> RecvIterator<'_, W, O, D> {
-        RecvIterator(self, PhantomData)
-    }
-
-    // pub fn recv_with_sender<D: Data>(&self) -> Result<Option<(W, D)>, RecvError> {
-    //     match self.incoming.try_recv() {
-    //         Ok(x) => {
-    //             let sender = x.0;
-    //             let data = decode_from_slice(&x.1, CONFIG)?.0;
-    //             Ok(Some((sender, data)))
-    //         }
-    //         Err(TryRecvError::Empty) => Ok(None),
-    //         Err(TryRecvError::Disconnected) => Err(RecvError::ReceiverLost),
-    //     }
-    // }
-
-    pub fn get_peers(&self) -> Vec<&W> {
-        self.outgoing.keys().collect()
-    }
-
-    pub fn send_same<D: Data>(&self, recipient: &W, message: D) -> Result<(), SendError> {
-        let net_msg = NetworkMessage {
-            sender_worker: self.this_worker.clone(),
-            sender_operator: self.this_operator.clone(),
-            data: message,
-            private: PhantomData,
-        };
-        let encoded = encode_to_vec(net_msg, CONFIG)?;
-        self.send_encoded(
-            recipient,
-            MessageWrapper {
-                recv_operator: self.this_operator_enc.clone(),
-                message: encoded,
-            },
-        )
-    }
-
-    pub fn send_other_operator<D: Data>(
-        &self,
-        recipient: &W,
-        recipient_op: &O,
-        message: D,
-    ) -> Result<(), SendError> {
-        let net_msg = NetworkMessage {
-            sender_worker: self.this_worker.clone(),
-            sender_operator: self.this_operator.clone(),
-            data: message,
-            private: PhantomData,
-        };
-        let encoded = encode_to_vec(net_msg, CONFIG)?;
-        self.send_encoded(
-            recipient,
-            MessageWrapper {
-                recv_operator: bincode::serde::encode_to_vec(recipient_op, CONFIG)?,
-                message: encoded,
-            },
-        )
-    }
-
-    fn send_encoded(&self, recipient: &W, message: MessageWrapper) -> Result<(), SendError> {
-        self.outgoing
-            .get(recipient)
-            .ok_or(SendError::RecipientNotFound(format!("{recipient:?}")))?
-            .send(message)
-            .map_err(|_| SendError::GrpcSenderDropped)
-    }
-
-    pub fn broadcast<D: Data>(&self, message: D) -> Result<(), SendError> {
-        let targets = self.get_peers();
-        let net_msg = NetworkMessage {
-            sender_worker: self.this_worker.clone(),
-            sender_operator: self.this_operator.clone(),
-            data: message,
-            private: PhantomData,
-        };
-        let encoded = MessageWrapper {
-            recv_operator: self.this_operator_enc.clone(),
-            message: encode_to_vec(net_msg, CONFIG)?,
-        };
-        let messages = itertools::repeat_n(encoded, targets.len());
-        let res: Result<Vec<()>, SendError> = itertools::zip_eq(targets, messages)
-            .map(|(w, m)| self.send_encoded(w, m))
-            .collect();
-        res.map(|_| ())
-    }
-}
-
-pub struct BackendBuilder<W, O> {
-    this_worker: W,
+struct PostboxConfig {
     connection_timeout: Duration,
     retry_interval: Duration,
     retry_count: usize,
-    listen_addr: SocketAddr,
-    outgoing: IndexMap<W, flume::Sender<MessageWrapper>>,
-    outgoing_rx: IndexMap<(W, Uri), flume::Receiver<MessageWrapper>>,
-    incoming: IndexMap<O, flume::Receiver<Binary>>,
-    incoming_tx: Vec<(O, flume::Sender<Binary>)>,
-    operator_id: PhantomData<O>,
+    queue_size: usize,
 }
-
-impl<W, O> BackendBuilder<W, O>
-where
-    W: WorkerId,
-    O: OperatorId,
-{
-    pub fn new(
-        this_worker: W,
-        listen_addr: SocketAddr,
-        peers: Vec<(W, Uri)>,
-        operators: Vec<O>,
-        queue_size: usize,
-    ) -> Self {
-        let mut incoming = IndexMap::with_capacity(operators.len());
-        let mut incoming_tx = Vec::with_capacity(operators.len());
-        for op in operators.into_iter() {
-            let (tx, rx) = flume::bounded(queue_size);
-            incoming_tx.push((op.clone(), tx));
-            incoming.insert(op, rx);
-        }
-        let mut outgoing = IndexMap::with_capacity(peers.len());
-        let mut outgoing_rx = IndexMap::with_capacity(peers.len());
-        for (w, uri) in peers.into_iter() {
-            let (tx, rx) = flume::bounded(queue_size);
-            outgoing.insert(w.clone(), tx);
-            outgoing_rx.insert((w, uri), rx);
-        }
+impl Default for PostboxConfig {
+    fn default() -> Self {
         Self {
-            this_worker,
             connection_timeout: Duration::from_secs(5),
             retry_interval: Duration::from_secs(5),
             retry_count: 12,
-            listen_addr,
-            outgoing,
-            outgoing_rx,
-            incoming,
-            incoming_tx,
-            operator_id: PhantomData,
+            queue_size: 4096,
         }
     }
+}
 
-    pub fn with_connection_timeout(mut self, connection_timeout: Duration) -> Self {
-        self.connection_timeout = connection_timeout;
-        self
-    }
-
-    pub fn with_retry_interval(mut self, retry_interval: Duration) -> Self {
-        self.retry_interval = retry_interval;
-        self
-    }
-
-    pub fn with_retry_count(mut self, retry_count: usize) -> Self {
-        self.retry_count = retry_count;
-        self
-    }
-
-    pub fn for_operator(&self, operator_id: O) -> Result<Postbox<W, O>, BuildError> {
-        let incoming = self
-            .incoming
-            .get(&operator_id)
-            .ok_or(BuildError::OperatorNotFound(format!("{operator_id:?}")))?
-            .clone();
-        let op_enc =
-            encode_to_vec(&operator_id, CONFIG).map_err(|_| BuildError::OperatorEncodingError)?;
-        Ok(Postbox {
-            this_worker: self.this_worker.clone(),
-            this_operator: operator_id,
-            // this_operator: operator_id,
-            this_operator_enc: op_enc,
-            incoming,
-            outgoing: self.outgoing.clone(),
-        })
-    }
-
-    pub fn connect(self) -> Result<CommunicationBackend, BuildError> {
-        let this_worker =
-            encode_to_vec(self.this_worker, CONFIG).map_err(|_| BuildError::WorkerEncodingError)?;
-        CommunicationBackend::new_connect(
-            this_worker,
-            self.connection_timeout,
-            self.retry_interval,
-            self.retry_count,
-            self.listen_addr,
-            self.outgoing_rx,
-            self.incoming_tx,
-        )
+pub struct PostboxBuilder<A> {
+    config: PostboxConfig,
+    address_type: PhantomData<A>
+}
+impl<A> Default for PostboxBuilder<A> {
+    fn default() -> Self {
+        Self { config: PostboxConfig::default(), address_type: PhantomData }
     }
 }
 
-pub struct CommunicationBackend {
-    _clients: Vec<GrpcSender>,
-    _server_task: JoinHandle<()>,
-    _rt: Runtime,
-}
+impl<A> PostboxBuilder<A> where A: Address {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-impl CommunicationBackend {
-    fn new_connect<W: WorkerId, O: OperatorId>(
-        this_worker: Binary,
-        connection_timeout: Duration,
-        retry_interval: Duration,
-        retry_count: usize,
-        listen_addr: SocketAddr,
-        outgoing_rx: IndexMap<(W, Uri), flume::Receiver<MessageWrapper>>,
-        incoming_tx: Vec<(O, flume::Sender<Binary>)>,
-    ) -> Result<Self, BuildError> {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| BuildError::RuntimeCreationFailed)?;
+    pub fn with_connection_timeout(mut self, timeout: Duration) -> Self {
+        self.config.connection_timeout = timeout;
+        self
+    }
+    pub fn with_retry_interval(mut self, interval: Duration) -> Self {
+        self.config.retry_interval = interval;
+        self
+    }
+    pub fn with_retry_count(mut self, count: usize) -> Self {
+        self.config.retry_count = count;
+        self
+    }
+    pub fn with_queue_size(mut self, size: usize) -> Self {
+        self.config.queue_size = size;
+        self
+    }
 
-        let server = GrpcReceiver::new(incoming_tx);
-        let _guard = rt.enter();
+    /// Build this postbox with the current configuration and starts the
+    /// Postbox server
+    pub fn build(self, socket: SocketAddr, address_resolver: impl FnMut(&A) -> Option<Uri> + 'static) -> Result<Postbox<A>, BuildError> {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        let remotes = AddressMap::default();
+        let server = PostBoxServer::new(remotes.clone(), self.config.clone());
 
         let server_task = rt.spawn(async move {
             Server::builder()
                 .add_service(GenericCommunicationServer::new(server))
-                .serve(listen_addr)
+                .serve(socket)
                 .await
                 .unwrap();
         });
-        std::thread::sleep(Duration::from_secs(1));
-
-        let mut clients = Vec::with_capacity(outgoing_rx.len());
-        for (k, v) in outgoing_rx.into_iter() {
-            let sender = GrpcSender::new_connect(
-                &rt,
-                this_worker.clone(),
-                k.1,
-                v,
-                connection_timeout,
-                retry_interval,
-                retry_count,
-            );
-            clients.push(sender);
-        }
-
-        while !clients.iter().all(|x| x.is_connected()) {
-            std::thread::sleep(Duration::from_millis(1))
-        }
-
-        Ok(Self {
-            _clients: clients,
-            _server_task: server_task,
-            _rt: rt,
+        Ok(Postbox{
+            rt,
+            server_task,
+            remotes,
+            config: self.config,
+            address_resolver: Box::new(address_resolver)
         })
     }
 }
 
-struct GrpcSender {
-    _task: JoinHandle<()>,
-    is_connected: Arc<RwLock<bool>>,
+type AddressMap<A> = Arc<Mutex<IndexMap<A, (flume::Sender<Raw>, flume::Receiver<Raw>)>>>;
+
+/// The postbox backend
+pub struct Postbox<A> {
+    rt: Runtime,
+    server_task: JoinHandle<()>,
+
+    // Any messages from these addresses are
+    // placed into the sender. The map can be accepted by either creating a client
+    // for an address (key) locally, or the client connecting to the server.
+    // We allow both ends (client & server) to add to this map, to avoid deadlocks
+    // on the cluster level
+    // Clients can clone the Receiver to receive messages from a remote
+    remotes: Arc<Mutex<IndexMap<A, (flume::Sender<Raw>, flume::Receiver<Raw>)>>>,
+
+    config: PostboxConfig,
+    address_resolver: Box<dyn FnMut(&A) -> Option<Uri>>,
 }
 
-impl GrpcSender {
-    pub fn new_connect(
-        rt: &Runtime,
-        this_worker: Binary,
-        addr: Uri,
-        recv: Receiver<MessageWrapper>,
-        connection_timeout: Duration,
-        retry_interval: Duration,
-        retry_count: usize,
-    ) -> Self {
-        let is_connected = Arc::new(RwLock::new(false));
-        let ready = is_connected.clone();
+impl<A> Postbox<A>
+where
+    A: Address,
+{
+    /// Creates a client and immediatly connects it to the given address
+    pub fn new_client<T: Data>(
+        &mut self,
+        connect_to: A,
+        this_client: A,
+    ) -> Result<Client<T>, errors::ClientCreationError> {
+        let endpoint = (self.address_resolver)(&connect_to).ok_or(
+            ClientCreationError::AddressResolutionError(format!("{:?}", connect_to)),
+        )?;
+        let incoming = {
+            self.remotes
+                .lock()
+                .unwrap()
+                .entry(this_client.clone())
+                .or_insert_with(|| flume::bounded(self.config.queue_size))
+                .1
+                .clone()
+        };
+        Ok(Client::new_connect(
+            connect_to,
+            endpoint,
+            incoming,
+            self.rt.handle().clone(),
+            self.config.clone(),
+        )?)
+    }
+}
 
+/// A client for bi-directional communication with a given address
+pub struct Client<T> {
+    outgoing: flume::Sender<Raw>,
+    incoming: flume::Receiver<Raw>,
+
+    // keep a handle to keep the runtime alive
+    rt: Handle,
+    grpc_sender: JoinHandle<()>,
+
+    msg_type: PhantomData<T>,
+}
+
+/// BASE64 encode a Postbox address
+fn encode_address<A: Address>(
+    address: A,
+) -> Result<MetadataValue<Binary>, bincode::error::EncodeError> {
+    let address = bincode::serde::encode_to_vec(address, BC_CONFIG)?;
+    Ok(MetadataValue::from_bytes(&address))
+}
+
+impl<T> Client<T>
+where
+    T: Data,
+{
+    /// Create a client and connect it immediately
+    fn new_connect<A: Address>(
+        address: A,
+        endpoint: Uri,
+        incoming: flume::Receiver<Raw>,
+        rt: Handle,
+        config: PostboxConfig,
+    ) -> Result<Self, ConnectionError> {
+        let (out_tx, out_rx) = flume::bounded::<Raw>(config.queue_size);
+
+        let address = encode_address(address)?;
         let _guard = rt.enter();
-        let _task = rt.spawn(async move {
-            let mut retries_left = retry_count;
+        let task = rt.spawn(async move {
+            let mut retries_left = config.retry_count;
             let stream = stream! {
-                for await value in recv.into_stream() {
-                    yield ExchangeMessage {
-                        data: value.message,
-                        recipient_operator: value.recv_operator
-                    };
+                loop {
+                    match out_rx.recv_async().await {
+                        Ok(value) => {yield ExchangeMessage { data: value, }},
+                        Err(_) => break // channel ended
+                    }
                 }
             };
-            let request = Request::new(stream);
-
+            let mut request = Request::new(stream);
+            request.metadata_mut().insert_bin(BinaryMetadataKey::from_static("postbox-target-bin"), address);
             let connection = loop {
-                match tonic::transport::Endpoint::new(addr.clone())
+                match tonic::transport::Endpoint::new(endpoint.clone())
                     .unwrap()
-                    .connect_timeout(connection_timeout)
+                    .connect_timeout(config.connection_timeout)
                     .connect()
                     .await
                 {
@@ -425,15 +227,13 @@ impl GrpcSender {
                         if retries_left == 0 {
                             e.expect("Error connecting to remote");
                         } else {
-                            tokio::time::sleep(retry_interval).await;
+                            warn!("Timeout connecting to {:?}. Trying {} more times...", endpoint, retries_left);
+                            tokio::time::sleep(config.retry_interval).await;
                             continue;
                         }
                     }
                 }
             };
-            {
-                *ready.write().unwrap() = true;
-            }
             let mut client = GenericCommunicationClient::new(connection);
             match client.generic_exchange(request).await {
                 Ok(_) => (),
@@ -442,71 +242,162 @@ impl GrpcSender {
                 }
             }
         });
-        Self {
-            _task,
-            is_connected,
-        }
+
+        Ok(Self {
+            outgoing: out_tx,
+            incoming,
+            rt,
+            grpc_sender: task,
+            msg_type: PhantomData,
+        })
     }
 
-    pub fn is_connected(&self) -> bool {
-        *self.is_connected.read().unwrap()
+    /// Queue up a message to be sent by this client
+    pub fn send(&self, msg: T) -> Result<(), SendError> {
+        let encoded = bincode::serde::encode_to_vec(msg, BC_CONFIG)?;
+        self.outgoing.send(encoded).map_err(|_| SendError::DeadClientError)?;
+        Ok(())
+    }
+
+    /// Receive the next buffered message if any
+    pub fn recv(&self) -> Option<Result<T, RecvError>> {
+        let encoded = self.incoming.try_recv().ok()?;
+        let decoded = bincode::serde::decode_from_slice(&encoded, BC_CONFIG).map_err(|e| RecvError::EncodingError(e)).map(|x| x.0);
+        Some(decoded)
     }
 }
 
-impl Drop for GrpcSender {
+impl<T> Drop for Client<T>  {
     fn drop(&mut self) {
-        // we need to wait a bit to wait for the stream to end
-        // so the async task finishes and we don't blurp out a giant
-        // tokio stacktrace on drop
-        for _ in 0..200 {
-            // this is hacky
-            if self._task.is_finished() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+        // drain the channel
+        while !self.outgoing.is_empty() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // dropping the sender should cause the stream
+        // consumed by the GRPC client to end, which will lead to
+        // the client finishing
+        // a bit hacky
+        let (mut tx, _) = flume::bounded(0);
+        std::mem::swap(&mut tx, &mut self.outgoing);
+        drop(tx);
+        // also a bit hacky, since we can not take ownership of the JoinHandle
+        while !self.grpc_sender.is_finished() {
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }
 
-struct GrpcReceiver<O> {
-    channels: IndexMap<O, Sender<Binary>>,
+struct PostBoxServer<A> {
+    // key: client addr, value: keyed by sender
+    channels: AddressMap<A>,
+    config: PostboxConfig
 }
-impl<O> GrpcReceiver<O>
-where
-    O: OperatorId,
-{
-    fn new(senders: Vec<(O, Sender<Binary>)>) -> Self {
-        let inner = IndexMap::from_iter(senders);
-        Self { channels: inner }
+
+impl<A> PostBoxServer<A> {
+    fn new(channels: AddressMap<A>, config: PostboxConfig) -> Self {
+        Self { channels, config }
     }
 }
 
 #[tonic::async_trait]
-impl<O> GenericCommunication for GrpcReceiver<O>
+impl<A> GenericCommunication for PostBoxServer<A>
 where
-    O: OperatorId,
+    A: Address,
 {
     async fn generic_exchange(
         &self,
         request: Request<tonic::Streaming<ExchangeMessage>>,
     ) -> Result<Response<ExchangeResponse>, Status> {
-        let channels = self.channels.clone();
-        let mut stream = request.into_inner();
+        let target = request
+            .metadata()
+            .get_bin("postbox-target-bin")
+            .ok_or(Status::invalid_argument("Missing 'postbox-target-bin' header"))?
+            .to_bytes()
+            .map_err(|_| Status::invalid_argument("Invalid 'postbox-target-bin' header"))?;
+        
+        let target = bincode::serde::decode_from_slice(&target, BC_CONFIG)
+            .map_err(|_| Status::invalid_argument("Error decoding 'postbox-target-bin' header"))?.0;
 
+        let sender = {
+            self.channels.lock().unwrap().entry(target).or_insert_with(|| flume::bounded(self.config.queue_size)).0.clone()
+        };
+
+        let mut stream = request.into_inner();
         while let Some(msg) = stream.next().await {
             let msg = msg?;
-            let operator_id: O = decode_from_slice(&msg.recipient_operator, CONFIG)
-                .map_err(|_| Status::invalid_argument("Error decoding operator id"))?
-                .0;
-            let sender = channels
-                .get(&operator_id)
-                .ok_or(Status::out_of_range("Operator ID unknown"))?;
             sender
                 .send_async(msg.data)
                 .await
+                // should never happen unless the postbox is dropped
                 .map_err(|_| Status::internal("Receivers dropped"))
                 .expect("All receivers have been dropped, no one is listening.");
         }
         Ok(Response::new(ExchangeResponse {}))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::net::{SocketAddr, SocketAddrV4, TcpListener};
+
+    use tonic::{client, transport::Uri};
+
+    use crate::{Address, Postbox, PostboxBuilder};
+
+    fn get_socket() -> SocketAddr {
+        // find a free port
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            port
+        };
+        SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), port))
+    }
+
+    /// Returns a very ego-centric postbox (it resolves all addresses to itself)
+    fn self_postbox<A: Address>() -> Postbox<A> {
+        let sock = get_socket();
+        let here = Uri::builder().scheme("http").authority(sock.to_string()).path_and_query("").build().unwrap();
+        PostboxBuilder::<A>::new().build(sock, move |_| Some(here.clone())).unwrap()
+    }
+
+    /// returns a pair of postboxes, that always connect to each other
+    fn pair_postbox<A: Address>() -> (Postbox<A>, Postbox<A>) {
+        let sock_a = get_socket();
+        let sock_b = get_socket();
+
+        let uri_a = Uri::builder().scheme("http").authority(sock_a.to_string()).path_and_query("").build().unwrap();
+        let uri_b = Uri::builder().scheme("http").authority(sock_b.to_string()).path_and_query("").build().unwrap();
+
+        let pb_a = PostboxBuilder::<A>::new().build(sock_a, move |_| Some(uri_b.clone())).unwrap();
+        let pb_b = PostboxBuilder::<A>::new().build(sock_b, move |_| Some(uri_a.clone())).unwrap();
+        (pb_a, pb_b)
+    }
+
+    /// Check we do not sputter a giant tokio stack trace all over the console
+    /// but instead end the client with grace and elegance
+    #[test]
+    fn drop_client_gracefully() {
+        let mut pb: Postbox<String> = self_postbox();
+        let client = pb.new_client::<()>("foobar".into(), "baz".into()).unwrap();
+        drop(client)
+    }
+
+    /// Check we can pass a message around
+    #[test]
+    fn send_to_remote() {
+        let (mut pb_a, mut pb_b) = pair_postbox::<String>();
+        let client_a = pb_a.new_client::<i32>("foo".into(), "bar".into()).unwrap();
+        client_a.send(42).unwrap();
+
+        let client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
+        loop {
+            if let Some(msg) = client_b.recv().map(|x| x.unwrap()) {
+                assert_eq!(msg, 42);
+                break;
+            }
+        }
     }
 }

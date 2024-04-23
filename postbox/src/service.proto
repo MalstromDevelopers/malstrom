@@ -14,5 +14,4 @@ message ExchangeResponse {
 message ExchangeMessage {
     // TODO figure out how to use tonic without protobuf
     bytes data = 1;
-    bytes recipient_operator = 2;
 }
