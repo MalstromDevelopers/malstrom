@@ -139,7 +139,7 @@ where
         }
     }
 
-    pub(super) fn try_into_collect(self) -> Result<CollectDistributor<K, V, T>, Self> {
+    pub(super) fn try_into_collect(self, ctx: &mut OperatorContext) -> Result<CollectDistributor<K, V, T>, Self> {
         if let Some(interrogate) = self.running_interrogate {
             match interrogate.try_unwrap() {
                 Ok(whitelist) => {
@@ -150,6 +150,7 @@ where
                         self.old_worker_set,
                         self.new_worker_set,
                         self.version,
+                        ctx
                     );
                     Ok(collector)
                 }
@@ -168,7 +169,7 @@ where
         mut self,
         input: &mut Receiver<K, VersionedMessage<V>, T>,
         output: &mut Sender<K, TargetedMessage<V>, T>,
-        ctx: &OperatorContext,
+        mut ctx: &mut OperatorContext,
         partitioner: Rc<dyn WorkerPartitioner<K>>,
     ) -> DistributorKind<K, V, T> {
         match &self.running_interrogate {
@@ -205,7 +206,7 @@ where
                 }
             }
         }
-        match self.try_into_collect() {
+        match self.try_into_collect(&mut ctx) {
             Ok(x) => DistributorKind::Collect(x),
             Err(x) => DistributorKind::Interrogate(x),
         }

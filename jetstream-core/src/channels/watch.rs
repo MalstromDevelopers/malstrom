@@ -80,7 +80,6 @@ mod tests {
 
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
-    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_send_recv() {

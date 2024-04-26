@@ -1,9 +1,10 @@
 use async_stream::stream;
-use errors::{BuildError, ClientCreationError, ConnectionError, RecvError, SendError};
+use errors::{BuildError, ClientCreationError, ConnectionError, SendError};
 use grpc::generic_communication_client::GenericCommunicationClient;
 use grpc::generic_communication_server::{GenericCommunication, GenericCommunicationServer};
 use grpc::{ExchangeMessage, ExchangeResponse};
 use indexmap::IndexMap;
+use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio_stream::StreamExt;
 use std::fmt::Debug;
@@ -26,6 +27,7 @@ pub mod errors;
 
 const BC_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
+/// Any addresses must satisfy this trait
 pub trait Address:
     Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
 {
@@ -34,6 +36,7 @@ impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug +
     for T
 {
 }
+/// Data which is transferrable via Postbox
 pub trait Data: Serialize + DeserializeOwned {}
 impl<T: Serialize + DeserializeOwned> Data for T {}
 
@@ -105,7 +108,7 @@ impl<A> PostboxBuilder<A> where A: Address {
         });
         Ok(Postbox{
             rt,
-            server_task,
+            _server_task: server_task,
             remotes,
             config: self.config,
             address_resolver: Box::new(address_resolver)
@@ -115,10 +118,10 @@ impl<A> PostboxBuilder<A> where A: Address {
 
 type AddressMap<A> = Arc<Mutex<IndexMap<A, (flume::Sender<Raw>, flume::Receiver<Raw>)>>>;
 
-/// The postbox backend
+/// The postbox backend, this contains the server and also serves as a builder for new clients
 pub struct Postbox<A> {
     rt: Runtime,
-    server_task: JoinHandle<()>,
+    _server_task: JoinHandle<()>,
 
     // Any messages from these addresses are
     // placed into the sender. The map can be accepted by either creating a client
@@ -170,13 +173,13 @@ pub struct Client<T> {
     incoming: flume::Receiver<Raw>,
 
     // keep a handle to keep the runtime alive
-    rt: Handle,
+    _rt: Handle,
     grpc_sender: JoinHandle<()>,
 
     msg_type: PhantomData<T>,
 }
 
-/// BASE64 encode a Postbox address
+/// Encode a Postbox address to a GRPC Metadata value
 fn encode_address<A: Address>(
     address: A,
 ) -> Result<MetadataValue<Binary>, bincode::error::EncodeError> {
@@ -246,7 +249,7 @@ where
         Ok(Self {
             outgoing: out_tx,
             incoming,
-            rt,
+            _rt: rt,
             grpc_sender: task,
             msg_type: PhantomData,
         })
@@ -260,10 +263,27 @@ where
     }
 
     /// Receive the next buffered message if any
-    pub fn recv(&self) -> Option<Result<T, RecvError>> {
+    pub fn recv(&self) -> Option<Result<T, bincode::error::DecodeError>> {
         let encoded = self.incoming.try_recv().ok()?;
-        let decoded = bincode::serde::decode_from_slice(&encoded, BC_CONFIG).map_err(|e| RecvError::EncodingError(e)).map(|x| x.0);
+        let decoded = bincode::serde::decode_from_slice(&encoded, BC_CONFIG).map(|x| x.0);
         Some(decoded)
+    }
+
+    /// Iterator over all queued incoming messages.
+    pub fn recv_all<'a>(&'a self) -> RecvIterator<'a, T> {
+        RecvIterator { client: &self }
+    }
+}
+
+pub struct RecvIterator<'a, T> {
+    client: &'a Client<T>
+}
+
+impl<'a, T> Iterator for RecvIterator<'a, T> where T: Data{
+    type Item = Result<T, bincode::error::DecodeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.client.recv()
     }
 }
 
@@ -337,13 +357,24 @@ where
     }
 }
 
+/// Sends a message to multiple clients by copying it as often as necessary.
+/// This function returns an error as soon as one send fails. Therefore broadcasting
+/// may result in partially broadcasted messages.
+pub fn broadcast<'a, T: Data + Clone + 'a>(clients: impl Iterator<Item = &'a Client<T>>, msg: T) -> Result<(), SendError> {
+    for c in clients {
+        c.send(msg.clone())?;
+    };
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
-    use std::net::{SocketAddr, SocketAddrV4, TcpListener};
+    use std::{net::{SocketAddr, SocketAddrV4, TcpListener}, rc::Rc, time::Duration};
 
+    use itertools::Itertools;
     use tonic::{client, transport::Uri};
 
-    use crate::{Address, Postbox, PostboxBuilder};
+    use crate::{broadcast, Address, Client, Postbox, PostboxBuilder};
 
     fn get_socket() -> SocketAddr {
         // find a free port
@@ -396,6 +427,61 @@ mod test {
         loop {
             if let Some(msg) = client_b.recv().map(|x| x.unwrap()) {
                 assert_eq!(msg, 42);
+                break;
+            }
+        }
+    }
+
+    /// Check all messages are sent out before the client can be dropped
+    #[test]
+    fn send_all_before_drop() {
+        let (mut pb_a, mut pb_b) = pair_postbox::<String>();
+        let client_a = pb_a.new_client::<i32>("foo".into(), "bar".into()).unwrap();
+        for i in 0..500 {
+            client_a.send(i).unwrap();
+        }
+        drop(client_a);
+        let client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
+        let mut collected = Vec::with_capacity(500);
+        while let Some(Ok(x)) = client_b.recv()  {
+            collected.push(x)
+        };
+        assert_eq!(collected, (0..500).into_iter().collect::<Vec<i32>>())
+    }
+
+    #[test]
+    fn broadcast_broadcasts() {
+        let socks = (0..5).map(|_| get_socket()).collect_vec();
+        let uris = socks.iter().map(|s| Uri::builder().scheme("http").authority(s.to_string()).path_and_query("").build().unwrap()).collect_vec();
+        let resolver = move |i: &usize| uris.get(*i).map(|x| x.clone());
+
+        let mut pbs = socks.into_iter().map(|s| PostboxBuilder::new().build(s, resolver.clone()).unwrap()).collect_vec();
+        let clients = (1..5).map(|i| pbs.get_mut(0).unwrap().new_client(i, 0).unwrap()).collect_vec();
+
+        broadcast(clients.iter(), "Hello World".to_string()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        for i in 1..5 {
+            let client: Client<String> = pbs.get_mut(i).unwrap().new_client(0, i).unwrap();
+            assert_eq!(client.recv().unwrap().unwrap(), "Hello World".to_string())
+        }
+    }
+
+    #[test]
+    fn client_is_iterable() {
+        let (mut pb_a, mut pb_b) = pair_postbox::<String>();
+        let client_a = pb_a.new_client::<i32>("foo".into(), "bar".into()).unwrap();
+        client_a.send(42).unwrap();
+        client_a.send(43).unwrap();
+
+        let mut client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let messages = client_b.recv_all().map(|x| x.unwrap()).collect_vec();
+        assert_eq!(messages, vec![42, 43]);
+
+        client_a.send(44).unwrap();
+        loop {
+            if let Some(msg) = client_b.recv_all().next() {
+                assert_eq!(msg.unwrap(), 44);
                 break;
             }
         }

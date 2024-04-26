@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, rc::Rc};
 
 use indexmap::{IndexMap, IndexSet};
+use postbox::{broadcast, Client};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -26,13 +27,14 @@ enum Whitelist<K> {
     Pruned,
 }
 
-#[derive(Debug)]
 pub(super) struct CollectDistributor<K, V, T> {
     worker_id: WorkerId,
     whitelist: IndexSet<K>,
     hold: IndexMap<K, Vec<DataMessage<K, V, T>>>,
     old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
+    // this contains the union of old and new workers
+    clients: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>>,
     version: Version,
     // if we receive another scale instruction during the interrogation,
     // there is no real good way for us to handle that, so we will
@@ -60,13 +62,17 @@ where
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
+        ctx: &mut OperatorContext
     ) -> Self {
+        let workers: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>> = old_worker_set.union(&new_worker_set).map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id))).collect();
+
         Self {
             worker_id,
             whitelist,
             hold: IndexMap::new(),
             old_worker_set,
             new_worker_set,
+            clients: workers,
             version: version + 1,
             current_collect: None,
             done_workers: IndexSet::new(),
@@ -84,7 +90,7 @@ where
     ) -> Result<DistributorKind<K, V, T>, Self> {
 
         if self.whitelist.is_empty() && self.current_collect.is_none() && !self.done_workers.contains(&self.worker_id) {
-            ctx.communication.broadcast(DirectlyExchangedMessage::<K>::Done).unwrap();
+            broadcast(self.clients.values(), DirectlyExchangedMessage::<K>::Done).unwrap();
             self.done_workers.insert(self.worker_id.clone());
         }
 
@@ -223,18 +229,21 @@ where
     ) -> DistributorKind<K, V, T> {
         self.lifecycle_collector(output, partitioner.as_ref(), ctx);
 
-        for x in ctx.communication.recv_all::<DirectlyExchangedMessage<K>>() {
-            match x.data {
-                DirectlyExchangedMessage::Done => {
-                    self.done_workers.insert(x.sender_worker);
+        for (sender, client) in self.clients.iter() {
+            for x in client.recv_all().map(|x| x.unwrap()) {
+                match x {
+                    DirectlyExchangedMessage::Done => {
+                        self.done_workers.insert(*sender);
+                    }
+                    DirectlyExchangedMessage::Acquire(a) => {
+                        println!("Got Acquire");
+                    
+                        output.send(Message::Acquire(a.into()))
+                    },
                 }
-                DirectlyExchangedMessage::Acquire(a) => {
-                    println!("Got Acquire");
-                
-                    output.send(Message::Acquire(a.into()))
-                },
             }
         }
+
         if self.barrier.is_none() {
             // can't keep receiving messages if barred
             if let Some(msg) = input.recv() {
@@ -279,15 +288,10 @@ where
             Some(x) => match x.try_unwrap() {
                 Ok((key, collection)) => {
                     let target = partitioner(&key, &self.new_worker_set);
-                    ctx.communication
-                        .send_same(
-                            target,
-                            DirectlyExchangedMessage::Acquire(NetworkAcquire::new(
-                                key.clone(),
-                                collection,
-                            )),
-                        )
-                        .unwrap();
+                    self.clients.get(target).unwrap().send(DirectlyExchangedMessage::Acquire(NetworkAcquire::new(
+                        key.clone(),
+                        collection,
+                    ))).unwrap();
                     println!("Sent Acquire");
 
                     // send out any held back messages

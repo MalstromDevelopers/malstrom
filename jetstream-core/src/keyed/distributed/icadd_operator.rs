@@ -18,7 +18,7 @@ use super::{
 
 /// Control messages which the ICADD controllers exchange
 /// directly between each other
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(super) enum DirectlyExchangedMessage<K> {
     Done,
     Acquire(NetworkAcquire<K>),
@@ -40,7 +40,7 @@ pub(crate) fn icadd<K: DistKey, V: MaybeData, T: DistTimestamp>(
     partitioner: Rc<dyn WorkerPartitioner<K>>,
     ctx: &BuildContext,
 ) -> impl Logic<K, VersionedMessage<V>, T, K, TargetedMessage<V>, T> {
-    let mut worker_set: IndexSet<WorkerId> = ctx.communication.get_peers().into_iter().cloned().collect();
+    let mut worker_set: IndexSet<WorkerId> = ctx.get_worker_ids().collect();
     worker_set.insert(ctx.worker_id);
     let normal_dist: NormalDistributor<K, V, T> = ctx
         .load_state()

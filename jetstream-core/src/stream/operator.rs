@@ -1,6 +1,7 @@
 use std::any::Any;
+use std::ops::Range;
 
-use postbox::Postbox;
+use postbox::{Client, Postbox};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -22,40 +23,32 @@ use crate::Data;
 pub struct OperatorContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
-    pub communication: &'a Postbox<WorkerId, OperatorId>,
+    communication: &'a mut Postbox<(WorkerId, OperatorId)>,
 }
 
 impl<'a> OperatorContext<'a> {
-    /// Instruct the runtime to drop this operator immediately.
-    /// When an operator has invoked this method, it will never be
-    /// scheduled again.
-    pub fn drop_this_operator(&self) -> () {
-        todo!()
+    /// Create a client for inter-worker communication
+    pub fn create_communication_client<T: postbox::Data>(&mut self, other_worker: WorkerId, other_operator: OperatorId) -> Client<T> {
+        self.communication.new_client((other_worker, other_operator), (self.worker_id, self.operator_id)).unwrap()
     }
-
-    // /// Instruct the worker to create n more instances of this operator
-    // /// This will be created as siblings of this operator, sharing the same
-    // /// position in the operator graph. They will be connected to the same
-    // /// upstream and downstream nodes.
-    // pub fn duplicate_this_operator(&self, n: usize) -> Result<(), Box<dyn std::error::Error>> {
-    //     todo!()
-    // }
 }
 
-pub struct BuildContext {
+pub struct BuildContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub label: String,
     persistence_backend: Box<dyn PersistenceBackend>,
-    pub communication: Postbox<WorkerId, OperatorId>,
+    communication: &'a mut Postbox<(WorkerId, OperatorId)>,
+    worker_ids: Range<usize>
 }
-impl BuildContext {
+impl<'a> BuildContext<'a> {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
         label: String,
         persistence_backend: Box<dyn PersistenceBackend>,
-        communication: Postbox<WorkerId, OperatorId>,
+        communication: &'a mut Postbox<(WorkerId, OperatorId)>,
+        worker_ids: Range<usize>
     ) -> Self {
         Self {
             worker_id,
@@ -63,6 +56,7 @@ impl BuildContext {
             label,
             persistence_backend,
             communication,
+            worker_ids
         }
     }
 
@@ -70,6 +64,19 @@ impl BuildContext {
         self.persistence_backend
             .load(&self.operator_id)
             .map(deserialize_state)
+    }
+
+    /// Get the IDs of all workers (including this one) which are part of the cluster
+    /// at build time.
+    /// NOTE: JetStream is designed to scale dynamically, so this information may become outdated
+    /// at runtime
+    pub fn get_worker_ids(&self) -> Range<WorkerId> {
+        self.worker_ids.clone()
+    }
+
+    /// Create a client for inter-worker communication
+    pub fn create_communication_client<T: postbox::Data>(&mut self, other_worker: WorkerId, other_operator: OperatorId) -> Client<T> {
+        self.communication.new_client((other_worker, other_operator), (self.worker_id, self.operator_id)).unwrap()
     }
 }
 
@@ -90,7 +97,7 @@ pub trait AppendableOperator<K, V, T> {
 
 /// An operator which can be turned into a runnable operator, by supplying a BuildContext
 pub trait BuildableOperator {
-    fn into_runnable(self: Box<Self>, context: BuildContext) -> RunnableOperator;
+    fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator;
     fn get_label(&self) -> Option<String>;
 }
 
@@ -126,7 +133,7 @@ pub fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
 pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     input: Receiver<KI, VI, TI>,
     // TODO: get rid of the dynamic dispatch here
-    logic_builder: Box<dyn FnOnce(&BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>>,
+    logic_builder: Box<dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>>,
     output: Sender<KO, VO, TO>,
     label: Option<String>
 }
@@ -162,13 +169,13 @@ where
     }
 
     pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
-        logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
+        logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
         let input = Receiver::new_unlinked();
         let output = Sender::new_unlinked(full_broadcast);
         Self {
             input,
-            logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
+            logic_builder: Box::new(|mut ctx| Box::new(logic_builder(&mut ctx))),
             output,
             label: None
         }
@@ -225,10 +232,10 @@ where
     VO: Data,
     TO: MaybeTime,
 {
-    fn into_runnable(self: Box<Self>, context: BuildContext) -> RunnableOperator {
+    fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator {
         let operator = StandardOperator {
             input: self.input,
-            logic: (self.logic_builder)(&context),
+            logic: (self.logic_builder)(context),
             output: self.output,
         };
         RunnableOperator::new(operator, self.label, context)
@@ -310,30 +317,28 @@ where
 pub struct RunnableOperator {
     worker_id: WorkerId,
     operator_id: OperatorId,
-    communication: Postbox<WorkerId, OperatorId>,
     operator: Box<dyn Operator>,
     label: String,
 }
 
 
-impl RunnableOperator {
-    pub fn new(operator: impl Operator + 'static, label: Option<String>, context: BuildContext) -> Self {
+impl  RunnableOperator {
+    pub fn new(operator: impl Operator + 'static, label: Option<String>, context: &mut BuildContext) -> Self {
         RunnableOperator {
             worker_id: context.worker_id,
             operator_id: context.operator_id,
-            communication: context.communication,
             operator: Box::new(operator),
-            label: label.unwrap_or("NO_LABEL".into())
+            label: label.unwrap_or("NO_LABEL".into()),
         }
     }
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self, communication: &mut Postbox<(WorkerId, OperatorId)>,) {
         let span = tracing::info_span!("scheduling::run_operator", operator_id = self.operator_id, label = self.label);
         let _span_guard = span.enter();
         let mut context = OperatorContext {
             worker_id: self.worker_id,
             operator_id: self.operator_id,
-            communication: &self.communication,
+            communication
         };
 
         self.operator.step(&mut context)

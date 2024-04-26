@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
 use indexmap::IndexMap;
+use itertools::Itertools;
+use postbox::{broadcast, Client};
 use serde::{Deserialize, Serialize};
 
 use crate::channels::selective_broadcast::Sender;
@@ -14,11 +16,11 @@ use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorB
 use super::{Load, PersistenceBackend};
 use super::{PersistenceBackendBuilder, SnapshotVersion};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum ComsMessage {
     StartSnapshot(SnapshotVersion),
     LoadSnapshot(SnapshotVersion),
-    CommitSnapshot(WorkerId, SnapshotVersion),
+    CommitSnapshot(SnapshotVersion),
 }
 
 type BackchannelTx = Sender<NoData, NoKey, NoTime>;
@@ -35,7 +37,7 @@ struct ControllerState {
 }
 
 fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
-    build_context: &BuildContext,
+    build_context: &mut BuildContext,
     backend_builder: Rc<dyn PersistenceBackendBuilder>,
     timer: impl FnMut() -> bool + 'static,
 ) -> Box<dyn Logic<K, V, T, K, V, T>> {
@@ -47,7 +49,7 @@ fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             timer,
         ))
     } else {
-        Box::new(build_follower_controller_logic(backend_builder))
+        Box::new(build_follower_controller_logic(backend_builder, build_context))
     }
 }
 fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
@@ -67,7 +69,7 @@ fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
 }
 
 fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
-    build_context: &BuildContext,
+    build_context: &mut BuildContext,
     backend_builder: Rc<dyn PersistenceBackendBuilder>,
     mut timer: impl FnMut() -> bool + 'static,
 ) -> impl Logic<K, V, T, K, V, T> {
@@ -80,10 +82,24 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     let mut in_progress_snapshot: Option<(IndexMap<WorkerId, bool>, SnapshotVersion, Barrier)> =
         None;
 
+    let worker_ids = build_context.get_worker_ids().collect_vec();
+    let clients: IndexMap<WorkerId, Client<ComsMessage>> = worker_ids.iter().cloned()
+    .filter_map(|i| {
+        if i != build_context.worker_id {
+            Some((
+                i,
+                build_context.create_communication_client(i, build_context.operator_id),
+            ))
+        } else {
+            None
+        }
+    })
+        .collect();
+
     move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
         pass_messages(input, output);
 
-        if in_progress_snapshot.is_some() && timer() {
+        if in_progress_snapshot.is_none() && timer() {
             // start a new global snapshot
             let snapshot_version = last_committed.unwrap_or(0);
             let backend = backend_builder.for_version(ctx.worker_id, &snapshot_version);
@@ -92,12 +108,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             let _ = in_progress_snapshot.insert(
                 // add workerid 0 for this worker
                 (
-                    ctx.communication
-                        .get_peers()
-                        .into_iter()
-                        .chain(std::iter::once(&0usize))
-                        .map(|x| (x.to_owned(), false))
-                        .collect(),
+                    worker_ids.iter().cloned().map(|x| (x, false)).collect(),
                     snapshot_version,
                     barrier.clone(),
                 ),
@@ -106,9 +117,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             println!("Starting new snapshot at epoch {snapshot_version}");
 
             // instruct other workers to start snapshotting
-            ctx.communication
-                .broadcast(ComsMessage::StartSnapshot(snapshot_version))
-                .expect("Network communication error");
+            broadcast(clients.values(), ComsMessage::StartSnapshot(snapshot_version)).unwrap();
             output.send(Message::AbsBarrier(barrier));
         }
 
@@ -119,20 +128,22 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                 commits.insert(ctx.worker_id, true);
             }
 
-            for msg in ctx.communication.recv_all().map(|x| x.data) {
-                match msg {
-                    ComsMessage::StartSnapshot(_i) => {
-                        unreachable!(
-                            "Lead node received instruction which can only be given by lead node"
-                        )
-                    }
-                    ComsMessage::LoadSnapshot(_i) => {
-                        unreachable!(
-                            "Lead node received instruction which can only be given by lead node"
-                        )
-                    }
-                    ComsMessage::CommitSnapshot(wid, _i) => {
-                        commits.insert(wid, true);
+            for (wid, client) in clients.iter() {
+                for msg in client.recv_all() {
+                    match msg.unwrap() {
+                        ComsMessage::StartSnapshot(_i) => {
+                            unreachable!(
+                                "Lead node received instruction which can only be given by lead node"
+                            )
+                        }
+                        ComsMessage::LoadSnapshot(_i) => {
+                            unreachable!(
+                                "Lead node received instruction which can only be given by lead node"
+                            )
+                        }
+                        ComsMessage::CommitSnapshot(_i) => {
+                            commits.insert(*wid, true);
+                        }
                     }
                 }
             }
@@ -149,8 +160,11 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
 
 fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackendBuilder>,
+    build_context: &mut BuildContext
 ) -> impl Logic<K, V, T, K, V, T> {
     let mut in_progress: Option<Barrier> = None;
+
+    let leader = build_context.create_communication_client(0, build_context.operator_id);
 
     move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
         pass_messages(input, output);
@@ -160,9 +174,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                 if b.strong_count() == 1 {
                     let version = b.get_version();
                     println!("Completed snapshot at {version}");
-                    ctx.communication
-                        .send_same(&0, ComsMessage::CommitSnapshot(ctx.worker_id, version))
-                        .unwrap();
+                    leader.send(ComsMessage::CommitSnapshot(version)).unwrap();
                     None
                 } else {
                     Some(b)
@@ -171,18 +183,18 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             None => None,
         };
 
-        for msg in ctx.communication.recv_all().map(|x| x.data) {
+        for msg in leader.recv_all().map(|x| x.unwrap()) {
             match msg {
                 ComsMessage::StartSnapshot(i) => {
                     let barrier = Barrier::new(backend_builder.for_version(ctx.worker_id, &i));
                     in_progress.insert(barrier.clone());
                     output.send(Message::AbsBarrier(barrier))
                 }
-                ComsMessage::LoadSnapshot(i) => todo!(),
+                ComsMessage::LoadSnapshot(_) => todo!(),
                 // output.send(Message::Load(Load::new(
                 //     P::new_for_version(ctx.worker_id, &i),
                 // ))),
-                ComsMessage::CommitSnapshot(_wid, _version) => {
+                ComsMessage::CommitSnapshot(_) => {
                     unreachable!("Follower node can not receive a snapshot commit")
                 }
             }

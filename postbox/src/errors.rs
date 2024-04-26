@@ -27,8 +27,3 @@ pub enum SendError {
     #[error("GRPC client is dead, possibly due to loosing connection")]
     DeadClientError
 }
-#[derive(Error, Debug)]
-pub enum RecvError {
-    #[error("Message could not be deserialized")]
-    EncodingError(#[from] bincode::error::DecodeError),
-}

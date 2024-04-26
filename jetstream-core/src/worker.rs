@@ -27,7 +27,8 @@ impl Worker {
 
         Worker {
             operators: Vec::new(),
-            root_stream: JetStreamBuilder::from_operator(snapshot_op).label("jetstream::stream_root"),
+            root_stream: JetStreamBuilder::from_operator(snapshot_op)
+                .label("jetstream::stream_root"),
             persistence_backend,
         }
     }
@@ -43,7 +44,12 @@ impl Worker {
         stream: JetStreamBuilder<K, V, T>,
     ) {
         // call void to destroy all remaining messages
-        self.operators.extend(stream.void().label("jetstream::stream_end").into_operators())
+        self.operators.extend(
+            stream
+                .void()
+                .label("jetstream::stream_end")
+                .into_operators(),
+        )
     }
 
     /// Unions N streams with identical output types into a single stream
@@ -96,18 +102,19 @@ impl Worker {
     pub fn build(
         self,
         config: crate::config::Config,
-    ) -> Result<Runtime, postbox::BuildError> {
-        // TODO: Add a `void` sink at the end of every dataflow to swallow
-        // unused messages
-
+    ) -> Result<Runtime, postbox::errors::BuildError> {
         // TODO: make all of this configurable
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
         let peers = config.get_peer_uris();
-
+        let peer_len = peers.len();
         let operator_ids: Vec<OperatorId> =
             (0..(self.operators.len() + self.root_stream.operator_count())).collect();
-        let communication_backend =
-            postbox::BackendBuilder::new(config.worker_id, listen_addr, peers, operator_ids, 4096);
+
+        let mut communication_backend = postbox::PostboxBuilder::new()
+            .build(listen_addr, move |addr: &(WorkerId, OperatorId)| {
+                peers.get(addr.0).map(|x| x.1.clone())
+            })
+            .unwrap();
 
         let operators: Vec<RunnableOperator> = self
             .root_stream
@@ -117,19 +124,21 @@ impl Worker {
             .enumerate()
             .map(|(i, x)| {
                 let label = x.get_label().unwrap_or(format!("operator_id_{}", i));
-                x.into_runnable(BuildContext::new(
+                let mut ctx = BuildContext::new(
                     config.worker_id,
                     i,
                     label,
                     self.persistence_backend.latest(config.worker_id),
-                    communication_backend.for_operator(i.clone()).unwrap(),
-                ))
+                    &mut communication_backend,
+                    0..peer_len,
+                );
+                x.into_runnable(&mut ctx)
             })
             .collect();
         Ok(Runtime {
             worker_id: config.worker_id,
             operators,
-            communication: communication_backend.connect()?,
+            communication: communication_backend,
         })
     }
 }
@@ -137,24 +146,16 @@ impl Worker {
 pub struct Runtime {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,
-    communication: postbox::CommunicationBackend,
+    communication: postbox::Postbox<(WorkerId, OperatorId)>,
 }
 impl Runtime {
-    // pub fn get_frontier(&self) -> Option<Timestamp> {
-    //     self.probes.last().map(|x| x.read())
-    // }
-
-    // pub fn get_all_frontiers(&self) -> Vec<Timestamp> {
-    //     self.probes.iter().map(|x| x.read()).collect()
-    // }
-
     pub fn step(&mut self) {
         let span = tracing::info_span!("scheduling::run_graph");
         let _span_guard = span.enter();
         for op in self.operators.iter_mut().rev() {
-            op.step();
+            op.step(&mut self.communication);
             while op.has_queued_work() {
-                op.step();
+                op.step(&mut self.communication);
             }
         }
     }

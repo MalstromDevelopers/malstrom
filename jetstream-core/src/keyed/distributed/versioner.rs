@@ -18,7 +18,7 @@ pub(crate) struct VersionedMessage<V> {
 /// Builds an operator that creates versioned messages. Note that this is
 /// just a type converter, which always issues messages with version 0
 pub(crate) fn versioner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
-    ctx: &BuildContext,
+    ctx: &mut BuildContext,
 ) -> impl Logic<K, V, T, K, VersionedMessage<V>, T> {
     let wid = ctx.worker_id;
     move |input, output, _ctx| {

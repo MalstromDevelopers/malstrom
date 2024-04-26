@@ -1,9 +1,11 @@
+use std::net::{SocketAddr, SocketAddrV4, TcpListener};
 use std::{any::Any, collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
 /// Test utilities for JetStream
 use itertools::Itertools;
-use postbox::{CommunicationBackend, Postbox, RecvIterator};
+use postbox::{Client, Postbox, PostboxBuilder};
 use serde::{de::DeserializeOwned, Serialize};
+use tonic::transport::Uri;
 
 use crate::stream::operator::BuildableOperator;
 use crate::{
@@ -136,9 +138,34 @@ impl PersistenceBackend for CapturingPersistenceBackend {
     }
 }
 
+fn get_socket() -> SocketAddr {
+    // find a free port
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        port
+    };
+    SocketAddr::V4(SocketAddrV4::new("127.0.0.1".parse().unwrap(), port))
+}
+
+/// returns a pair of postboxes, that always connect to each other
+fn pair_postbox() -> (Postbox<(WorkerId, OperatorId)>, Postbox<(WorkerId, OperatorId)>) {
+    let sock_a = get_socket();
+    let sock_b = get_socket();
+
+    let uri_a = Uri::builder().scheme("http").authority(sock_a.to_string()).path_and_query("").build().unwrap();
+    let uri_b = Uri::builder().scheme("http").authority(sock_b.to_string()).path_and_query("").build().unwrap();
+
+    let pb_a = PostboxBuilder::new().build(sock_a, move |_| Some(uri_b.clone())).unwrap();
+    let pb_b = PostboxBuilder::new().build(sock_b, move |_| Some(uri_a.clone())).unwrap();
+    (pb_a, pb_b)
+}
+
+
 /// Test helper to simulate a two Worker cluster with this local
 /// worker being index 0 and the other being index 1
-pub struct OperatorTester<KI, VI, TI, KO, VO, TO> {
+pub struct OperatorTester<KI, VI, TI, KO, VO, TO, R> {
     op: RunnableOperator,
     // Use this to send messages into the distributor
     local_in: Sender<KI, VI, TI>,
@@ -146,15 +173,14 @@ pub struct OperatorTester<KI, VI, TI, KO, VO, TO> {
     /// Use this to get local messages out of the distributor
     local_out: Receiver<KO, VO, TO>,
 
-    local_postbox: Postbox<WorkerId, OperatorId>,
+    local_postbox: Postbox<(WorkerId, OperatorId)>,
     // used to emulate another worker sending messages
-    remote_postbox: Postbox<WorkerId, OperatorId>,
-    // need to keep them around so they don't get dropped
-    backends: (CommunicationBackend, CommunicationBackend),
+    remote_postbox: Postbox<(WorkerId, OperatorId)>,
+    remote_pb_client: Client<R>,
     persistence_backend: Box<dyn PersistenceBackend>,
 }
 
-impl<KI, VI, TI, KO, VO, TO> OperatorTester<KI, VI, TI, KO, VO, TO>
+impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
@@ -162,52 +188,32 @@ where
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
+    R: postbox::Data
 {
     pub fn new_built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
-        logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
+        logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
         let op_id: usize = 42;
-        let postbox_local_builder = postbox::BackendBuilder::new(
-            0,
-            "127.0.0.1:29091".parse().unwrap(),
-            vec![(1, "http://127.0.0.1:29092".parse().unwrap())],
-            vec![op_id],
-            4096,
-        );
-        let postbox_local = postbox_local_builder.for_operator(op_id).unwrap();
+        
+        let (mut pb_local, mut pb_remote) = pair_postbox();
+
         let persistence = CapturingPersistenceBackend::default();
-        let buildcontext = BuildContext::new(0, op_id, "NO_LABEL".to_owned(), persistence.latest(0), postbox_local);
+        let mut buildcontext = BuildContext::new(0, op_id, "NO_LABEL".to_owned(), persistence.latest(0), &mut pb_local, 0..2);
         let mut op = OperatorBuilder::built_by(logic_builder);
         let mut local_in = Sender::new_unlinked(full_broadcast);
         let mut local_out = Receiver::new_unlinked();
         link(&mut local_in, op.get_input_mut());
         link(op.get_output_mut(), &mut local_out);
-        let op = Box::new(op).into_runnable(buildcontext);
+        let op = Box::new(op).into_runnable(&mut buildcontext);
 
-        let postbox_remote_builder = postbox::BackendBuilder::new(
-            1,
-            "127.0.0.1:29092".parse().unwrap(),
-            vec![(0, "http://127.0.0.1:29091".parse().unwrap())],
-            vec![op_id],
-            4096,
-        );
-        let local_postbox = postbox_local_builder.for_operator(op_id).unwrap();
-        let postbox_remote = postbox_remote_builder.for_operator(op_id).unwrap();
-        let backend_local_build =
-            std::thread::spawn(move || postbox_local_builder.connect().unwrap());
-        let backend_remote_build =
-            std::thread::spawn(move || postbox_remote_builder.connect().unwrap());
-
-        let backend_local = backend_local_build.join().unwrap();
-        let backend_remote = backend_remote_build.join().unwrap();
-
+        let remote_recv = pb_remote.new_client((0, op_id), (1, op_id)).unwrap();
         Self {
             op,
             local_in,
             local_out,
-            local_postbox,
-            remote_postbox: postbox_remote,
-            backends: (backend_local, backend_remote),
+            local_postbox: pb_local,
+            remote_postbox: pb_remote,
+            remote_pb_client: remote_recv,
             persistence_backend: persistence.latest(0),
         }
     }
@@ -217,7 +223,7 @@ where
     }
 }
 
-impl<KI, VI, TI, KO, VO, TO> OperatorTester<KI, VI, TI, KO, VO, TO>
+impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
@@ -225,10 +231,11 @@ where
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
+    R: postbox::Data
 {
     /// Schedule the operator
     pub fn step(&mut self) -> () {
-        self.op.step()
+        self.op.step(&mut self.local_postbox)
     }
 
     /// Give a message to the distributor as if it where coming from a local upstream
@@ -242,15 +249,15 @@ where
     }
 
     /// places a message into the operatorcontext postbox, as if it was sent by a remote
-    pub fn send_from_remote<T: Serialize + DeserializeOwned>(&mut self, message: T) {
-        self.remote_postbox.send_same(&0, message).unwrap();
+    pub fn send_from_remote(&mut self, message: R) {
+        self.remote_pb_client.send( message).unwrap();
     }
 
     /// receive all the messages for the remote worker
-    pub fn receive_on_remote<T: Serialize + DeserializeOwned>(
+    pub fn receive_on_remote(
         &mut self,
-    ) -> RecvIterator<WorkerId, OperatorId, T> {
-        self.remote_postbox.recv_all()
+    ) -> Option<R> {
+        self.remote_pb_client.recv().map(|x| x.unwrap())
     }
 }
 
@@ -328,19 +335,23 @@ mod tests {
 
     #[test]
     fn test_operator_tester() {
-        let mut tester = OperatorTester::new_direct(
-            |input: &mut Receiver<NoKey, i32, NoTime>,
+        let mut tester = OperatorTester::new_built_by( |build_ctx| {
+            let client = build_ctx.create_communication_client(1, 0);
+            move |input: &mut Receiver<NoKey, i32, NoTime>,
              output: &mut Sender<NoKey, i32, NoTime>,
              ctx: &mut OperatorContext| {
+                
                 if let Some(Message::Data(d)) = input.recv() {
                     let v = d.value * 2;
                     output.send(Message::Data(DataMessage::new(d.key, v, d.timestamp)));
                 };
-                for x in ctx.communication.recv_all() {
-                    let value = x.data;
+
+                for x in client.recv_all() {
+                    let value = x.unwrap();
                     output.send(Message::Data(DataMessage::new(NoKey, value, NoTime)))
                 }
-            },
+            }
+        }
         );
 
         tester.send_from_local(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
