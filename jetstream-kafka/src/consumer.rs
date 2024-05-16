@@ -19,6 +19,7 @@ use rdkafka::error::KafkaError;
 use rdkafka::message::{BorrowedMessage, OwnedMessage};
 use rdkafka::metadata::MetadataPartition;
 use rdkafka::{ClientContext, Offset};
+use rdkafka::Message as _;
 use serde::{Deserialize, Serialize};
 use rdkafka::consumer::DefaultConsumerContext;
 use rdkafka::{TopicPartitionList};
@@ -137,7 +138,7 @@ fn build_consumer(
             Message::Epoch(x) => output.send(Message::Epoch(x)),
         };
 
-        for (partition_idx, offset) in state.iter() {
+        for (partition_idx, offset) in state.iter_mut() {
             let consumer = consumers.entry(*partition_idx).or_insert_with(|| create_and_subscribe_consumer(
                 brokers.clone(), 
                 topic.clone(),
@@ -147,6 +148,9 @@ fn build_consumer(
                 *partition_idx
             ));
             if let Some(record) = consumer.poll(Duration::default()).map(|res| res.map(|msg| msg.detach())) {
+                if let Ok(r) = &record {
+                    offset.last_recvd_offset = Some(r.offset());
+                }
                 output.send(Message::Data(DataMessage::new(*partition_idx, record, NoTime)))
             }
         }
