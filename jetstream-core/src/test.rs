@@ -263,6 +263,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use indexmap::IndexMap;
+
     use crate::{
         snapshot::{deserialize_state, serialize_state},
         DataMessage,
@@ -283,25 +285,28 @@ mod tests {
         assert_eq!(c.port, 29093);
 
         assert_eq!(
-            a.get_peer_uris(),
-            vec![
+            a.get_cluster_uris(),
+            IndexMap::<usize, Uri>::from([
+                (0, "http://localhost:29091".parse().unwrap()),
                 (1, "http://localhost:29092".parse().unwrap()),
                 (2, "http://localhost:29093".parse().unwrap())
-            ]
+            ])
         );
         assert_eq!(
-            b.get_peer_uris(),
-            vec![
+            b.get_cluster_uris(),
+            IndexMap::<usize, Uri>::from([
                 (0, "http://localhost:29091".parse().unwrap()),
+                (1, "http://localhost:29092".parse().unwrap()),
                 (2, "http://localhost:29093".parse().unwrap())
-            ]
+            ])
         );
         assert_eq!(
-            c.get_peer_uris(),
-            vec![
+            c.get_cluster_uris(),
+            IndexMap::<usize, Uri>::from([
                 (0, "http://localhost:29091".parse().unwrap()),
-                (1, "http://localhost:29092".parse().unwrap())
-            ]
+                (1, "http://localhost:29092".parse().unwrap()),
+                (2, "http://localhost:29093".parse().unwrap())
+            ])
         );
     }
 

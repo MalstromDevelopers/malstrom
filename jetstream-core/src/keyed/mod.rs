@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use indexmap::IndexSet;
@@ -8,6 +10,7 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
 use crate::time::{MaybeTime, Timestamp};
 use crate::{Data, DataMessage, Key, MaybeKey, Message, WorkerId};
+use std::hash::RandomState;
 
 use self::distributed::{downstream_exchanger, epoch_aligner, upstream_exchanger, versioner};
 use self::distributed::{icadd, DistData, DistKey, DistTimestamp};
@@ -119,4 +122,22 @@ where
             .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx))).label("jetstream::key_distribute::downstream_exchanger")
 
     }
+}
+
+fn default_hash<T: Hash>(value: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Select a value from an Iterator of choices by applying rendezvous hashing.
+/// Rendezvous hashing ensures minimal shuffling when the set of options changes
+/// at the cost of being O(n) with n == options.len()
+/// 
+/// Returns None if the Iterator is empty
+/// 
+/// TODD: Add test
+pub fn rendezvous_select<T: Hash, O: Hash>(value: &T, options: impl Iterator<Item=O>) -> Option<O>{
+    let v_hash = default_hash(value);
+    options.map(|x| (default_hash(&x) + v_hash, x)).max_by_key(|x| x.0).map(|x| x.1)
 }

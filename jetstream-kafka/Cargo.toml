@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+indexmap = { version = "2.2.6", features = ["serde"] }
+itertools = "0.12.1"
 jetstream = { path = "../jetstream-core" }
 metrics = "0.22.3"
 rdkafka = { version = "0.36.2", features = ["cmake-build"] }
+serde = { version = "1.0.202", features = ["derive"] }

@@ -1,4 +1,5 @@
 use crate::WorkerId;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer};
 use tonic::transport::Uri;
@@ -41,11 +42,10 @@ impl Config {
             .expect("Invalid configuration")
     }
 
-    pub fn get_peer_uris(&self) -> Vec<(WorkerId, Uri)> {
+    pub fn get_cluster_uris(&self) -> IndexMap<WorkerId, Uri> {
         self.cluster_addresses
             .iter()
             .enumerate()
-            .filter(|(i, _)| *i != self.worker_id)
             .map(|x| (x.0, x.1.clone()))
             .collect()
     }
