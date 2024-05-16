@@ -114,6 +114,7 @@ fn build_consumer(
                 // we need to remove the consumer eagerly to avoid
                 // reading duplicates
                 state.shift_remove(&c.key);
+                consumers.remove(&c.key);
                 output.send(Message::Collect(c))
             }
             Message::Acquire(a) => {
