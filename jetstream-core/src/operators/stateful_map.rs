@@ -82,7 +82,7 @@ fn build_stateful_map<
                 value,
                 timestamp: time,
             }) => {
-                event!(Level::INFO, state_key_space = state.len());
+                event!(Level::DEBUG, state_key_space = state.len());
                 let st = state.remove(&key).unwrap_or_default();
                 let (mapped, mut new_state) = mapper(&key, value, st);
                 if let Some(n) = new_state.take() {
@@ -91,7 +91,6 @@ fn build_stateful_map<
                 Message::Data(DataMessage::new(key, mapped, time))
             }
             Message::Interrogate(mut x) => {
-                println!("Adding state to interrogate");
                 x.add_keys(&(state.keys().map(|k| k.to_owned()).collect_vec()));
                 Message::Interrogate(x)
             }

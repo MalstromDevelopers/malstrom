@@ -1,12 +1,13 @@
 // public API operators
 pub mod filter;
-pub mod flat_map;
+pub mod flatten;
 pub mod map;
 pub mod probe;
 pub mod sink;
 pub mod source;
 pub mod stateful_map;
 pub mod timely;
+pub mod filter_map;
 
 // Public Api operators reexported for convenience
 pub use crate::keyed::KeyDistribute;

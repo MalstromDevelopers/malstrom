@@ -107,7 +107,9 @@ where
                 b.persist(&self, &ctx.operator_id);
                 output.send(Message::AbsBarrier(b))
             }
-            Message::ShutdownMarker(s) => todo!(),
+            Message::ShutdownMarker(s) => {
+                output.send(Message::ShutdownMarker(s));
+            },
             Message::Interrogate(_) => unreachable!(),
             Message::Collect(_) => unreachable!(),
             Message::Acquire(_) => unreachable!(),

@@ -13,7 +13,7 @@ use jetstream::{
     keyed::KeyDistribute,
     operators::{
         filter::Filter,
-        flat_map::FlatMap,
+        flatten::Flatten,
         map::Map,
         probe::{DataOrEpoch, ProbeEpoch},
         source::Source,

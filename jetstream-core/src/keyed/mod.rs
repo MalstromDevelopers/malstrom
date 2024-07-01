@@ -115,12 +115,11 @@ where
         keyed
             .then(OperatorBuilder::built_by(versioner)).label("jetstream::key_distribute::versioner")
             .then(OperatorBuilder::built_by(epoch_aligner)).label("jetstream::key_distribute::epoch_aligner")
-            .then(OperatorBuilder::built_by(upstream_exchanger)).label("jetstream::key_distribute::upstream_exchanger")
+            .then(OperatorBuilder::built_by(|ctx| upstream_exchanger(2, ctx))).label("jetstream::key_distribute::upstream_exchanger")
             .then(OperatorBuilder::built_by(move |ctx| {
                 icadd(Rc::new(partitioner), ctx)
             })).label("jetstream::key_distribute::icadd")
             .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx))).label("jetstream::key_distribute::downstream_exchanger")
-
     }
 }
 
@@ -139,5 +138,5 @@ fn default_hash<T: Hash>(value: &T) -> u64 {
 /// TODD: Add test
 pub fn rendezvous_select<T: Hash, O: Hash>(value: &T, options: impl Iterator<Item=O>) -> Option<O>{
     let v_hash = default_hash(value);
-    options.map(|x| (default_hash(&x) + v_hash, x)).max_by_key(|x| x.0).map(|x| x.1)
+    options.map(|x| (default_hash(&x).wrapping_add(v_hash), x)).max_by_key(|x| x.0).map(|x| x.1)
 }

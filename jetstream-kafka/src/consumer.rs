@@ -31,7 +31,7 @@ impl ConsumerContext for DefaultKafkaContext {}
 type PartitionIndex = i32;
 
 pub trait KafkaInput {
-    fn kafka_input(
+    fn kafka_source(
         self,
         brokers: Vec<String>,
         group_id: String,
@@ -42,7 +42,7 @@ pub trait KafkaInput {
 }
 
 impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
-    fn kafka_input(
+    fn kafka_source(
         self,
         brokers: Vec<String>,
         group_id: String,
@@ -72,7 +72,7 @@ impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize, Debug)]
 struct ConsumerState {
     // offset of the last received record
     last_recvd_offset: Option<i64>,
@@ -95,6 +95,22 @@ fn build_consumer(
     let mut consumers: HashMap<PartitionIndex, BaseConsumer> = HashMap::new();
 
     move |input, output, ctx| {
+        for (partition_idx, offset) in state.iter_mut() {
+            let consumer = consumers.entry(*partition_idx).or_insert_with(|| create_and_subscribe_consumer(
+                brokers.clone(), 
+                topic.clone(),
+                group_id.clone(),
+                auto_offset_reset.clone(),
+                offset.last_recvd_offset.map(|x| x + 1),
+                *partition_idx
+            ));
+            if let Some(record) = consumer.poll(Duration::default()).map(|res| res.map(|msg| msg.detach())) {
+                if let Ok(r) = &record {
+                    offset.last_recvd_offset = Some(r.offset());
+                }
+                output.send(Message::Data(DataMessage::new(*partition_idx, record, NoTime)))
+            }
+        }
         let msg = match input.recv() {
             Some(x) => x,
             None => return,
@@ -137,23 +153,6 @@ fn build_consumer(
             Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
             Message::Epoch(x) => output.send(Message::Epoch(x)),
         };
-
-        for (partition_idx, offset) in state.iter_mut() {
-            let consumer = consumers.entry(*partition_idx).or_insert_with(|| create_and_subscribe_consumer(
-                brokers.clone(), 
-                topic.clone(),
-                group_id.clone(),
-                auto_offset_reset.clone(),
-                offset.last_recvd_offset.map(|x| x + 1),
-                *partition_idx
-            ));
-            if let Some(record) = consumer.poll(Duration::default()).map(|res| res.map(|msg| msg.detach())) {
-                if let Ok(r) = &record {
-                    offset.last_recvd_offset = Some(r.offset());
-                }
-                output.send(Message::Data(DataMessage::new(*partition_idx, record, NoTime)))
-            }
-        }
     }
 }
 
@@ -194,5 +193,6 @@ pub fn create_and_subscribe_consumer(
     if let Some(offset) = starting_offset {
         consumer.seek(&topic, partition, Offset::Offset(offset), Duration::from_secs(16)).expect("Error setting partition offset");
     }
+    println!("Subscribed to {topic} partition {partition}");
     consumer
 }

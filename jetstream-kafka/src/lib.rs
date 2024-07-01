@@ -1,1 +1,1 @@
-mod consumer;
+pub mod consumer;

@@ -154,6 +154,7 @@ impl<
 {
 }
 
+
 impl<KI, VI, TI, KO, VO, TO> OperatorBuilder<KI, VI, TI, KO, VO, TO>
 where
     KI: MaybeKey,
@@ -312,7 +313,7 @@ where
 //             operator: self.operator,
 //         }
 //     }
-// }
+// }s
 
 pub struct RunnableOperator {
     worker_id: WorkerId,
@@ -333,7 +334,7 @@ impl  RunnableOperator {
     }
 
     pub fn step(&mut self, communication: &mut Postbox<(WorkerId, OperatorId)>,) {
-        let span = tracing::info_span!("scheduling::run_operator", operator_id = self.operator_id, label = self.label);
+        let span = tracing::debug_span!("scheduling::run_operator", operator_id = self.operator_id, label = self.label);
         let _span_guard = span.enter();
         let mut context = OperatorContext {
             worker_id: self.worker_id,

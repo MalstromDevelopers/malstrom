@@ -1,13 +1,11 @@
 use crate::{
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::{MaybeTime, NoTime},
-    Data, MaybeData, MaybeKey, NoData, NoKey,
+    channels::selective_broadcast::{Receiver, Sender}, stream::{jetstream::JetStreamBuilder, operator::{OperatorBuilder, OperatorContext}}, time::{MaybeTime, NoTime}, Data, MaybeData, MaybeKey, NoData, NoKey
 };
 
 /// The Void operator will drop all (yes ALL) messages it receives
 /// **including system messages**.
 /// This is generally only useful to end a stream, as to not keep any items
-/// around, that would never be processed again.
+/// around, that would never be processed.
 pub(crate) trait Void<K, V, T> {
     fn void(self) -> JetStreamBuilder<NoKey, NoData, NoTime>;
 }
@@ -19,8 +17,43 @@ where
     T: MaybeTime,
 {
     fn void(self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        self.then(OperatorBuilder::direct(|input, _output, _ctx| {
-            let _ = input.recv();
-        }))
+        self.then(OperatorBuilder::direct(void))
+    }
+}
+
+
+fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(input: &mut Receiver<K, V, T>, _output: &mut Sender<NoKey, NoData, NoTime>, _out: &mut OperatorContext) -> () {
+    input.recv();
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::{rc::Rc, sync::Mutex};
+
+    use indexmap::{IndexMap, IndexSet};
+
+    use crate::{keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, test::{get_test_stream, OperatorTester}, DataMessage, Message, RescaleMessage, ShutdownMarker };
+    /// Simple test, the operator must destroy everything 💀 
+    #[test]
+    fn nothing_comes_out() {
+        let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> = OperatorTester::new_direct(void);
+
+        let messages = [
+            Message::AbsBarrier(Barrier::new(Box::new(NoPersistence::default()))),
+            Message::Acquire(Acquire::new(1, Rc::new(Mutex::new(IndexMap::new())))),
+            Message::Collect(Collect::new(1)),
+            Message::Data(DataMessage::new(1, 2, 3)),
+            Message::DropKey(1),
+            Message::Epoch(1),
+            Message::Interrogate(Interrogate::new(IndexSet::new(), Rc::new(|_| false))),
+            Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new())),
+            Message::ShutdownMarker(ShutdownMarker::default())
+        ];
+        for m in messages.into_iter() {
+            tester.send_from_local(m);
+            tester.step();
+            assert!(matches!(tester.receive_on_local(), None))
+        }
     }
 }

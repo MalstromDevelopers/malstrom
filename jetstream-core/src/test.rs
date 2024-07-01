@@ -1,13 +1,10 @@
 use std::net::{SocketAddr, SocketAddrV4, TcpListener};
+use std::time::{Duration, Instant};
 use std::{any::Any, collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
-/// Test utilities for JetStream
-use itertools::Itertools;
-use postbox::{Client, Postbox, PostboxBuilder};
-use serde::{de::DeserializeOwned, Serialize};
-use tonic::transport::Uri;
-
+use crate::operators::{sink::Sink, timely::InspectFrontier};
 use crate::stream::operator::BuildableOperator;
+use crate::time::Timestamp;
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
@@ -20,8 +17,13 @@ use crate::{
         },
     },
     time::{MaybeTime, NoTime},
-    MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, Worker, WorkerId,
+    Data, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, Worker, WorkerId,
 };
+/// Test utilities for JetStream
+use itertools::Itertools;
+use postbox::{Client, Postbox, PostboxBuilder};
+use serde::{de::DeserializeOwned, Serialize};
+use tonic::transport::Uri;
 
 /// A Helper to write values into a shared vector and take them out
 /// again.
@@ -78,20 +80,29 @@ pub fn get_test_stream() -> (Worker, JetStreamBuilder<NoKey, NoData, NoTime>) {
     (worker, stream)
 }
 
+fn get_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
 /// Creates configs to run N workers locally
 /// The workers will use port 29091 + n with n being
 /// in range 0..N
 pub fn get_test_configs<const N: usize>() -> [Config; N] {
-    let ports = (0..N).map(|i| 29091 + i).collect_vec();
+    let ports = (0..N).map(|_| get_port()).collect_vec();
     let addresses: Vec<tonic::transport::Uri> = ports
         .iter()
         .map(|x| format!("http://localhost:{x}").parse().unwrap())
         .collect_vec();
 
-    (0..N)
-        .map(|i| Config {
+    ports
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Config {
             worker_id: i,
-            port: 29091 + u16::try_from(i).unwrap(),
+            port: *p,
             cluster_addresses: addresses.to_vec(),
         })
         .collect_vec()
@@ -150,18 +161,34 @@ fn get_socket() -> SocketAddr {
 }
 
 /// returns a pair of postboxes, that always connect to each other
-fn pair_postbox() -> (Postbox<(WorkerId, OperatorId)>, Postbox<(WorkerId, OperatorId)>) {
+fn pair_postbox() -> (
+    Postbox<(WorkerId, OperatorId)>,
+    Postbox<(WorkerId, OperatorId)>,
+) {
     let sock_a = get_socket();
     let sock_b = get_socket();
 
-    let uri_a = Uri::builder().scheme("http").authority(sock_a.to_string()).path_and_query("").build().unwrap();
-    let uri_b = Uri::builder().scheme("http").authority(sock_b.to_string()).path_and_query("").build().unwrap();
+    let uri_a = Uri::builder()
+        .scheme("http")
+        .authority(sock_a.to_string())
+        .path_and_query("")
+        .build()
+        .unwrap();
+    let uri_b = Uri::builder()
+        .scheme("http")
+        .authority(sock_b.to_string())
+        .path_and_query("")
+        .build()
+        .unwrap();
 
-    let pb_a = PostboxBuilder::new().build(sock_a, move |_| Some(uri_b.clone())).unwrap();
-    let pb_b = PostboxBuilder::new().build(sock_b, move |_| Some(uri_a.clone())).unwrap();
+    let pb_a = PostboxBuilder::new()
+        .build(sock_a, move |_| Some(uri_b.clone()))
+        .unwrap();
+    let pb_b = PostboxBuilder::new()
+        .build(sock_b, move |_| Some(uri_a.clone()))
+        .unwrap();
     (pb_a, pb_b)
 }
-
 
 /// Test helper to simulate a two Worker cluster with this local
 /// worker being index 0 and the other being index 1
@@ -188,17 +215,24 @@ where
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: postbox::Data
+    R: postbox::Data,
 {
     pub fn new_built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
         let op_id: usize = 42;
-        
+
         let (mut pb_local, mut pb_remote) = pair_postbox();
 
         let persistence = CapturingPersistenceBackend::default();
-        let mut buildcontext = BuildContext::new(0, op_id, "NO_LABEL".to_owned(), persistence.latest(0), &mut pb_local, 0..2);
+        let mut buildcontext = BuildContext::new(
+            0,
+            op_id,
+            "NO_LABEL".to_owned(),
+            persistence.latest(0),
+            &mut pb_local,
+            0..2,
+        );
         let mut op = OperatorBuilder::built_by(logic_builder);
         let mut local_in = Sender::new_unlinked(full_broadcast);
         let mut local_out = Receiver::new_unlinked();
@@ -231,7 +265,7 @@ where
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: postbox::Data
+    R: postbox::Data,
 {
     /// Schedule the operator
     pub fn step(&mut self) -> () {
@@ -248,17 +282,64 @@ where
         self.local_out.recv()
     }
 
+    pub fn receive_on_local_timeout(&mut self, timeout: Option<Duration>) -> R {
+        let timeout = timeout.unwrap_or(Duration::from_secs(3));
+        let start = Instant::now();
+        loop {
+            if let Some(msg) = self.remote_pb_client.recv().map(|x| x.unwrap()) {
+                return msg;
+            }
+            if Instant::now().duration_since(start) > timeout {
+                panic!("Timeout receiving message on remote operator")
+            }
+        }
+    }
+
     /// places a message into the operatorcontext postbox, as if it was sent by a remote
     pub fn send_from_remote(&mut self, message: R) {
-        self.remote_pb_client.send( message).unwrap();
+        self.remote_pb_client.send(message).unwrap();
     }
 
     /// receive all the messages for the remote worker
-    pub fn receive_on_remote(
-        &mut self,
-    ) -> Option<R> {
-        self.remote_pb_client.recv().map(|x| x.unwrap())
+    pub fn receive_on_remote(&mut self, timeout: Option<Duration>) -> R {
+        let timeout = timeout.unwrap_or(Duration::from_secs(3));
+        let start = Instant::now();
+        loop {
+            if let Some(msg) = self.remote_pb_client.recv().map(|x| x.unwrap()) {
+                return msg;
+            }
+            if Instant::now().duration_since(start) > timeout {
+                panic!("Timeout receiving message on remote operator")
+            }
+        }
     }
+}
+
+/// Runs a stream until the MAX timestamp is reached and returns all emitted values
+pub fn get_stream_values<K, V, T>(stream: JetStreamBuilder<K, V, T>) -> Vec<V>
+where
+    K: MaybeKey,
+    V: Data,
+    T: Timestamp,
+{
+    let mut worker = Worker::new(NoPersistence::default(), || false);
+
+    let collector = VecCollector::new();
+    let (stream, frontier) = stream.sink(collector.clone()).inspect_frontier();
+
+    worker.add_stream(stream);
+
+    let [config] = get_test_configs();
+    let mut runtime = worker.build(config).unwrap();
+
+    while frontier.get_time().map_or(true, |x| x != T::MAX) {
+        runtime.step()
+    }
+    collector
+        .drain_vec(..)
+        .into_iter()
+        .map(|x| x.value)
+        .collect()
 }
 
 #[cfg(test)]
@@ -266,8 +347,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use crate::{
-        snapshot::{deserialize_state, serialize_state},
-        DataMessage,
+        operators::source::{self, Source}, snapshot::{deserialize_state, serialize_state}, DataMessage
     };
 
     use super::*;
@@ -340,12 +420,11 @@ mod tests {
 
     #[test]
     fn test_operator_tester() {
-        let mut tester = OperatorTester::new_built_by( |build_ctx| {
+        let mut tester = OperatorTester::new_built_by(|build_ctx| {
             let client = build_ctx.create_communication_client(1, 0);
             move |input: &mut Receiver<NoKey, i32, NoTime>,
-             output: &mut Sender<NoKey, i32, NoTime>,
-             ctx: &mut OperatorContext| {
-                
+                  output: &mut Sender<NoKey, i32, NoTime>,
+                  ctx: &mut OperatorContext| {
                 if let Some(Message::Data(d)) = input.recv() {
                     let v = d.value * 2;
                     output.send(Message::Data(DataMessage::new(d.key, v, d.timestamp)));
@@ -356,8 +435,7 @@ mod tests {
                     output.send(Message::Data(DataMessage::new(NoKey, value, NoTime)))
                 }
             }
-        }
-        );
+        });
 
         tester.send_from_local(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         tester.step();
@@ -385,5 +463,12 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn test_get_stream_values() {
+        let stream = JetStreamBuilder::new_test().source(vec![1, 2, 3]);
+        let expected = vec![1, 2, 3];
+        assert_eq!(get_stream_values(stream), expected);
     }
 }

@@ -20,7 +20,7 @@ pub trait Timestamp: PartialOrd + Clone + std::fmt::Debug + 'static {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoTime;
 
-pub trait MaybeTime: Clone + PartialOrd + 'static {
+pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
     /// Try to merge two times, returning Some if the
     /// specific type implementing this trait implements
     /// Timestamp and None if it does not

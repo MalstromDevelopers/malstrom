@@ -1,44 +1,42 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::time::MaybeTime;
-use crate::{Data, MaybeKey};
+use crate::{Data, DataMessage, MaybeKey, Message};
 
-pub trait FilterMap<K, V, T> {
-    /// Filters the datastream based on a given predicate.
-    ///
-    /// The given function receives an immutable reference to the value
-    /// of every data message reaching this operator.
-    /// If the function return `true`, the message will be retained and
-    /// passed downstream, if the function returns `false`, the message
-    /// will be dropped.
+pub trait FilterMap<K, VI, T> {
+    /// Applies a function to every element of the stream.
+    /// All elements for which the function returns `Some(x)` are emitted downstream
+    /// as `x`, all elements for which the function returns `None` are removed from
+    /// the stream
     ///
     /// # Example
     ///
-    /// Only retain numbers bigger <= 42
+    /// Only retain numeric strings
     /// ```
-    /// stream: JetStreamBuilder<NoKey, i64, NoTime, NoPersistence>
-    /// stream.filter(|x| *x <= 42) 
+    /// stream: JetStreamBuilder<NoKey, String, NoTime, NoPersistence>
+    /// stream.filter_map(|x| x.parse::<i64>().ok()) 
     /// ````
-    fn filter_map(self, filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T>;
+    fn filter_map<VO: Data>(self, mapper: impl FnMut(VI) -> Option<VO> + 'static) -> JetStreamBuilder<K, VO, T>;
 }
 
-impl<K, V, T> Filter<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, VI, T> FilterMap<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: MaybeKey,
-    V: Data,
+    VI: Data,
     T: MaybeTime,
-
 {
-    fn filter(self, mut filter: impl FnMut(V) -> Option<VO> + 'static) -> JetStreamBuilder<K, V, T> {
-        self.m
+    fn filter_map<VO: Data>(self, mut mapper: impl FnMut(VI) -> Option<VO> + 'static) -> JetStreamBuilder<K, VO, T> {
+        self.stateless_op(move |item, out| {
+            if let Some(x) = mapper(item.value) {
+                out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
+            }
+        })
     }
 }
 
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
-
     use crate::{
         operators::{sink::Sink, source::Source},
         test::{get_test_configs, get_test_stream, VecCollector},
@@ -53,22 +51,22 @@ mod tests {
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(0..100)
-            .filter_map(|x| if x < 42 {Some(x)} else {None})
+            .source(["foobar", "42", "baz", "1337"])
+            .filter_map(|x: &str| x.parse::<i64>().ok())
             .sink(collector.clone());
 
         worker.add_stream(stream);
         let mut runtime = worker.build(config).unwrap();
 
-        while collector.len() < 42 {
+        while collector.len() < 2 {
             runtime.step()
         }
-        let collected: Vec<usize> = collector
+        let collected: Vec<i64> = collector
             .drain_vec(..)
             .into_iter()
             .map(|x| x.value)
             .collect();
-        let expected: Vec<usize> = (0..42).collect();
+        let expected: Vec<i64> = vec![42, 1337];
         assert_eq!(expected, collected)
     }
 }

@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio_stream::StreamExt;
+use tracing::{debug, warn};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -18,7 +19,6 @@ use tokio::task::JoinHandle;
 use tonic::metadata::{Binary, BinaryMetadataKey, MetadataValue};
 use tonic::transport::{Server, Uri};
 use tonic::{Request, Response, Status};
-use tracing::log::warn;
 
 mod grpc {
     tonic::include_proto!("postbox");
@@ -29,10 +29,10 @@ const BC_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// Any addresses must satisfy this trait
 pub trait Address:
-    Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static
+    Clone + Serialize + DeserializeOwned + Hash + Eq + Ord + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Sync + Send + Debug + 'static> Address
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Ord + Sync + Send + Debug + 'static> Address
     for T
 {
 }
@@ -55,7 +55,7 @@ impl Default for PostboxConfig {
             connection_timeout: Duration::from_secs(5),
             retry_interval: Duration::from_secs(5),
             retry_count: 12,
-            queue_size: 4096,
+            queue_size: 131072,
         }
     }
 }
@@ -116,7 +116,7 @@ impl<A> PostboxBuilder<A> where A: Address {
     }
 }
 
-type AddressMap<A> = Arc<Mutex<IndexMap<A, (flume::Sender<Raw>, flume::Receiver<Raw>)>>>;
+type AddressMap<A> = Arc<Mutex<IndexMap<[A; 2], (flume::Sender<Raw>, flume::Receiver<Raw>)>>>;
 
 /// The postbox backend, this contains the server and also serves as a builder for new clients
 pub struct Postbox<A> {
@@ -129,7 +129,7 @@ pub struct Postbox<A> {
     // We allow both ends (client & server) to add to this map, to avoid deadlocks
     // on the cluster level
     // Clients can clone the Receiver to receive messages from a remote
-    remotes: Arc<Mutex<IndexMap<A, (flume::Sender<Raw>, flume::Receiver<Raw>)>>>,
+    remotes: AddressMap<A>,
 
     config: PostboxConfig,
     address_resolver: Box<dyn FnMut(&A) -> Option<Uri>>,
@@ -148,17 +148,19 @@ where
         let endpoint = (self.address_resolver)(&connect_to).ok_or(
             ClientCreationError::AddressResolutionError(format!("{:?}", connect_to)),
         )?;
+        let mut conn = [this_client.clone(), connect_to.clone()];
+        conn.sort();
         let incoming = {
             self.remotes
                 .lock()
                 .unwrap()
-                .entry(this_client.clone())
+                .entry(conn)
                 .or_insert_with(|| flume::bounded(self.config.queue_size))
                 .1
                 .clone()
         };
         Ok(Client::new_connect(
-            connect_to,
+            [connect_to, this_client],
             endpoint,
             incoming,
             self.rt.handle().clone(),
@@ -169,6 +171,7 @@ where
 
 /// A client for bi-directional communication with a given address
 pub struct Client<T> {
+    conn_str: String,
     outgoing: flume::Sender<Raw>,
     incoming: flume::Receiver<Raw>,
 
@@ -180,10 +183,11 @@ pub struct Client<T> {
 }
 
 /// Encode a Postbox address to a GRPC Metadata value
-fn encode_address<A: Address>(
-    address: A,
+fn encode_connection<A: Address>(
+    mut conn: [A; 2],
 ) -> Result<MetadataValue<Binary>, bincode::error::EncodeError> {
-    let address = bincode::serde::encode_to_vec(address, BC_CONFIG)?;
+    conn.sort();
+    let address = bincode::serde::encode_to_vec(conn, BC_CONFIG)?;
     Ok(MetadataValue::from_bytes(&address))
 }
 
@@ -193,7 +197,7 @@ where
 {
     /// Create a client and connect it immediately
     fn new_connect<A: Address>(
-        address: A,
+        connection: [A; 2],
         endpoint: Uri,
         incoming: flume::Receiver<Raw>,
         rt: Handle,
@@ -201,7 +205,8 @@ where
     ) -> Result<Self, ConnectionError> {
         let (out_tx, out_rx) = flume::bounded::<Raw>(config.queue_size);
 
-        let address = encode_address(address)?;
+        let conn_str = format!("{connection:?}");
+        let address = encode_connection(connection)?;
         let _guard = rt.enter();
         let task = rt.spawn(async move {
             let mut retries_left = config.retry_count;
@@ -247,6 +252,7 @@ where
         });
 
         Ok(Self {
+            conn_str: format!("{:?}", conn_str),
             outgoing: out_tx,
             incoming,
             _rt: rt,
@@ -258,6 +264,9 @@ where
     /// Queue up a message to be sent by this client
     pub fn send(&self, msg: T) -> Result<(), SendError> {
         let encoded = bincode::serde::encode_to_vec(msg, BC_CONFIG)?;
+        if self.outgoing.is_full() {
+            // warn!("{} outgoing queue is full", self.conn_str);
+        }
         self.outgoing.send(encoded).map_err(|_| SendError::DeadClientError)?;
         Ok(())
     }
@@ -302,9 +311,9 @@ impl<T> Drop for Client<T>  {
         std::mem::swap(&mut tx, &mut self.outgoing);
         drop(tx);
         // also a bit hacky, since we can not take ownership of the JoinHandle
-        while !self.grpc_sender.is_finished() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        // while !self.grpc_sender.is_finished() {
+        //     std::thread::sleep(Duration::from_millis(10));
+        // }
     }
 }
 

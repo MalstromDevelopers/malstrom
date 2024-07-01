@@ -40,7 +40,7 @@ impl<K> Interrogate<K>
 where
     K: Key,
 {
-    pub(super) fn new(keys: IndexSet<K>, tester: Rc<dyn Fn(&K) -> bool>) -> Self {
+    pub(crate) fn new(keys: IndexSet<K>, tester: Rc<dyn Fn(&K) -> bool>) -> Self {
         let shared = Rc::new(Mutex::new(keys));
         Self { shared, tester }
     }
@@ -88,7 +88,7 @@ impl<K> Collect<K>
 where
     K: Key,
 {
-    pub(super) fn new(key: K) -> Self {
+    pub(crate) fn new(key: K) -> Self {
         Self {
             key,
             collection: Rc::new(Mutex::new(IndexMap::new())),

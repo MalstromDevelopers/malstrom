@@ -13,7 +13,6 @@ use crate::{Data, MaybeKey, Message, NoData, NoKey, WorkerId};
 
 use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorBuilder};
 
-use super::{Load, PersistenceBackend};
 use super::{PersistenceBackendBuilder, SnapshotVersion};
 
 #[derive(Serialize, Deserialize, Clone)]

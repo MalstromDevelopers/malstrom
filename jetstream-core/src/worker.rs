@@ -150,7 +150,7 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn step(&mut self) {
-        let span = tracing::info_span!("scheduling::run_graph");
+        let span = tracing::debug_span!("scheduling::run_graph");
         let _span_guard = span.enter();
         for op in self.operators.iter_mut().rev() {
             op.step(&mut self.communication);

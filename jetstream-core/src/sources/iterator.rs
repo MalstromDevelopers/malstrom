@@ -1,21 +1,25 @@
 use crate::{
     operators::source::IntoSource, stream::operator::OperatorBuilder, time::NoTime, Data,
-    DataMessage, Message, NoData, NoKey,
+    DataMessage, Message, NoData, NoKey, ShutdownMarker,
 };
 
-impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, NoTime> for T
+impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, usize> for T
 where
     V: Data,
 {
-    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, NoTime> {
-        let mut inner = self.into_iter();
+    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
+        let mut inner = self.into_iter().enumerate();
+        let mut is_shutdown = false;
         OperatorBuilder::direct(move |input, output, ctx| {
-            if ctx.worker_id == 0 {
+            if !is_shutdown {
                 if let Some(x) = inner.next() {
-                    output.send(Message::Data(DataMessage::new(NoKey, x, NoTime)));
+                    output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
+                    output.send(Message::Epoch(x.0));
+                } else {
+                    output.send(Message::Epoch(usize::MAX));
+                    is_shutdown = true;
                 }
             }
-
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Data(_) => (),

@@ -5,10 +5,12 @@ use crate::time::{MaybeTime, NoTime};
 use crate::{Data, DataMessage, MaybeKey, Message};
 
 mod from_data;
+mod inspect_frontier;
 mod needs_epochs;
 mod periodic;
 mod util;
 pub use self::from_data::GenerateEpochs;
+pub use self::inspect_frontier::InspectFrontier;
 pub use self::needs_epochs::NeedsEpochs;
 pub use self::periodic::PeriodicEpochs;
 
@@ -25,6 +27,12 @@ pub trait TimelyStream<K, V, T> {
         self,
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
     ) -> NeedsEpochs<K, V, TO>;
+
+    fn assign_and_convert<TO: MaybeTime>(
+        self,
+        assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
+        converter: impl FnMut(T) -> Option<TO> + 'static,
+    ) -> JetStreamBuilder<K, V, TO>;
 
     /// Turns a timestamped stream into an untimestamped stream by
     /// removing all message timestamps and epochs    
@@ -74,6 +82,38 @@ where
                         timestamp: _,
                     }) => output.send(Message::Data(DataMessage::new(key, value, NoTime))),
                     Message::Epoch(_) => (),
+                    Message::Interrogate(x) => output.send(Message::Interrogate(x)),
+                    Message::Collect(c) => output.send(Message::Collect(c)),
+                    Message::Acquire(a) => output.send(Message::Acquire(a)),
+                    Message::DropKey(k) => output.send(Message::DropKey(k)),
+                    Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
+                    // Message::Load(l) => output.send(Message::Load(l)),
+                    Message::Rescale(x) => output.send(Message::Rescale(x)),
+                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                }
+            }
+        });
+        self.then(operator)
+    }
+
+    fn assign_and_convert<TO: MaybeTime>(
+        self,
+        mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
+        mut converter: impl FnMut(T) -> Option<TO> + 'static,
+    ) -> JetStreamBuilder<K, V, TO> {
+        let operator = OperatorBuilder::direct(move |input, output, _| {
+            if let Some(msg) = input.recv() {
+                match msg {
+                    Message::Data(d) => {
+                        let timestamp = assigner(&d);
+                        let new = DataMessage::new(d.key, d.value, timestamp);
+                        output.send(Message::Data(new))
+                    }
+                    Message::Epoch(e) => {
+                        if let Some(new_e) = converter(e) {
+                            output.send(Message::Epoch(new_e))
+                        }
+                    }
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(c) => output.send(Message::Collect(c)),
                     Message::Acquire(a) => output.send(Message::Acquire(a)),

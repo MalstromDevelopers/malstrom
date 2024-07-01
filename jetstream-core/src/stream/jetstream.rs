@@ -2,15 +2,12 @@ use super::operator::{
     pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder,
 };
 use crate::{
-    channels::selective_broadcast::{self, Sender},
-    snapshot::NoPersistence,
-    time::{MaybeTime, NoTime},
-    Data, MaybeKey, NoData, NoKey,
+    channels::selective_broadcast::{self, Sender}, snapshot::NoPersistence, time::{MaybeTime, NoTime}, Data, MaybeKey, Message, NoData, NoKey
 };
 
 #[must_use]
 // must use is intended here to guard from forgetting to add the stream to a worker
-pub struct JetStreamBuilder<K, V, T> {
+pub struct JetStreamBuilder<K, V: ?Sized, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
     // these are probes for every operator in operators
     tail: Box<dyn AppendableOperator<K, V, T>>,
