@@ -1,4 +1,4 @@
-use std::{iter, rc::Rc};
+use std::{rc::Rc};
 
 use derive_new::new;
 use indexmap::IndexSet;
@@ -6,14 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     keyed::WorkerPartitioner,
-    stream::operator::{BuildContext, Logic},
-    DataMessage, MaybeData, MaybeKey, Message, WorkerId,
+    stream::operator::{BuildContext, Logic}, MaybeData, WorkerId,
 };
 
 use super::{
     collect_dist::CollectDistributor, interrogate_dist::InterrogateDistributor,
     normal_dist::NormalDistributor, versioner::VersionedMessage, DistKey, DistTimestamp,
-    NetworkAcquire, Version,
+    NetworkAcquire,
 };
 
 /// Control messages which the ICADD controllers exchange

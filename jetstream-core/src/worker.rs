@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::channels::selective_broadcast::{self};
 use crate::operators::void::Void;
 use crate::snapshot::controller::make_snapshot_controller;
-use crate::snapshot::{NoPersistence, PersistenceBackend, PersistenceBackendBuilder};
+use crate::snapshot::{PersistenceBackendBuilder};
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
@@ -107,12 +107,12 @@ impl Worker {
         let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
         let peers = config.get_cluster_uris();
         let peer_len = peers.len();
-        let operator_ids: Vec<OperatorId> =
+        let _operator_ids: Vec<OperatorId> =
             (0..(self.operators.len() + self.root_stream.operator_count())).collect();
 
         let mut communication_backend = postbox::PostboxBuilder::new()
             .build(listen_addr, move |addr: &(WorkerId, OperatorId)| {
-                peers.get(&addr.0).map(|x| x.clone())
+                peers.get(&addr.0).cloned()
             })
             .unwrap();
 

@@ -1,10 +1,18 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
-use crate::stream::operator_trait::OperatorTrait;
+
 use crate::time::MaybeTime;
 use crate::{Data, DataMessage, MaybeKey};
 
 pub trait Map<K, V, T, VO> {
+    /// Map transforms every value in a datastream into a different value
+    /// by applying a given function or closure.
+    /// 
+    /// # Example
+    /// ```
+    /// stream: JetStreamBuilder<NoKey, &str, NoTime, NoPersistence>
+    /// let lenghts = JetStreamBuilder<NoKey, usize, NoTime, NoPersistence> = stream.map(|x| x.len())
+    /// ```
     fn map(self, mapper: impl (FnMut(V) -> VO) + 'static) -> JetStreamBuilder<K, VO, T>;
 }
 
@@ -23,6 +31,24 @@ where
                 item.timestamp,
             )));
         })
+    }
+}
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+
+    use crate::{operators::{map::Map, source::Source}, stream::jetstream::JetStreamBuilder, test::collect_stream_values};
+
+    #[test]
+    fn test_map() {
+        let input = ["hello", "world", "foo", "bar"];
+        let output = input.iter().map(|x| x.len()).collect_vec();
+
+        let stream = JetStreamBuilder::new_test()
+            .source(input)
+            .map(|x| x.len());
+        
+        assert_eq!(collect_stream_values(stream), output);
     }
 }
 

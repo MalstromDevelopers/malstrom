@@ -11,6 +11,7 @@ use jetstream::operators::map::Map;
 use jetstream::operators::source::Source;
 use jetstream::operators::stateful_map::StatefulMap;
 use jetstream::operators::timely::{GenerateEpochs, InspectFrontier, TimelyStream};
+use jetstream::operators::window::flexible::FlexibleWindow;
 use jetstream::stream::operator::OperatorBuilder;
 use jetstream::time::NoTime;
 use jetstream::{snapshot::NoPersistence, test::get_test_configs, Worker};
@@ -19,8 +20,8 @@ use nexmark::config::NexmarkConfig;
 use nexmark::event::Event;
 use nexmark::EventGenerator;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info};
 use std::sync::atomic::Ordering::Relaxed;
+use tracing::{debug, error, info};
 
 fn main() {
     q4::<2>(10_000_000);
@@ -31,7 +32,18 @@ struct AuctionState {
     id: usize,
     max_bid: usize,
     expires: u64,
-    category: Option<usize>,
+    category: usize,
+}
+
+impl AuctionState {
+    pub fn new(id: usize, max_bid: usize, expires: u64, category: usize) -> Self {
+        Self {
+            id,
+            max_bid,
+            expires,
+            category,
+        }
+    }
 }
 
 /// Runs the q4 nexmark benchmark:
@@ -64,7 +76,6 @@ fn q4<const THREAD_CNT: usize>(message_count: usize) -> () {
 }
 
 fn run_stream(config: Config, msg_count: usize, coordination: Arc<AtomicI16>) -> () {
-
     let mut worker = Worker::new(NoPersistence::default(), || false);
 
     let nex = NexmarkConfig::default();
@@ -109,19 +120,18 @@ fn run_stream(config: Config, msg_count: usize, coordination: Arc<AtomicI16>) ->
         )
         .generate_epochs(&mut worker, |x, last| {
             let msg_time = match &x.value {
-            Event::Auction(a) => a.date_time,
-            Event::Bid(b) => b.date_time,
-            Event::Person(_) => unreachable!(),
+                Event::Auction(a) => a.date_time,
+                Event::Bid(b) => b.date_time,
+                Event::Person(_) => unreachable!(),
+            };
 
-        };
-
-        // // emit epoch every second at most
-        if last.map_or(true, |x| (msg_time - x) > 1) {
-            Some(msg_time)
-        } else {
-            None
-        }
-    });
+            // // emit epoch every second at most
+            if last.map_or(true, |x| (msg_time - x) > 1) {
+                Some(msg_time)
+            } else {
+                None
+            }
+        });
 
     let (stream, local_frontier) = stream.inspect_frontier();
     // the event time monotonically advances the epoch, with out of order
@@ -141,72 +151,28 @@ fn run_stream(config: Config, msg_count: usize, coordination: Arc<AtomicI16>) ->
             },
             |key, workers| rendezvous_select(key, workers.iter()).unwrap(),
         )
-
-        // track the highest bid per auction
-        .stateful_map(|key, event, state: AuctionState| {
-            let state = match event {
-                Event::Auction(a) => AuctionState {
-                    id: a.id,
-                    expires: a.expires,
-                    max_bid: state.max_bid.max(a.initial_bid),
-                    category: Some(a.category),
-                },
-                Event::Bid(b) => AuctionState {
-                    id: state.id,
-                    expires: state.expires,
-                    max_bid: state.max_bid.max(b.price),
-                    category: state.category,
-                },
-                _ => state,
-            };
-            (state.clone(), Some(state))
-        })
-        // emit all ended auctions
-        .then(OperatorBuilder::built_by(move |build_ctx| {
-            let mut ending_auctions: Vec<AuctionState> = Vec::new();
-
-            move |input: &mut Receiver<usize, AuctionState, u64>,
-                  ouptut: &mut Sender<NoKey, AuctionState, u64>,
-                  ctx| {
-                if let Some(msg) = input.recv() {
-                    match msg {
-                        // insert into the vector while keeping it sorted
-                        Message::Data(DataMessage {
-                            key,
-                            value,
-                            timestamp,
-                        }) => {
-                            match ending_auctions
-                                .binary_search_by_key(&value.expires, |x| x.expires)
-                            {
-                                Ok(pos) => ending_auctions.insert(pos, value),
-                                Err(pos) => ending_auctions.insert(pos, value),
-                            }
-                        }
-                        Message::Epoch(e) => {
-                            let mut maybe_ended = Vec::with_capacity(ending_auctions.len());
-                            std::mem::swap(&mut maybe_ended, &mut ending_auctions);
-                            for x in maybe_ended.drain(..) {
-                                if x.expires <= e {
-                                    if x.category.is_some() {
-                                        ouptut.send(Message::Data(DataMessage::new(NoKey, x, e)));
-                                    }
-                                } else {
-                                    ending_auctions.push(x)
-                                }
-                            }
-                            ouptut.send(Message::Epoch(e))
-                        }
-                        _ => (),
-                    }
+        .flexible_window(
+            |msg| match &msg.value {
+                Event::Auction(a) => {
+                    Some((AuctionState::new(a.id, 0, a.expires, a.category), a.expires))
                 }
-            }
-        }))
+                _ => None,
+            },
+            |msg, state, end| {
+                // don't allow late bids
+                if msg.timestamp > *end {
+                    return;
+                }
+                if let Event::Bid(x) = msg.value {
+                    state.max_bid = state.max_bid.max(x.price);
+                }
+            },
+        )
         .key_distribute(
-            |x| x.value.category.unwrap(),
+            |x| x.value.category,
             |key, targets| rendezvous_select(key, targets.iter()).unwrap(),
         )
-        .stateful_map(move |key, auction, mut prices: Vec<usize>| {
+        .stateful_map(move |_key, auction, mut prices: Vec<usize>| {
             prices.push(auction.max_bid);
             let avg = prices.iter().sum::<usize>() as f64 / prices.len() as f64;
             (avg, Some(prices))
@@ -222,7 +188,7 @@ fn run_stream(config: Config, msg_count: usize, coordination: Arc<AtomicI16>) ->
         // loop {
         let r = remaining.load(Relaxed);
 
-        if (last_print - r)  > 100_000 {
+        if (last_print - r) > 100_000 {
             let gf = global_frontier.get_time();
             info!("{this}: Remaining {r:?} GF {gf:?}");
             last_print = r;

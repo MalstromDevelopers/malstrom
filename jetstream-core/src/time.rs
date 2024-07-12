@@ -1,4 +1,4 @@
-pub trait Timestamp: PartialOrd + Clone + std::fmt::Debug + 'static {
+pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
     const MAX: Self;
     const MIN: Self;
 
@@ -32,7 +32,7 @@ impl<T: Timestamp + Clone + 'static> MaybeTime for T {
     }
 }
 impl MaybeTime for NoTime {
-    fn try_merge(&self, other: &Self) -> Option<Self> {
+    fn try_merge(&self, _other: &Self) -> Option<Self> {
         None
     }
 }
@@ -93,29 +93,28 @@ timestamp_impl!(i32);
 timestamp_impl!(i64);
 timestamp_impl!(i128);
 
-impl Timestamp for f32 {
-    const MAX: f32 = f32::MAX;
-    const MIN: f32 = f32::MIN;
+// impl Timestamp for f32 {
+//     const MAX: f32 = f32::MAX;
+//     const MIN: f32 = f32::MIN;
 
-    fn merge(&self, other: &Self) -> Self {
-        self.min(*other)
-    }
-}
+//     fn merge(&self, other: &Self) -> Self {
+//         self.min(*other)
+//     }
+// }
 
-impl Timestamp for f64 {
-    const MAX: f64 = f64::MAX;
-    const MIN: f64 = f64::MIN;
+// impl Timestamp for f64 {
+//     const MAX: f64 = f64::MAX;
+//     const MIN: f64 = f64::MIN;
 
-    fn merge(&self, other: &Self) -> Self {
-        self.min(*other)
-    }
-}
+//     fn merge(&self, other: &Self) -> Self {
+//         self.min(*other)
+//     }
+// }
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    snapshot::PersistenceBackend,
     stream::{
         jetstream::JetStreamBuilder,
         operator::{OperatorBuilder, OperatorContext},

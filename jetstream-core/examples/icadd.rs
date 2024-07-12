@@ -5,21 +5,16 @@ use jetstream::{
     stream::operator::OperatorBuilder, test::get_test_configs, time::NoTime, DataMessage, Message,
     NoKey, RescaleMessage, Worker,
 };
-use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_sdk::trace::{BatchConfig, BatchConfigBuilder, TracerProvider};
+
+use opentelemetry_sdk::trace::{BatchConfigBuilder};
 use std::net::SocketAddrV4;
-use std::process::exit;
+
 use std::{
-    collections::VecDeque,
     iter,
-    path::Path,
-    rc::Rc,
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
 };
-use tracing::{error, span};
+
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::Registry;
+
 use tracing_subscriber::prelude::*;
 
 #[tokio::main]
@@ -90,7 +85,7 @@ fn run_stream(config: Config, key: String) {
         )
         .stateful_map(move |key, msg, state: usize| {
             let state = state + 1;
-            if (state < 10) || (state >= 9999) {
+            if !(10..9999).contains(&state) {
                 println!("{state:?} for {key} @ {thread_name}");
             }
             // if state == 10_000 {

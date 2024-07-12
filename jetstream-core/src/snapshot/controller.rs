@@ -186,7 +186,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             match msg {
                 ComsMessage::StartSnapshot(i) => {
                     let barrier = Barrier::new(backend_builder.for_version(ctx.worker_id, &i));
-                    in_progress.insert(barrier.clone());
+                    in_progress = Some(barrier.clone());
                     output.send(Message::AbsBarrier(barrier))
                 }
                 ComsMessage::LoadSnapshot(_) => todo!(),

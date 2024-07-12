@@ -1,5 +1,5 @@
 use crate::{
-    operators::sink::IntoSink, snapshot::PersistenceBackend, stream::operator::OperatorBuilder,
+    operators::sink::IntoSink, stream::operator::OperatorBuilder,
     test::VecCollector, time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
 };
 

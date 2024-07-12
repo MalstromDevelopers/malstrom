@@ -2,7 +2,7 @@ use super::operator::{
     pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder,
 };
 use crate::{
-    channels::selective_broadcast::{self, Sender}, snapshot::NoPersistence, time::{MaybeTime, NoTime}, Data, MaybeKey, Message, NoData, NoKey
+    channels::selective_broadcast::{self, Sender}, time::{MaybeTime, NoTime}, Data, MaybeKey, NoData, NoKey
 };
 
 #[must_use]

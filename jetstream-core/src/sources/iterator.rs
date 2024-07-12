@@ -1,6 +1,6 @@
 use crate::{
     operators::source::IntoSource, stream::operator::OperatorBuilder, time::NoTime, Data,
-    DataMessage, Message, NoData, NoKey, ShutdownMarker,
+    DataMessage, Message, NoData, NoKey,
 };
 
 impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, usize> for T
@@ -10,7 +10,7 @@ where
     fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
         let mut inner = self.into_iter().enumerate();
         let mut is_shutdown = false;
-        OperatorBuilder::direct(move |input, output, ctx| {
+        OperatorBuilder::direct(move |input, output, _ctx| {
             if !is_shutdown {
                 if let Some(x) = inner.next() {
                     output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
@@ -45,7 +45,6 @@ mod tests {
 
     use crate::{
         operators::{
-            probe::{DataOrEpoch, ProbeEpoch},
             sink::Sink,
             source::Source,
         },

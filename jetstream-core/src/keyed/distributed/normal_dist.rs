@@ -1,22 +1,21 @@
-use std::{collections::VecDeque, iter, marker::PhantomData, rc::Rc};
+use std::{marker::PhantomData, rc::Rc};
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::{IndexSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     keyed::WorkerPartitioner,
     snapshot::{Barrier, PersistenceBackend},
-    stream::operator::{BuildContext, OperatorContext},
+    stream::operator::{OperatorContext},
     time::MaybeTime,
-    DataMessage, Key, MaybeData, Message, RescaleMessage, WorkerId,
+    DataMessage, MaybeData, Message, WorkerId,
 };
 
 use super::{
     icadd_operator::{DistributorKind, TargetedMessage},
     interrogate_dist::InterrogateDistributor,
-    versioner::VersionedMessage,
-    DistData, DistKey, DistTimestamp, Version,
+    versioner::VersionedMessage, DistKey, Version,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

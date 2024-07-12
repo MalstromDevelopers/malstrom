@@ -1,4 +1,4 @@
-use std::iter;
+
 
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -9,8 +9,7 @@ use tracing::debug;
 use crate::stream::operator::Logic;
 use crate::ShutdownMarker;
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    stream::operator::{BuildContext, OperatorContext},
+    stream::operator::{BuildContext},
     time::MaybeTime,
     MaybeData, MaybeKey, Message, WorkerId,
 };
@@ -42,7 +41,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
 
     move |input, output, ctx| {
         if let Some(msg) = input.recv() {
-            let _ = match msg {
+            match msg {
                 Message::Epoch(e) => {
                     debug!("{}-{} Broadcasting epoch {:?} to {:?}", ctx.worker_id, ctx.operator_id, e, clients.keys().collect_vec());
 
@@ -82,7 +81,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
                         }
                     }
                     ExchangedMessage::Shutdown => {
-                        to_remove.push(sender.clone());
+                        to_remove.push(*sender);
                         // if this remote was holding back the epoch, we want to advance it
                         let old_merged = merge_timestamps(epoch_states.values());
                         // epoch_states.swap_remove(&sender);
@@ -117,7 +116,7 @@ fn merge_timestamps<'a, T: MaybeTime>(
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.map(|a| a.try_merge(y)).flatten();
+            merged = merged.and_then(|a| a.try_merge(y));
         } else {
             return None;
         }

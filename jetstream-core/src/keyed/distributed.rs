@@ -31,6 +31,18 @@ impl<T: MaybeTime + Serialize + DeserializeOwned> DistTimestamp for T {}
 
 type Version = u64;
 
+/// Panicing encode using the default bincode config
+pub(crate) fn encode<S: Serialize>(value: S) -> Vec<u8> { 
+    bincode::serde::encode_to_vec(value, bincode::config::standard())
+    .expect("State serialization error")
+}
+/// Panicing decode using the default bincode config
+pub(crate) fn decode<S: DeserializeOwned>(raw: Vec<u8>) -> S { 
+    bincode::serde::decode_from_slice(&raw, bincode::config::standard())
+    .expect("State deserialization error")
+    .0
+}
+
 #[derive(Clone)]
 pub struct Interrogate<K> {
     shared: Rc<Mutex<IndexSet<K>>>,
@@ -39,9 +51,12 @@ pub struct Interrogate<K> {
 impl<K> Interrogate<K>
 where
     K: Key,
-{
-    pub(crate) fn new(keys: IndexSet<K>, tester: Rc<dyn Fn(&K) -> bool>) -> Self {
-        let shared = Rc::new(Mutex::new(keys));
+{   
+    /// Creates a new interrogator.
+    /// Tester is a function which checks if the supplied keys should be added to
+    /// the interrogation set, i.e. if these are keys, that need to be relocated
+    pub(crate) fn new(tester: Rc<dyn Fn(&K) -> bool>) -> Self {
+        let shared = Rc::new(Mutex::new(IndexSet::new()));
         Self { shared, tester }
     }
 
@@ -68,7 +83,7 @@ where
     /// is exactly one strong count to this Interrogate.
     ///
     /// PANICS: If the Mutex is poisened
-    pub(super) fn try_unwrap(self) -> Result<IndexSet<K>, Self> {
+    pub(crate) fn try_unwrap(self) -> Result<IndexSet<K>, Self> {
 
         Rc::try_unwrap(self.shared)
             .map(|x| Mutex::into_inner(x).unwrap())
@@ -95,16 +110,15 @@ where
         }
     }
     pub fn add_state<S: Serialize>(&mut self, operator_id: OperatorId, state: &S) {
-        let encoded = bincode::serde::encode_to_vec(state, bincode::config::standard())
-            .expect("State serialization error");
-        self.collection.lock().unwrap().insert(operator_id, encoded);
+
+        self.collection.lock().unwrap().insert(operator_id, encode(state));
     }
 
     /// Try unwrapping the inner Rc and Mutex. This succeeds if there
     /// is exactly one strong count to this Collect.
     ///
     /// PANICS: If the Mutex is poisoned
-    pub(super) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
+    pub(crate) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
         match Rc::try_unwrap(self.collection).map(|mutex| mutex.into_inner().unwrap()) {
             Ok(collection) => Ok((self.key, collection)),
             Err(collection) => Err(Self {
@@ -141,11 +155,7 @@ where
             .lock()
             .unwrap()
             .swap_remove(operator_id)
-            .map(|x| {
-                bincode::serde::decode_from_slice(&x, bincode::config::standard())
-                    .expect("State deserialization error")
-                    .0
-            })
+            .map(decode)
             .map(|s| (self.key.clone(), s))
     }
 }

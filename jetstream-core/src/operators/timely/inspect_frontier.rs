@@ -1,11 +1,11 @@
-use super::super::stateless_op::StatelessOp;
+
 use crate::channels::selective_broadcast::Receiver;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::stream::operator_trait::OperatorTrait;
-use crate::time::{MaybeTime, Timestamp};
+
+use crate::time::{Timestamp};
 use crate::channels::watch;
-use crate::{Data, DataMessage, MaybeData, MaybeKey, Message};
+use crate::{MaybeData, MaybeKey, Message};
 
 pub struct FrontierHandle<T> {
     current_time: watch::Receiver<Option<T>>

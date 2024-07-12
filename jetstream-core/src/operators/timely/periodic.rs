@@ -65,7 +65,7 @@ where
                     .map(|(t, i)| (t, now.duration_since(*i).unwrap_or_default()));
                 if let Some(e) = gen(&elapsed) {
                     output.send(Message::Epoch(e.clone()));
-                    state.insert((e, now));
+                    state = Some((e, now));
                 }
                 if let Some(msg) = input.recv() {
                     match msg {

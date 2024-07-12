@@ -1,6 +1,5 @@
 use std::{
     collections::VecDeque,
-    ops::Deref,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -13,14 +12,14 @@ use std::{
 /// NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 /// big queues with this channel.
 use crossbeam;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::{IndexMap};
 use itertools::{self};
-use serde_json::value::Index;
-use url::form_urlencoded::Target;
+
+
 
 use crate::{
     snapshot::Barrier,
-    time::{MaybeTime, NoTime, Timestamp},
+    time::{MaybeTime},
     Message, OperatorId, OperatorPartitioner, Scale, ShutdownMarker,
 };
 
@@ -229,7 +228,7 @@ fn merge_timestamps<'a, T: MaybeTime>(
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.map(|a| a.try_merge(y)).flatten();
+            merged = merged.and_then(|a| a.try_merge(y));
         } else {
             return None;
         }
@@ -253,11 +252,7 @@ fn handle_received<K, V, T: MaybeTime>(
         Message::Epoch(e) => {
             state.epoch = Some(e);
             let merged = merge_timestamps(states.values().map(|x| &x.epoch));
-            if let Some(x) = merged {
-                Some(Message::Epoch(x.clone()))
-            } else {
-                None
-            }
+            merged.map(|x| Message::Epoch(x.clone()))
         }
         Message::AbsBarrier(b) => {
             state.barrier = Some(b);
@@ -301,7 +296,7 @@ where
     pub fn recv(&mut self) -> Option<Message<K, V, T>> {
         // there are messages in the buffer, but no state needs alignemnet
         // i.e. any alignement was resolved on the previous call
-        if self.buffered.len() > 0 && self.states.values().all(|x| !x.needs_alignement()) {
+        if !self.buffered.is_empty() && self.states.values().all(|x| !x.needs_alignement()) {
             return self.buffered.pop_front();
         }
 
@@ -392,15 +387,11 @@ mod test {
         link(&mut sender, &mut receiver);
         let mut sender2 = sender.clone();
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        sender.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        sender2.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
     }
@@ -413,16 +404,12 @@ mod test {
         link(&mut sender, &mut receiver);
         let mut sender2 = sender.clone();
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        sender.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        sender2.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
         assert!(matches!(
             receiver.recv(),

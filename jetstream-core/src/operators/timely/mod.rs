@@ -1,4 +1,4 @@
-use crate::snapshot::PersistenceBackend;
+
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
 use crate::time::{MaybeTime, NoTime};
@@ -133,8 +133,7 @@ where
 mod tests {
     use crate::{
         channels::selective_broadcast::Receiver,
-        operators::{probe::ProbeEpoch, sink::Sink, source::Source},
-        snapshot::NoPersistence,
+        operators::{sink::Sink, source::Source},
         stream::operator::OperatorBuilder,
         test::{get_test_configs, get_test_stream, VecCollector},
         Message, NoKey,
@@ -187,7 +186,7 @@ mod tests {
             .generate_epochs(&mut worker, |msg, epoch| {
                 Some(msg.timestamp + epoch.unwrap_or(0))
             });
-        let (stream, rx) = stream.probe_epoch();
+        let (stream, frontier) = stream.inspect_frontier();
         let stream = stream.sink(collector.clone());
         let late = late.sink(late_collector.clone());
 
@@ -198,7 +197,7 @@ mod tests {
         let mut timestamps: Vec<i32> = vec![0];
         while collector.len() + late_collector.len() < 10 {
             runtime.step();
-            if let Some(i) = rx.read() {
+            if let Some(i) = frontier.get_time() {
                 if i != *timestamps.last().unwrap() {
                     timestamps.push(i)
                 }
@@ -307,11 +306,11 @@ mod tests {
                 match input.recv() {
                     // encode epoch to -T
                     Some(Message::Data(d)) => {
-                        collector_moved.give(d.timestamp.clone());
+                        collector_moved.give(d.timestamp);
                         out.send(Message::Data(d))
                     }
                     Some(Message::Epoch(e)) => {
-                        collector_moved.give(-e.clone());
+                        collector_moved.give(-e);
                         out.send(Message::Epoch(e))
                     }
                     Some(x) => out.send(x),
@@ -360,7 +359,7 @@ mod tests {
         );
         assert_eq!(
             collector_late.into_iter().map(|x| x.value).collect_vec(),
-            (0..5).map(|x| x,).collect_vec()
+            (0..5).collect_vec()
         );
     }
 

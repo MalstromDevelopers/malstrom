@@ -1,7 +1,6 @@
 use crate::{
     channels::selective_broadcast::Sender,
     operators::map::Map,
-    snapshot::PersistenceBackend,
     stream::jetstream::JetStreamBuilder,
     time::{NoTime, Timestamp},
     DataMessage, MaybeData, MaybeKey, Message, Worker,

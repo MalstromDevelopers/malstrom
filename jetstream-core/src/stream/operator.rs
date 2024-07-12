@@ -92,7 +92,7 @@ pub trait AppendableOperator<K, V, T> {
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
 
     /// Add a label to this operator which will show up in traces
-    fn label(&mut self, label: String) -> ();
+    fn label(&mut self, label: String);
 }
 
 /// An operator which can be turned into a runnable operator, by supplying a BuildContext
@@ -176,7 +176,7 @@ where
         let output = Sender::new_unlinked(full_broadcast);
         Self {
             input,
-            logic_builder: Box::new(|mut ctx| Box::new(logic_builder(&mut ctx))),
+            logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
             label: None
         }
@@ -219,7 +219,7 @@ where
         self
     }
     
-    fn label(&mut self, label: String) -> () {
+    fn label(&mut self, label: String) {
         self.label = Some(label)
     }
 }
@@ -273,7 +273,7 @@ where
     VO: Data,
     TO: MaybeTime,
 {
-    fn add_input(&mut self, maybe_sender: &mut dyn Any) -> () {
+    fn add_input(&mut self, maybe_sender: &mut dyn Any) {
         let sender = maybe_sender.downcast_mut().unwrap();
         selective_broadcast::link(sender, &mut self.input)
     }

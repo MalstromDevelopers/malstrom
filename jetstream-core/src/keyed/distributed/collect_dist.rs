@@ -9,7 +9,7 @@ use crate::{
     snapshot::Barrier,
     stream::operator::OperatorContext,
     time::MaybeTime,
-    DataMessage, Key, MaybeData, Message, OperatorId, RescaleMessage, ShutdownMarker, WorkerId,
+    DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
 };
 
 use super::{
@@ -91,11 +91,11 @@ where
 
         if self.whitelist.is_empty() && self.current_collect.is_none() && !self.done_workers.contains(&self.worker_id) {
             broadcast(self.clients.values(), DirectlyExchangedMessage::<K>::Done).unwrap();
-            self.done_workers.insert(self.worker_id.clone());
+            self.done_workers.insert(self.worker_id);
         }
 
         // will be false for empty diff
-        let any_outstanding = self
+        let _any_outstanding = self
             .done_workers
             .symmetric_difference(&self.old_worker_set);
         let any_outstanding = self
@@ -156,7 +156,7 @@ where
         let inner = match (*new_target == self.worker_id, is_in_whitelist, is_on_hold) {
             // Rule 1.1.
             (false, true, _) => Some(TargetedMessage::new(
-                VersionedMessage::new(msg.value.inner, self.version.clone(), self.worker_id),
+                VersionedMessage::new(msg.value.inner, self.version, self.worker_id),
                 None,
             )),
             // Rule 1.2
@@ -171,7 +171,7 @@ where
             }
             // Rule 2
             (false, false, false) => Some(TargetedMessage::new(
-                VersionedMessage::new(msg.value.inner, self.version.clone(), self.worker_id),
+                VersionedMessage::new(msg.value.inner, self.version, self.worker_id),
                 Some(*new_target),
             )),
             // Rule 3
@@ -181,7 +181,7 @@ where
                     Some(TargetedMessage::new(
                         VersionedMessage::new(
                             msg.value.inner,
-                            self.version.clone(),
+                            self.version,
                             self.worker_id,
                         ),
                         None,
@@ -190,7 +190,7 @@ where
                     Some(TargetedMessage::new(
                         VersionedMessage::new(
                             msg.value.inner,
-                            self.version.clone(),
+                            self.version,
                             self.worker_id,
                         ),
                         Some(old_target),
@@ -282,8 +282,8 @@ where
         &mut self,
         output: &mut Sender<K, TargetedMessage<V>, T>,
         partitioner: &dyn WorkerPartitioner<K>,
-        ctx: &OperatorContext,
-    ) -> () {
+        _ctx: &OperatorContext,
+    ) {
         self.current_collect = match self.current_collect.take() {
             Some(x) => match x.try_unwrap() {
                 Ok((key, collection)) => {

@@ -1,28 +1,29 @@
 use std::net::{SocketAddr, SocketAddrV4, TcpListener};
 use std::time::{Duration, Instant};
-use std::{any::Any, collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
+use std::{collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
+use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 use crate::operators::{sink::Sink, timely::InspectFrontier};
+use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
 use crate::time::Timestamp;
+use crate::{Key, RescaleMessage, ShutdownMarker};
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
     snapshot::{NoPersistence, PersistenceBackend, PersistenceBackendBuilder},
     stream::{
         jetstream::JetStreamBuilder,
-        operator::{
-            AppendableOperator, BuildContext, Logic, OperatorBuilder, OperatorContext,
-            RunnableOperator, StandardOperator,
-        },
+        operator::{AppendableOperator, BuildContext, Logic, OperatorBuilder, RunnableOperator},
     },
     time::{MaybeTime, NoTime},
     Data, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, Worker, WorkerId,
 };
+use indexmap::{IndexMap, IndexSet};
 /// Test utilities for JetStream
 use itertools::Itertools;
 use postbox::{Client, Postbox, PostboxBuilder};
-use serde::{de::DeserializeOwned, Serialize};
+
 use tonic::transport::Uri;
 
 /// A Helper to write values into a shared vector and take them out
@@ -59,6 +60,10 @@ impl<T> VecCollector<T> {
     /// Returns the len of the contained vec
     pub fn len(&self) -> usize {
         self.inner.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
     }
 }
 
@@ -119,14 +124,14 @@ pub struct CapturingPersistenceBackend {
     capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
 }
 impl PersistenceBackendBuilder for CapturingPersistenceBackend {
-    fn latest(&self, worker_id: crate::WorkerId) -> Box<dyn PersistenceBackend> {
+    fn latest(&self, _worker_id: crate::WorkerId) -> Box<dyn PersistenceBackend> {
         Box::new(self.clone())
     }
 
     fn for_version(
         &self,
-        worker_id: crate::WorkerId,
-        snapshot_epoch: &crate::snapshot::SnapshotVersion,
+        _worker_id: crate::WorkerId,
+        _snapshot_epoch: &crate::snapshot::SnapshotVersion,
     ) -> Box<dyn PersistenceBackend> {
         Box::new(self.clone())
     }
@@ -145,7 +150,7 @@ impl PersistenceBackend for CapturingPersistenceBackend {
         self.capture
             .lock()
             .unwrap()
-            .insert(operator_id.clone(), state.into());
+            .insert(*operator_id, state.into());
     }
 }
 
@@ -193,6 +198,7 @@ fn pair_postbox() -> (
 /// Test helper to simulate a two Worker cluster with this local
 /// worker being index 0 and the other being index 1
 pub struct OperatorTester<KI, VI, TI, KO, VO, TO, R> {
+    op_id: usize,
     op: RunnableOperator,
     // Use this to send messages into the distributor
     local_in: Sender<KI, VI, TI>,
@@ -242,6 +248,7 @@ where
 
         let remote_recv = pb_remote.new_client((0, op_id), (1, op_id)).unwrap();
         Self {
+            op_id,
             op,
             local_in,
             local_out,
@@ -254,6 +261,11 @@ where
 
     pub fn new_direct<M: Logic<KI, VI, TI, KO, VO, TO>>(logic: M) -> Self {
         Self::new_built_by(|_| Box::new(logic))
+    }
+
+    /// Returns the operators id
+    pub fn operator_id(&self) -> OperatorId {
+        self.op_id
     }
 }
 
@@ -268,7 +280,7 @@ where
     R: postbox::Data,
 {
     /// Schedule the operator
-    pub fn step(&mut self) -> () {
+    pub fn step(&mut self) {
         self.op.step(&mut self.local_postbox)
     }
 
@@ -315,17 +327,66 @@ where
     }
 }
 
-/// Runs a stream until the MAX timestamp is reached and returns all emitted values
-pub fn get_stream_values<K, V, T>(stream: JetStreamBuilder<K, V, T>) -> Vec<V>
-where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
-{
+/// A test which panics if the given operator does not forward a system message from local upstream
+pub fn test_forward_system_messages<KI: Key + Default, VI: MaybeData, TI: MaybeTime, KO: MaybeKey, VO: MaybeData, TO: MaybeTime, R: postbox::Data>(tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>) -> () {
+    let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence::default())));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::AbsBarrier(_)));
+
+
+    let msg = Message::Acquire(Acquire::new(KI::default(), Rc::new(Mutex::new(IndexMap::new()))));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::Acquire(_)));
+
+    let msg = Message::Collect(Collect::new(KI::default()));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::Collect(_)));
+
+    let msg = Message::DropKey(KI::default());
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::DropKey(_)));
+
+    let msg = Message::Interrogate(Interrogate::new(Rc::new(|_| false)));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::Interrogate(_)));
+
+    let msg = Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new()));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::Rescale(RescaleMessage::ScaleAddWorker(_))));
+
+    let msg = Message::Rescale(RescaleMessage::ScaleRemoveWorker(IndexSet::new()));
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))));
+
+    let msg = Message::ShutdownMarker(ShutdownMarker::default());
+    tester.send_from_local(msg);
+    tester.step();
+    assert!(matches!(tester.receive_on_local().unwrap(), Message::ShutdownMarker(_)));
+}
+
+/// Runs a stream until the MAX timestamp is reached and returns all emitted messages
+pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
+    stream: JetStreamBuilder<K, V, T>,
+) -> Vec<Message<K, V, T>> {
     let mut worker = Worker::new(NoPersistence::default(), || false);
 
     let collector = VecCollector::new();
-    let (stream, frontier) = stream.sink(collector.clone()).inspect_frontier();
+    let collector_cloned = collector.clone();
+    let (stream, frontier) = stream
+        .then(OperatorBuilder::direct(move |input, output, _| {
+            if let Some(msg) = input.recv() {
+                collector.give(msg.clone());
+                output.send(msg)
+            }
+        }))
+        .inspect_frontier();
 
     worker.add_stream(stream);
 
@@ -335,19 +396,36 @@ where
     while frontier.get_time().map_or(true, |x| x != T::MAX) {
         runtime.step()
     }
-    collector
-        .drain_vec(..)
+    collector_cloned.into_iter().collect()
+}
+
+/// Runs a stream until the MAX timestamp is reached and returns all emitted values
+pub fn collect_stream_values<K: MaybeKey, V: Data, T: Timestamp>(
+    stream: JetStreamBuilder<K, V, T>,
+) -> Vec<V> {
+    collect_stream_messages(stream)
         .into_iter()
-        .map(|x| x.value)
+        .filter_map(|msg| {
+            if let Message::Data(d) = msg {
+                Some(d.value)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use indexmap::IndexMap;
 
     use crate::{
-        operators::source::{self, Source}, snapshot::{deserialize_state, serialize_state}, DataMessage
+        operators::source::Source,
+        snapshot::{deserialize_state, serialize_state},
+        stream::operator::OperatorContext,
+        DataMessage,
     };
 
     use super::*;
@@ -424,7 +502,7 @@ mod tests {
             let client = build_ctx.create_communication_client(1, 0);
             move |input: &mut Receiver<NoKey, i32, NoTime>,
                   output: &mut Sender<NoKey, i32, NoTime>,
-                  ctx: &mut OperatorContext| {
+                  _ctx: &mut OperatorContext| {
                 if let Some(Message::Data(d)) = input.recv() {
                     let v = d.value * 2;
                     output.send(Message::Data(DataMessage::new(d.key, v, d.timestamp)));
@@ -469,6 +547,32 @@ mod tests {
     fn test_get_stream_values() {
         let stream = JetStreamBuilder::new_test().source(vec![1, 2, 3]);
         let expected = vec![1, 2, 3];
-        assert_eq!(get_stream_values(stream), expected);
+        assert_eq!(collect_stream_values(stream), expected);
+    }
+
+    #[test]
+    fn test_collect_stream_messages() {
+        let stream = JetStreamBuilder::new_test().source(0..3);
+        let expected = (0..3)
+            .enumerate()
+            .flat_map(|(i, x)| {
+                [
+                    Message::Data(DataMessage::new(NoKey, x, i)),
+                    Message::Epoch(i),
+                ]
+            })
+            .chain(once(Message::Epoch(usize::MAX)));
+        for (s, e) in collect_stream_messages(stream).into_iter().zip_eq(expected) {
+            match (s, e) {
+                (Message::Data(a), Message::Data(b)) => {
+                    assert_eq!(a.value, b.value);
+                    assert_eq!(a.timestamp, b.timestamp);
+                }
+                (Message::Epoch(a), Message::Epoch(b)) => {
+                    assert_eq!(a, b)
+                }
+                x => panic!("{x:?}"),
+            }
+        }
     }
 }

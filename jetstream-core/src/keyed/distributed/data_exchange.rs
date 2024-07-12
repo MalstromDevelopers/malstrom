@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
-use std::iter;
+
+
 
 use indexmap::IndexMap;
 use postbox::{broadcast, Client};
@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::snapshot::Barrier;
 use crate::stream::operator::Logic;
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    stream::operator::{BuildContext, OperatorContext},
-    time::MaybeTime,
-    MaybeData, MaybeKey, Message, WorkerId,
+    stream::operator::{BuildContext}, Message, WorkerId,
 };
 use crate::{DataMessage, ShutdownMarker};
 
@@ -108,7 +105,7 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
                     }
                     ExchangedMessage::Shutdown => {
                         println!("Removing client {key}");
-                        to_remove.push(key.clone());
+                        to_remove.push(*key);
                         break;
                     }
                     ExchangedMessage::Data(d) => output.send(Message::Data(d)),
@@ -143,7 +140,7 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 ) -> impl Logic<K, TargetedMessage<V>, T, K, V, T> {
     let upstream = ctx.operator_id - upstream_offset;
 
-    let mut clients: IndexMap<WorkerId, Client<ExchangedMessage<K, VersionedMessage<V>, T>>> = ctx
+    let clients: IndexMap<WorkerId, Client<ExchangedMessage<K, VersionedMessage<V>, T>>> = ctx
         .get_worker_ids()
         .filter_map(|i| {
             if i != ctx.worker_id {

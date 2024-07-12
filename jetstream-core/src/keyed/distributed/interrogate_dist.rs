@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, marker::PhantomData, rc::Rc, sync::Mutex};
+use std::{collections::VecDeque, marker::PhantomData, rc::Rc};
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::{IndexSet};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -8,7 +8,7 @@ use crate::{
     snapshot::Barrier,
     stream::operator::OperatorContext,
     time::MaybeTime,
-    DataMessage, Key, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
+    DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
 };
 
 use super::{
@@ -50,10 +50,10 @@ where
         let old_worker_set = worker_set;
         let new_worker_set: IndexSet<WorkerId> = match trigger {
             RescaleMessage::ScaleRemoveWorker(x) => {
-                old_worker_set.difference(&x).map(|y| y.clone()).collect()
+                old_worker_set.difference(&x).copied().collect()
             }
             RescaleMessage::ScaleAddWorker(x) => {
-                old_worker_set.union(&x).map(|y| y.clone()).collect()
+                old_worker_set.union(&x).copied().collect()
             }
         };
         Self {
@@ -61,7 +61,7 @@ where
             whitelist: IndexSet::new(),
             old_worker_set,
             new_worker_set,
-            version: version,
+            version,
             running_interrogate: None,
             phantom: PhantomData,
             barrier: None,
@@ -89,7 +89,7 @@ where
         msg: DataMessage<K, VersionedMessage<V>, T>,
         partitioner: &dyn WorkerPartitioner<K>,
         output: &mut Sender<K, TargetedMessage<V>, T>,
-    ) -> () {
+    ) {
         if msg.value.version > self.version {
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -139,6 +139,7 @@ where
         }
     }
 
+    #[allow(clippy::result_large_err)]
     pub(super) fn try_into_collect(self, ctx: &mut OperatorContext) -> Result<CollectDistributor<K, V, T>, Self> {
         if let Some(interrogate) = self.running_interrogate {
             match interrogate.try_unwrap() {
@@ -169,7 +170,7 @@ where
         mut self,
         input: &mut Receiver<K, VersionedMessage<V>, T>,
         output: &mut Sender<K, TargetedMessage<V>, T>,
-        mut ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext,
         partitioner: Rc<dyn WorkerPartitioner<K>>,
     ) -> DistributorKind<K, V, T> {
         match &self.running_interrogate {
@@ -178,11 +179,11 @@ where
             None => {
                 // returns true if the key does not require redistribution
                 let worker_set = self.new_worker_set.clone();
-                let wid = self.worker_id.clone();
+                let wid = self.worker_id;
 
                 let pclone = partitioner.clone();
                 let tester = move |k: &_| *pclone(k, &worker_set) != wid;
-                let interrogate = Interrogate::new(self.whitelist.clone(), Rc::new(tester));
+                let interrogate = Interrogate::new(Rc::new(tester));
                 self.running_interrogate = Some(interrogate.clone());
                 output.send(Message::Interrogate(interrogate));
             }
@@ -206,7 +207,7 @@ where
                 }
             }
         }
-        match self.try_into_collect(&mut ctx) {
+        match self.try_into_collect(ctx) {
             Ok(x) => DistributorKind::Collect(x),
             Err(x) => DistributorKind::Interrogate(x),
         }
