@@ -1,0 +1,134 @@
+use std::iter::{self, once};
+
+use indexmap::IndexSet;
+
+use crate::{
+    channels::selective_broadcast::Sender, keyed::WorkerPartitioner, snapshot::PersistenceBackend, stream::operator::{BuildContext, OperatorContext}, Message, WorkerId
+};
+
+use serde::{Deserialize, Serialize};
+
+use super::{
+    dist_trait::Distributor, interrogate::InterrogateDistributor, DistData, DistKey, DistTimestamp, NetworkMessage, PhaseDistributor, ScalableMessage, TargetedMessage, Version, VersionedMessage
+};
+
+#[derive(Default)]
+struct NormalDistributorState {
+    // includes local worker
+    this_operator_id: WorkerId,
+    worker_set: IndexSet<WorkerId>,
+    version: Version,
+    finished: IndexSet<WorkerId>,
+}
+
+pub(super) struct NormalDistributor<K> {
+    dist_func: Box<dyn WorkerPartitioner<K>>,
+    state: NormalDistributorState
+}
+impl<K> NormalDistributor<K> {
+    pub(super) fn new<P: PersistenceBackend>(dist_func: impl WorkerPartitioner<K>, ctx: &BuildContext) -> Self {
+        let mut state: NormalDistributorState = ctx.load_state().unwrap_or_default();
+        state.this_operator_id = ctx.operator_id;
+        
+        let mut wids: Vec<usize> = ctx.communication.get_peers().into_iter().map(|x| x.clone()).chain(iter::once(ctx.worker_id.clone())).collect_vec();
+        wids.sort();
+        state.worker_set.extend(wids);
+
+        Self { dist_func, state }
+    }
+}
+
+impl<K, V, T> Distributor<K, V, T> for NormalDistributor<K> where K: DistKey, V: DistData, T: DistTimestamp {
+    
+    fn handle_msg(self, msg: VersionedMessage<K, V, T>) -> (impl Distributor<K, V, T>, TargetedMessage<K, V, T>) {
+        let version = msg.version;
+        match msg.message {
+            Message::Data(_) => todo!(),
+            Message::Epoch(_) => todo!(),
+            Message::AbsBarrier(_) => todo!(),
+            Message::ScaleRemoveWorker(_) => todo!(),
+            Message::ScaleAddWorker(_) => todo!(),
+            Message::ShutdownMarker(_) => todo!(),
+            Message::Interrogate(_) => todo!(),
+            Message::Collect(_) => todo!(),
+            Message::Acquire(_) => todo!(),
+            Message::DropKey(_) => todo!(),
+        }
+    }
+    
+    fn run(self, ctx: &OperatorContext) -> impl Distributor<K, V, T> {
+        
+    }
+
+    // fn run(
+    //     mut self,
+    //     msg: Option<ScalableMessage<K, V, T>>,
+    //     output: &mut Sender<K, V, T>,
+    //     ctx: &OperatorContext,
+    // ) -> PhaseDistributor<K, V, T> {
+        
+
+
+    //     // TODO HACK
+    //     if self.worker_set.is_empty() {
+    //         let mut wids: Vec<WorkerId> = vec![ctx.worker_id];
+    //         wids.extend(ctx.communication.get_peers());
+    //         wids.sort();
+    //         self.worker_set.extend(wids);
+    //     }
+
+    //     let msg = match msg {
+    //         Some(m) => m,
+    //         None => {
+    //             return PhaseDistributor::Normal(self);
+    //         }
+    //     };
+    //     match msg {
+    //         ScalableMessage::Data(m) => {
+    //             if m.version.map_or(false, |v| v > self.version) {
+    //                 output.send(Message::Data(m.message));
+    //                 return PhaseDistributor::Normal(self);
+    //             }
+    //             let target = dist_func(&m.message.key, &self.worker_set);
+    //             if *target == ctx.worker_id {
+    //                 output.send(Message::Data(m.message));
+    //             } else {
+    //                 ctx.communication
+    //                     .send(target, NetworkMessage::Data(m))
+    //                     .expect("Remote send Error");
+    //             };
+    //             PhaseDistributor::Normal(self)
+    //         }
+    //         ScalableMessage::ScaleRemoveWorker(set) => {
+    //             let old_set = self.worker_set.clone();
+    //             let new_set: IndexSet<WorkerId> = self
+    //                 .worker_set
+    //                 .into_iter()
+    //                 .filter(|x| !set.contains(x))
+    //                 .collect();
+    //             PhaseDistributor::Interrogate(InterrogateDistributor::new(
+    //                 old_set,
+    //                 new_set,
+    //                 self.version,
+    //                 self.finished,
+    //                 output,
+    //             ))
+    //         }
+    //         ScalableMessage::ScaleAddWorker(set) => {
+    //             let old_set = self.worker_set.clone();
+    //             let new_set: IndexSet<WorkerId> = self.worker_set.into_iter().chain(set).collect();
+    //             PhaseDistributor::Interrogate(InterrogateDistributor::new(
+    //                 old_set,
+    //                 new_set,
+    //                 self.version,
+    //                 self.finished,
+    //                 output,
+    //             ))
+    //         }
+    //         ScalableMessage::Done(wid) => {
+    //             self.finished.insert(wid);
+    //             PhaseDistributor::Normal(self)
+    //         }
+    //     }
+    // }
+}

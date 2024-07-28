@@ -1,0 +1,23 @@
+[package]
+name = "postbox"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-stream = "0.3.5"
+flume = { version = "0.11.0", features = ["async"] }
+indexmap = "2.1.0"
+itertools = "0.12.1"
+prost = "0.12.3"
+serde = { version = "1.0.196", features = ["derive"] }
+thiserror = "1.0.56"
+tokio = { version = "1.35.1", features = ["rt-multi-thread"] }
+tokio-stream = "0.1.14"
+tonic = "0.10.2"
+bincode = {version = "2.0.0-rc.3", features = ["serde"] }
+tracing = { version = "0.1.40", features = ["log"] }
+
+[build-dependencies]
+tonic-build = "0.10.2"

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package postbox;
+
+service GenericCommunication {
+    // Each worker subscribes to updates from each other worker
+    // By sending an ExchangeSubscribe message. In turn it will receive
+    // an unbounded stream of ExchangeMessages
+    rpc GenericExchange(stream ExchangeMessage) returns (ExchangeResponse) {}
+}
+
+message ExchangeResponse {
+}
+
+message ExchangeMessage {
+    // TODO figure out how to use tonic without protobuf
+    bytes data = 1;
+}
