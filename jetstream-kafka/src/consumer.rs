@@ -5,9 +5,8 @@ use indexmap::IndexMap;
 use itertools::Itertools;
 use jetstream::channels::selective_broadcast::{Receiver, Sender};
 use jetstream::keyed::{rendezvous_select, KeyDistribute};
-use jetstream::operators::map::Map;
-use jetstream::operators::source::{self, Source};
-use jetstream::operators::stateful_map::StatefulMap;
+use jetstream::operators::source::Source;
+
 use jetstream::stream::jetstream::JetStreamBuilder;
 use jetstream::stream::operator::{BuildContext, OperatorBuilder, OperatorContext};
 use jetstream::time::NoTime;
@@ -15,10 +14,10 @@ use jetstream::{DataMessage, Message, NoData, NoKey};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::ConsumerContext;
 use rdkafka::consumer::DefaultConsumerContext;
-use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::consumer::{BaseConsumer, Consumer};
 use rdkafka::error::KafkaError;
-use rdkafka::message::{BorrowedMessage, OwnedMessage};
-use rdkafka::metadata::MetadataPartition;
+use rdkafka::message::OwnedMessage;
+
 use rdkafka::Message as _;
 use rdkafka::TopicPartitionList;
 use rdkafka::{ClientContext, Offset};

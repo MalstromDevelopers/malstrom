@@ -5,9 +5,8 @@ use super::operator::{
 };
 use crate::{
     channels::selective_broadcast::{self, Sender},
-    snapshot::NoPersistence,
     time::{MaybeTime, NoTime},
-    worker::{split_n, union, InnerRuntimeBuilder, RuntimeBuilder},
+    worker::{split_n, union, InnerRuntimeBuilder},
     Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
 };
 

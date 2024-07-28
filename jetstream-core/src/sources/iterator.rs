@@ -43,14 +43,13 @@ mod tests {
 
     use crate::{
         operators::{sink::Sink, source::Source},
-        snapshot::NoPersistence,
         test::{get_test_configs, get_test_stream, VecCollector},
     };
 
     #[test]
     /// The into_iter source should emit the iterator values
     fn test_emits_values() {
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let in_data: Vec<i32> = (0..100).collect();
         let collector = VecCollector::new();

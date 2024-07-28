@@ -4,7 +4,7 @@ use grpc::generic_communication_client::GenericCommunicationClient;
 use grpc::generic_communication_server::{GenericCommunication, GenericCommunicationServer};
 use grpc::{ExchangeMessage, ExchangeResponse};
 use indexmap::IndexMap;
-use itertools::Itertools;
+
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -18,7 +18,7 @@ use tokio_stream::StreamExt;
 use tonic::metadata::{Binary, BinaryMetadataKey, MetadataValue};
 use tonic::transport::{Server, Uri};
 use tonic::{Request, Response, Status};
-use tracing::{debug, warn};
+use tracing::{warn};
 
 mod grpc {
     tonic::include_proto!("postbox");
@@ -415,12 +415,11 @@ pub fn broadcast<'a, T: Data + Clone + 'a>(
 mod test {
     use std::{
         net::{SocketAddr, SocketAddrV4, TcpListener},
-        rc::Rc,
         time::Duration,
     };
 
     use itertools::Itertools;
-    use tonic::{client, transport::Uri};
+    use tonic::{transport::Uri};
 
     use crate::{broadcast, Address, Client, Postbox, PostboxBuilder};
 
@@ -557,7 +556,7 @@ mod test {
         client_a.send(42).unwrap();
         client_a.send(43).unwrap();
 
-        let mut client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
+        let client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
         std::thread::sleep(Duration::from_millis(500));
         let messages = client_b.recv_all().map(|x| x.unwrap()).collect_vec();
         assert_eq!(messages, vec![42, 43]);

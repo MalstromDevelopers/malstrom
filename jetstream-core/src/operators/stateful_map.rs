@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use metrics::gauge;
 use serde::{de::DeserializeOwned, Serialize};
-use tracing::{event, Level};
+
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -159,7 +159,7 @@ mod test {
     use crate::test::{CapturingPersistenceBackend, OperatorTester};
     use crate::time::NoTime;
     use crate::{
-        operators::{inspect::Inspect, source::Source},
+        operators::{source::Source},
         stream::jetstream::JetStreamBuilder,
         test::collect_stream_values,
     };

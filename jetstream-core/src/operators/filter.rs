@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_filter() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
 

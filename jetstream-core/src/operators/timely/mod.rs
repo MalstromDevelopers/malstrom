@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_timestamp_gets_assigned() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
         let collector = VecCollector::new();
 
         let (ontime, late) = stream
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn test_epoch_gets_issued() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
         let late_collector = VecCollector::new();
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn test_epoch_gets_removed() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
         let (stream, late) = stream
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn test_epoch_gets_removed_gen() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
         let (stream, late) = stream
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn test_epoch_issued_after_message() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let (ontime, late) = stream
             .source(1..4)
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn test_late_message_into_late_stream() {
         let [config] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+        let (worker, stream) = get_test_stream();
 
         let collector_ontime = VecCollector::new();
         let collector_late = VecCollector::new();

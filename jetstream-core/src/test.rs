@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use std::{collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
-use crate::operators::{sink::Sink, timely::InspectFrontier};
+use crate::operators::{timely::InspectFrontier};
 use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
 use crate::time::Timestamp;
@@ -81,7 +81,7 @@ impl<T> IntoIterator for VecCollector<T> {
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
 pub fn get_test_stream() -> (RuntimeBuilder, JetStreamBuilder<NoKey, NoData, NoTime>) {
-    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -412,7 +412,7 @@ pub fn test_forward_system_messages<
 pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
     stream: JetStreamBuilder<K, V, T>,
 ) -> Vec<Message<K, V, T>> {
-    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
 
     let collector = VecCollector::new();
     let collector_cloned = collector.clone();

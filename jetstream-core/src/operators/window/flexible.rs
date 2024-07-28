@@ -1,15 +1,14 @@
-use std::{collections::BTreeMap, iter::once};
+use std::{collections::BTreeMap};
 
 use crate::{
     keyed::distributed::{DistData, DistTimestamp},
     operators::stateful_transform::StatefulTransform,
     stream::jetstream::JetStreamBuilder,
-    time::Timestamp,
-    Data, DataMessage, Key, Message,
+    time::Timestamp, DataMessage, Key, Message,
 };
-use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::ops::Bound::Included;
+
+use serde::{de::DeserializeOwned, Serialize};
+
 
 struct FromEpoch<T>(T);
 impl<K, V, T> TryFrom<&Message<K, V, T>> for FromEpoch<T>

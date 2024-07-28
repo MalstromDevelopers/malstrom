@@ -71,8 +71,8 @@ fn q4<const THREAD_CNT: usize>(message_count: usize) -> () {
     info!("Took {elapsed:?} for {message_count} records on {THREAD_CNT} threads");
 }
 
-fn run_stream(config: Config, msg_count: usize, coordination: Arc<AtomicI16>) -> () {
-    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+fn run_stream(config: Config, msg_count: usize, _coordination: Arc<AtomicI16>) -> () {
+    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
 
     let nex = NexmarkConfig::default();
     let remaining = Arc::new(AtomicUsize::new(msg_count));

@@ -32,7 +32,7 @@ fn q2<const THREAD_CNT: usize>(message_count: usize) -> () {
 }
 
 fn run_stream(config: Config, msg_count: usize) -> () {
-    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
 
     let nex = NexmarkConfig::default();
     let gen = EventGenerator::new(nex).take(msg_count);

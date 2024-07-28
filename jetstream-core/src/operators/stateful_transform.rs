@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+
 
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -149,8 +149,8 @@ where
         S: Default + Serialize + DeserializeOwned + 'static,
     >(
         self,
-        mut mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
-        mut handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
+        mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
+        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
     ) -> JetStreamBuilder<K, VO, T> {
         let op =
             OperatorBuilder::built_by(move |ctx| build_stateful_transform(ctx, mapper, handler));
