@@ -28,8 +28,17 @@ pub struct OperatorContext<'a> {
 
 impl<'a> OperatorContext<'a> {
     /// Create a client for inter-worker communication
-    pub fn create_communication_client<T: postbox::Data>(&mut self, other_worker: WorkerId, other_operator: OperatorId) -> Client<T> {
-        self.communication.new_client((other_worker, other_operator), (self.worker_id, self.operator_id)).unwrap()
+    pub fn create_communication_client<T: postbox::Data>(
+        &mut self,
+        other_worker: WorkerId,
+        other_operator: OperatorId,
+    ) -> Client<T> {
+        self.communication
+            .new_client(
+                (other_worker, other_operator),
+                (self.worker_id, self.operator_id),
+            )
+            .unwrap()
     }
 }
 
@@ -39,7 +48,7 @@ pub struct BuildContext<'a> {
     pub label: String,
     persistence_backend: Box<dyn PersistenceBackend>,
     communication: &'a mut Postbox<(WorkerId, OperatorId)>,
-    worker_ids: Range<usize>
+    worker_ids: Range<usize>,
 }
 impl<'a> BuildContext<'a> {
     pub(crate) fn new(
@@ -48,7 +57,7 @@ impl<'a> BuildContext<'a> {
         label: String,
         persistence_backend: Box<dyn PersistenceBackend>,
         communication: &'a mut Postbox<(WorkerId, OperatorId)>,
-        worker_ids: Range<usize>
+        worker_ids: Range<usize>,
     ) -> Self {
         Self {
             worker_id,
@@ -56,7 +65,7 @@ impl<'a> BuildContext<'a> {
             label,
             persistence_backend,
             communication,
-            worker_ids
+            worker_ids,
         }
     }
 
@@ -75,8 +84,17 @@ impl<'a> BuildContext<'a> {
     }
 
     /// Create a client for inter-worker communication
-    pub fn create_communication_client<T: postbox::Data>(&mut self, other_worker: WorkerId, other_operator: OperatorId) -> Client<T> {
-        self.communication.new_client((other_worker, other_operator), (self.worker_id, self.operator_id)).unwrap()
+    pub fn create_communication_client<T: postbox::Data>(
+        &mut self,
+        other_worker: WorkerId,
+        other_operator: OperatorId,
+    ) -> Client<T> {
+        self.communication
+            .new_client(
+                (other_worker, other_operator),
+                (self.worker_id, self.operator_id),
+            )
+            .unwrap()
     }
 }
 
@@ -135,7 +153,7 @@ pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     // TODO: get rid of the dynamic dispatch here
     logic_builder: Box<dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>>,
     output: Sender<KO, VO, TO>,
-    label: Option<String>
+    label: Option<String>,
 }
 
 pub trait Logic<KI, VI, TI, KO, VO, TO>:
@@ -153,7 +171,6 @@ impl<
     > Logic<KI, VI, TI, KO, VO, TO> for X
 {
 }
-
 
 impl<KI, VI, TI, KO, VO, TO> OperatorBuilder<KI, VI, TI, KO, VO, TO>
 where
@@ -178,7 +195,7 @@ where
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
-            label: None
+            label: None,
         }
     }
 
@@ -218,7 +235,7 @@ where
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {
         self
     }
-    
+
     fn label(&mut self, label: String) {
         self.label = Some(label)
     }
@@ -241,7 +258,7 @@ where
         };
         RunnableOperator::new(operator, self.label, context)
     }
-    
+
     fn get_label(&self) -> Option<String> {
         self.label.clone()
     }
@@ -322,9 +339,12 @@ pub struct RunnableOperator {
     label: String,
 }
 
-
-impl  RunnableOperator {
-    pub fn new(operator: impl Operator + 'static, label: Option<String>, context: &mut BuildContext) -> Self {
+impl RunnableOperator {
+    pub fn new(
+        operator: impl Operator + 'static,
+        label: Option<String>,
+        context: &mut BuildContext,
+    ) -> Self {
         RunnableOperator {
             worker_id: context.worker_id,
             operator_id: context.operator_id,
@@ -333,13 +353,11 @@ impl  RunnableOperator {
         }
     }
 
-    pub fn step(&mut self, communication: &mut Postbox<(WorkerId, OperatorId)>,) {
-        let span = tracing::debug_span!("scheduling::run_operator", operator_id = self.operator_id, label = self.label);
-        let _span_guard = span.enter();
+    pub fn step(&mut self, communication: &mut Postbox<(WorkerId, OperatorId)>) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,
             operator_id: self.operator_id,
-            communication
+            communication,
         };
 
         self.operator.step(&mut context)

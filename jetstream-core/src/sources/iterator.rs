@@ -3,20 +3,18 @@ use crate::{
     DataMessage, Message, NoData, NoKey,
 };
 
-impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, usize> for T
+impl<T: IntoIterator<Item = V> + 'static, V> IntoSource<NoKey, V, NoTime> for T
 where
     V: Data,
 {
-    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
+    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, NoTime> {
         let mut inner = self.into_iter().enumerate();
         let mut is_shutdown = false;
         OperatorBuilder::direct(move |input, output, _ctx| {
             if !is_shutdown {
                 if let Some(x) = inner.next() {
-                    output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
-                    output.send(Message::Epoch(x.0));
+                    output.send(Message::Data(DataMessage::new(NoKey, x.1, NoTime)));
                 } else {
-                    output.send(Message::Epoch(usize::MAX));
                     is_shutdown = true;
                 }
             }
@@ -44,13 +42,9 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{
-            sink::Sink,
-            source::Source,
-        },
+        operators::{sink::Sink, source::Source},
         snapshot::NoPersistence,
         test::{get_test_configs, get_test_stream, VecCollector},
-        Worker,
     };
 
     #[test]
@@ -66,7 +60,7 @@ mod tests {
             .source(in_data)
             .sink(collector.clone());
 
-        worker.add_stream(stream);
+        stream.finish();
         let [conf] = get_test_configs();
         let mut runtime = worker.build(conf).unwrap();
 
@@ -96,7 +90,7 @@ mod tests {
         // we need to start up a new thread with another worker
         // since the .build method will try to establish communication
         let _ = std::thread::spawn(move || {
-            let worker = Worker::new(NoPersistence::default(), || false);
+            let worker = InnerRuntimeBuilder::new(NoPersistence::default(), || false);
             worker.build(config0).unwrap();
         });
 

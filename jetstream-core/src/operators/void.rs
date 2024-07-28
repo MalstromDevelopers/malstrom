@@ -1,5 +1,11 @@
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, stream::{jetstream::JetStreamBuilder, operator::{OperatorBuilder, OperatorContext}}, time::{MaybeTime, NoTime}, MaybeData, MaybeKey, NoData, NoKey
+    channels::selective_broadcast::{Receiver, Sender},
+    stream::{
+        jetstream::JetStreamBuilder,
+        operator::{OperatorBuilder, OperatorContext},
+    },
+    time::{MaybeTime, NoTime},
+    MaybeData, MaybeKey, NoData, NoKey,
 };
 
 /// The Void operator will drop all (yes ALL) messages it receives
@@ -21,8 +27,11 @@ where
     }
 }
 
-
-fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(input: &mut Receiver<K, V, T>, _output: &mut Sender<NoKey, NoData, NoTime>, _out: &mut OperatorContext) {
+fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+    input: &mut Receiver<K, V, T>,
+    _output: &mut Sender<NoKey, NoData, NoTime>,
+    _out: &mut OperatorContext,
+) {
     input.recv();
 }
 
@@ -33,11 +42,17 @@ mod test {
 
     use indexmap::{IndexMap, IndexSet};
 
-    use crate::{keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, test::{OperatorTester}, DataMessage, Message, RescaleMessage, ShutdownMarker };
-    /// Simple test, the operator must destroy everything 💀 
+    use crate::{
+        keyed::distributed::{Acquire, Collect, Interrogate},
+        snapshot::{Barrier, NoPersistence},
+        test::OperatorTester,
+        DataMessage, Message, RescaleMessage, ShutdownMarker,
+    };
+    /// Simple test, the operator must destroy everything 💀
     #[test]
     fn nothing_comes_out() {
-        let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> = OperatorTester::new_direct(void);
+        let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> =
+            OperatorTester::new_direct(void);
 
         let messages = [
             Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())),
@@ -48,7 +63,7 @@ mod test {
             Message::Epoch(1),
             Message::Interrogate(Interrogate::new(Rc::new(|_| false))),
             Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new())),
-            Message::ShutdownMarker(ShutdownMarker::default())
+            Message::ShutdownMarker(ShutdownMarker::default()),
         ];
         for m in messages.into_iter() {
             tester.send_from_local(m);

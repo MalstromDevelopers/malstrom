@@ -21,7 +21,7 @@ use crate::{
 /// of messages
 trait SubscribedMessage<K, V, T>: for<'a> TryFrom<&'a Message<K, V, T>, Error = ()> + 'static {}
 impl<K, V, T, X> SubscribedMessage<K, V, T> for X where
-    X: for<'a> TryFrom<&'a Message<K, V, T>, Error = ()>  + 'static
+    X: for<'a> TryFrom<&'a Message<K, V, T>, Error = ()> + 'static
 {
 }
 
@@ -48,9 +48,8 @@ pub trait StatefulTransform<K, VI, T> {
         S: Default + Serialize + DeserializeOwned + 'static,
     >(
         self,
-        mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S>
-            + 'static,
-        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static
+        mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
+        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
     ) -> JetStreamBuilder<K, VO, T>;
 }
 
@@ -78,12 +77,18 @@ fn build_stateful_transform<
         // invoke generic message handler
         match &msg {
             Message::Data(_) => None,
-            x => M::try_from(x).ok().map(|x| handler(x, &mut state, &mut output)),
+            x => M::try_from(x)
+                .ok()
+                .map(|x| handler(x, &mut state, &mut output)),
         };
 
         match msg {
             Message::Data(d) => {
-                event!(Level::DEBUG, state_key_space = state.len());
+                event!(
+                    Level::DEBUG,
+                    state_key_space = state.len(),
+                    worker_id = ctx.worker_id
+                );
 
                 let key = d.key.clone();
                 let st = state.swap_remove(&key).unwrap_or_default();

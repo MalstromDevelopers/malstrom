@@ -14,9 +14,12 @@ pub trait FilterMap<K, VI, T> {
     /// Only retain numeric strings
     /// ```
     /// stream: JetStreamBuilder<NoKey, String, NoTime, NoPersistence>
-    /// stream.filter_map(|x| x.parse::<i64>().ok()) 
+    /// stream.filter_map(|x| x.parse::<i64>().ok())
     /// ````
-    fn filter_map<VO: Data>(self, mapper: impl FnMut(VI) -> Option<VO> + 'static) -> JetStreamBuilder<K, VO, T>;
+    fn filter_map<VO: Data>(
+        self,
+        mapper: impl FnMut(VI) -> Option<VO> + 'static,
+    ) -> JetStreamBuilder<K, VO, T>;
 }
 
 impl<K, VI, T> FilterMap<K, VI, T> for JetStreamBuilder<K, VI, T>
@@ -25,7 +28,10 @@ where
     VI: Data,
     T: MaybeTime,
 {
-    fn filter_map<VO: Data>(self, mut mapper: impl FnMut(VI) -> Option<VO> + 'static) -> JetStreamBuilder<K, VO, T> {
+    fn filter_map<VO: Data>(
+        self,
+        mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
+    ) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(move |item, out| {
             if let Some(x) = mapper(item.value) {
                 out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
@@ -33,7 +39,6 @@ where
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {

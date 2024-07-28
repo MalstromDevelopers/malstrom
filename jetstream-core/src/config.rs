@@ -4,7 +4,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Deserializer};
 use tonic::transport::Uri;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct Config {
     // id of this worker

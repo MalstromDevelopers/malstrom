@@ -47,7 +47,7 @@ pub trait FlexibleWindow<K, V, T, A> {
         self,
         // Can return None to discard the message and not create a new state
         initializer: impl Fn(&DataMessage<K, V, T>) -> Option<(A, T)> + 'static,
-        aggregator: impl Fn(DataMessage<K, V, T>, &mut A, &T) + 'static
+        aggregator: impl Fn(DataMessage<K, V, T>, &mut A, &T) + 'static,
     ) -> JetStreamBuilder<K, A, T>;
 }
 
@@ -61,7 +61,7 @@ where
     fn flexible_window(
         self,
         initializer: impl Fn(&DataMessage<K, V, T>) -> Option<(A, T)> + 'static,
-        aggregator: impl Fn(DataMessage<K, V, T>, &mut A, &T) + 'static
+        aggregator: impl Fn(DataMessage<K, V, T>, &mut A, &T) + 'static,
     ) -> JetStreamBuilder<K, A, T> {
         self.stateful_transform(
             move |msg, mut key_state: BTreeMap<T, A>, _output| {
@@ -81,7 +81,6 @@ where
                         // PANIC: Can unwrap here since we just inserted the key
                         let window_state = key_state.get_mut(&k).unwrap();
                         (k, window_state)
-
                     } else {
                         return None;
                     }

@@ -1,6 +1,6 @@
 use crate::{
-    operators::sink::IntoSink, stream::operator::OperatorBuilder,
-    test::VecCollector, time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
+    operators::sink::IntoSink, stream::operator::OperatorBuilder, test::VecCollector,
+    time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
 };
 
 impl<K, V, T> IntoSink<K, V, T> for VecCollector<DataMessage<K, V, T>>

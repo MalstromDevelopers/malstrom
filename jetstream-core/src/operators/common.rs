@@ -1,8 +1,4 @@
-
-
-use crate::{
-    DataMessage, Message,
-};
+use crate::{DataMessage, Message};
 /// Same as the normal jetstream messages but without Epochs, Data,
 /// or key related messages, since those can not reach the source.
 // #[derive(Debug)]

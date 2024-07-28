@@ -3,7 +3,7 @@ use crate::{
     operators::map::Map,
     stream::jetstream::JetStreamBuilder,
     time::{NoTime, Timestamp},
-    DataMessage, MaybeData, MaybeKey, Message, Worker,
+    DataMessage, MaybeData, MaybeKey, Message,
 };
 
 use super::{OnTimeLate, TimelyStream};
@@ -29,9 +29,8 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
 
 pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
     mixed: JetStreamBuilder<K, OnTimeLate<V>, T>,
-    worker: &mut Worker,
 ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
-    let [ontime, late] = worker.split_n(mixed, |x, _| match x.value {
+    let [ontime, late] = mixed.split_n(|x, _| match x.value {
         OnTimeLate::OnTime(_) => [0].into_iter().collect(),
         OnTimeLate::Late(_) => [1].into_iter().collect(),
     });

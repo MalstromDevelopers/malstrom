@@ -1,15 +1,10 @@
-
-
-
 use indexmap::IndexMap;
 use postbox::{broadcast, Client};
 use serde::{Deserialize, Serialize};
 
 use crate::snapshot::Barrier;
 use crate::stream::operator::Logic;
-use crate::{
-    stream::operator::{BuildContext}, Message, WorkerId,
-};
+use crate::{stream::operator::BuildContext, Message, WorkerId};
 use crate::{DataMessage, ShutdownMarker};
 
 use super::icadd_operator::TargetedMessage;

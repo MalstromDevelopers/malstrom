@@ -7,17 +7,17 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use crate::{time::MaybeTime, Key, MaybeData, OperatorId, WorkerId};
 
 mod collect_dist;
+mod data_exchange;
+mod epoch_align;
 mod icadd_operator;
 mod interrogate_dist;
 mod normal_dist;
-mod data_exchange;
 mod versioner;
-mod epoch_align;
 
+pub(super) use data_exchange::{downstream_exchanger, upstream_exchanger};
 pub(super) use epoch_align::epoch_aligner;
-pub(super) use versioner::versioner;
 pub(super) use icadd_operator::icadd;
-pub(super) use data_exchange::{upstream_exchanger, downstream_exchanger};
+pub(super) use versioner::versioner;
 
 /// Marker trait for distributable key
 pub trait DistKey: Key + Serialize + DeserializeOwned + 'static {}
@@ -32,15 +32,15 @@ impl<T: MaybeTime + Serialize + DeserializeOwned> DistTimestamp for T {}
 type Version = u64;
 
 /// Panicing encode using the default bincode config
-pub(crate) fn encode<S: Serialize>(value: S) -> Vec<u8> { 
+pub(crate) fn encode<S: Serialize>(value: S) -> Vec<u8> {
     bincode::serde::encode_to_vec(value, bincode::config::standard())
-    .expect("State serialization error")
+        .expect("State serialization error")
 }
 /// Panicing decode using the default bincode config
-pub(crate) fn decode<S: DeserializeOwned>(raw: Vec<u8>) -> S { 
+pub(crate) fn decode<S: DeserializeOwned>(raw: Vec<u8>) -> S {
     bincode::serde::decode_from_slice(&raw, bincode::config::standard())
-    .expect("State deserialization error")
-    .0
+        .expect("State deserialization error")
+        .0
 }
 
 #[derive(Clone)]
@@ -51,7 +51,7 @@ pub struct Interrogate<K> {
 impl<K> Interrogate<K>
 where
     K: Key,
-{   
+{
     /// Creates a new interrogator.
     /// Tester is a function which checks if the supplied keys should be added to
     /// the interrogation set, i.e. if these are keys, that need to be relocated
@@ -84,7 +84,6 @@ where
     ///
     /// PANICS: If the Mutex is poisened
     pub(crate) fn try_unwrap(self) -> Result<IndexSet<K>, Self> {
-
         Rc::try_unwrap(self.shared)
             .map(|x| Mutex::into_inner(x).unwrap())
             .map_err(|x| Self {
@@ -110,8 +109,10 @@ where
         }
     }
     pub fn add_state<S: Serialize>(&mut self, operator_id: OperatorId, state: &S) {
-
-        self.collection.lock().unwrap().insert(operator_id, encode(state));
+        self.collection
+            .lock()
+            .unwrap()
+            .insert(operator_id, encode(state));
     }
 
     /// Try unwrapping the inner Rc and Mutex. This succeeds if there

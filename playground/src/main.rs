@@ -11,7 +11,7 @@ fn main() {
 
 pub enum FooBar {
     Foo,
-    Bar
+    Bar,
 }
 impl From<Option<()>> for FooBar {
     fn from(value: Option<()>) -> Self {
@@ -19,11 +19,5 @@ impl From<Option<()>> for FooBar {
     }
 }
 
-pub trait Logic<T>:
-    FnMut(T) -> FooBar + 'static
-{
-}
-impl<T, F: FnMut(T) -> FooBar + 'static,
-    > Logic<T> for F
-{
-}
+pub trait Logic<T>: FnMut(T) -> FooBar + 'static {}
+impl<T, F: FnMut(T) -> FooBar + 'static> Logic<T> for F {}

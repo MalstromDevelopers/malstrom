@@ -12,15 +12,12 @@ use std::{
 /// NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 /// big queues with this channel.
 use crossbeam;
-use indexmap::{IndexMap};
+use indexmap::IndexMap;
 use itertools::{self};
 
-
-
 use crate::{
-    snapshot::Barrier,
-    time::{MaybeTime},
-    Message, OperatorId, OperatorPartitioner, Scale, ShutdownMarker,
+    snapshot::Barrier, time::MaybeTime, Message, OperatorId, OperatorPartitioner, Scale,
+    ShutdownMarker,
 };
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -387,11 +384,15 @@ mod test {
         link(&mut sender, &mut receiver);
         let mut sender2 = sender.clone();
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
+        sender.send(Message::AbsBarrier(Barrier::new(
+            Box::<NoPersistence>::default(),
+        )));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
+        sender2.send(Message::AbsBarrier(Barrier::new(
+            Box::<NoPersistence>::default(),
+        )));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
     }
@@ -404,12 +405,16 @@ mod test {
         link(&mut sender, &mut receiver);
         let mut sender2 = sender.clone();
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
+        sender.send(Message::AbsBarrier(Barrier::new(
+            Box::<NoPersistence>::default(),
+        )));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())));
+        sender2.send(Message::AbsBarrier(Barrier::new(
+            Box::<NoPersistence>::default(),
+        )));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
         assert!(matches!(
             receiver.recv(),

@@ -81,7 +81,6 @@ fn build_stateful_map<
                 value,
                 timestamp: time,
             }) => {
-                event!(Level::DEBUG, state_key_space = state.len());
                 let st = state.remove(&key).unwrap_or_default();
                 let (mapped, mut new_state) = mapper(&key, value, st);
                 if let Some(n) = new_state.take() {
@@ -157,12 +156,12 @@ mod test {
     use crate::snapshot::{Barrier, PersistenceBackend};
     use crate::test::{CapturingPersistenceBackend, OperatorTester};
     use crate::time::NoTime;
-    use crate::{DataMessage, Message};
     use crate::{
         operators::{inspect::Inspect, source::Source},
         stream::jetstream::JetStreamBuilder,
         test::collect_stream_values,
     };
+    use crate::{DataMessage, Message};
 
     use super::{build_stateful_map, StatefulMap};
 
@@ -347,22 +346,30 @@ mod test {
     fn test_acquire_state() {
         // just return the state for the key
         let mut tester: OperatorTester<i32, &str, NoTime, i32, String, NoTime, ()> =
-        OperatorTester::new_built_by(move |ctx| {
-            build_stateful_map(ctx, |_k, _v, s: String| (s.clone(), Some(s)))
-        });
+            OperatorTester::new_built_by(move |ctx| {
+                build_stateful_map(ctx, |_k, _v, s: String| (s.clone(), Some(s)))
+            });
 
-        let state = IndexMap::from([
-            (tester.operator_id(), encode("HelloWorld".to_owned()))
-        ]);
+        let state = IndexMap::from([(tester.operator_id(), encode("HelloWorld".to_owned()))]);
 
-        tester.send_from_local(Message::Acquire(Acquire::new(1337, Rc::new(Mutex::new(state)))));
+        tester.send_from_local(Message::Acquire(Acquire::new(
+            1337,
+            Rc::new(Mutex::new(state)),
+        )));
         tester.step();
         tester.send_from_local(Message::Data(DataMessage::new(1337, "", NoTime)));
         tester.step();
-        assert!(matches!(tester.receive_on_local().unwrap(), Message::Acquire(_)));
+        assert!(matches!(
+            tester.receive_on_local().unwrap(),
+            Message::Acquire(_)
+        ));
         match tester.receive_on_local().unwrap() {
-            Message::Data(DataMessage { key: 1337, value: x, timestamp: NoTime }) => assert_eq!(x, "HelloWorld"),
-            _ => panic!()
+            Message::Data(DataMessage {
+                key: 1337,
+                value: x,
+                timestamp: NoTime,
+            }) => assert_eq!(x, "HelloWorld"),
+            _ => panic!(),
         }
     }
 
@@ -371,9 +378,9 @@ mod test {
     fn test_drop_key_state() {
         // keep a total per key
         let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-        OperatorTester::new_built_by(move |ctx| {
-            build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
-        });
+            OperatorTester::new_built_by(move |ctx| {
+                build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
+            });
 
         tester.send_from_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
@@ -382,7 +389,7 @@ mod test {
         tester.step();
         match tester.receive_on_local().unwrap() {
             Message::Data(d) => assert_eq!(d.value, 3),
-            _ => panic!()
+            _ => panic!(),
         };
 
         tester.send_from_local(Message::DropKey(false));
@@ -394,7 +401,7 @@ mod test {
         // sum should be back to 1 since we dropped the state
         match tester.receive_on_local().unwrap() {
             Message::Data(d) => assert_eq!(d.value, 1),
-            _ => panic!()
+            _ => panic!(),
         };
     }
 
@@ -403,9 +410,9 @@ mod test {
     fn test_snapshot_state() {
         // keep a total per key
         let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-        OperatorTester::new_built_by(move |ctx| {
-            build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
-        });
+            OperatorTester::new_built_by(move |ctx| {
+                build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
+            });
 
         tester.send_from_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
@@ -417,16 +424,15 @@ mod test {
         let state: HashMap<bool, i32> = decode(backend.load(&tester.operator_id()).unwrap());
         assert_eq!(*state.get(&false).unwrap(), 1);
     }
-    
 
     #[test]
     fn test_forward_system_messages() {
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-        OperatorTester::new_built_by(move |ctx| {
-            build_stateful_map(ctx, |_, x: String, _| {
-                ((), if x.len() > 3 { None } else { Some(x) })
-            })
-        });
+            OperatorTester::new_built_by(move |ctx| {
+                build_stateful_map(ctx, |_, x: String, _| {
+                    ((), if x.len() > 3 { None } else { Some(x) })
+                })
+            });
 
         crate::test::test_forward_system_messages(&mut tester);
     }

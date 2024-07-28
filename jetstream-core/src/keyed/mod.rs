@@ -1,4 +1,3 @@
-
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
@@ -8,9 +7,8 @@ use crate::channels::selective_broadcast::{Receiver, Sender};
 
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::{MaybeTime};
+use crate::time::MaybeTime;
 use crate::{Data, DataMessage, Key, MaybeKey, Message, WorkerId};
-
 
 use self::distributed::{downstream_exchanger, epoch_aligner, upstream_exchanger, versioner};
 use self::distributed::{icadd, DistData, DistKey, DistTimestamp};
@@ -111,15 +109,24 @@ where
         partitioner: impl WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T> {
         // let mut distributor = Distributor::new(partitioner);
-        let keyed = self.key_local(key_func).label("jetstream::key_distribute::key_local");
+        let keyed = self
+            .key_local(key_func)
+            .label("jetstream::key_distribute::key_local");
         keyed
-            .then(OperatorBuilder::built_by(versioner)).label("jetstream::key_distribute::versioner")
-            .then(OperatorBuilder::built_by(epoch_aligner)).label("jetstream::key_distribute::epoch_aligner")
-            .then(OperatorBuilder::built_by(|ctx| upstream_exchanger(2, ctx))).label("jetstream::key_distribute::upstream_exchanger")
+            .then(OperatorBuilder::built_by(versioner))
+            .label("jetstream::key_distribute::versioner")
+            .then(OperatorBuilder::built_by(epoch_aligner))
+            .label("jetstream::key_distribute::epoch_aligner")
+            .then(OperatorBuilder::built_by(|ctx| upstream_exchanger(2, ctx)))
+            .label("jetstream::key_distribute::upstream_exchanger")
             .then(OperatorBuilder::built_by(move |ctx| {
                 icadd(Rc::new(partitioner), ctx)
-            })).label("jetstream::key_distribute::icadd")
-            .then(OperatorBuilder::built_by(|ctx| downstream_exchanger(2, ctx))).label("jetstream::key_distribute::downstream_exchanger")
+            }))
+            .label("jetstream::key_distribute::icadd")
+            .then(OperatorBuilder::built_by(|ctx| {
+                downstream_exchanger(2, ctx)
+            }))
+            .label("jetstream::key_distribute::downstream_exchanger")
     }
 }
 
@@ -132,11 +139,17 @@ fn default_hash<T: Hash>(value: &T) -> u64 {
 /// Select a value from an Iterator of choices by applying rendezvous hashing.
 /// Rendezvous hashing ensures minimal shuffling when the set of options changes
 /// at the cost of being O(n) with n == options.len()
-/// 
+///
 /// Returns None if the Iterator is empty
-/// 
+///
 /// TODD: Add test
-pub fn rendezvous_select<T: Hash, O: Hash>(value: &T, options: impl Iterator<Item=O>) -> Option<O>{
+pub fn rendezvous_select<T: Hash, O: Hash>(
+    value: &T,
+    options: impl Iterator<Item = O>,
+) -> Option<O> {
     let v_hash = default_hash(value);
-    options.map(|x| (default_hash(&x).wrapping_add(v_hash), x)).max_by_key(|x| x.0).map(|x| x.1)
+    options
+        .map(|x| (default_hash(&x).wrapping_add(v_hash), x))
+        .max_by_key(|x| x.0)
+        .map(|x| x.1)
 }

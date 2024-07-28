@@ -1,12 +1,10 @@
-
-
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     snapshot::PersistenceBackend,
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
     time::{NoTime, Timestamp},
-    DataMessage, MaybeData, MaybeKey, Message, Worker,
+    DataMessage, MaybeData, MaybeKey, Message,
 };
 
 use super::{
@@ -27,7 +25,6 @@ pub trait GenerateEpochs<K, V, T> {
     /// NOTE: If the returned epoch is smaller than the previous epoch, it is ignored
     fn generate_epochs(
         self,
-        worker: &mut Worker,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>);
@@ -41,10 +38,9 @@ where
 {
     fn generate_epochs(
         self,
-        worker: &mut Worker,
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
-        self.0.generate_epochs(worker, gen)
+        self.0.generate_epochs(gen)
     }
 }
 
@@ -56,7 +52,6 @@ where
 {
     fn generate_epochs(
         self,
-        worker: &mut Worker,
         mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
         let operator = OperatorBuilder::built_by(|build_context| {
@@ -99,7 +94,7 @@ where
                                 let _ = prev_epoch.insert(e.clone());
                                 output.send(Message::Epoch(e))
                             }
-                        },
+                        }
                         Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                         Message::Collect(c) => output.send(Message::Collect(c)),
                         Message::Acquire(a) => output.send(Message::Acquire(a)),
@@ -112,6 +107,6 @@ where
             }
         });
         let mixed = self.then(operator);
-        split_mixed_stream(mixed, worker)
+        split_mixed_stream(mixed)
     }
 }

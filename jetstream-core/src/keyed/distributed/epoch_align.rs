@@ -1,5 +1,3 @@
-
-
 use indexmap::IndexMap;
 use itertools::Itertools;
 use postbox::Client;
@@ -9,9 +7,7 @@ use tracing::debug;
 use crate::stream::operator::Logic;
 use crate::ShutdownMarker;
 use crate::{
-    stream::operator::{BuildContext},
-    time::MaybeTime,
-    MaybeData, MaybeKey, Message, WorkerId,
+    stream::operator::BuildContext, time::MaybeTime, MaybeData, MaybeKey, Message, WorkerId,
 };
 
 use super::DistTimestamp;
@@ -29,10 +25,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
         .get_worker_ids()
         .filter_map(|i| {
             if i != ctx.worker_id {
-                Some((
-                    i,
-                    ctx.create_communication_client(i, ctx.operator_id),
-                ))
+                Some((i, ctx.create_communication_client(i, ctx.operator_id)))
             } else {
                 None
             }
@@ -43,7 +36,13 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
         if let Some(msg) = input.recv() {
             match msg {
                 Message::Epoch(e) => {
-                    debug!("{}-{} Broadcasting epoch {:?} to {:?}", ctx.worker_id, ctx.operator_id, e, clients.keys().collect_vec());
+                    debug!(
+                        "{}-{} Broadcasting epoch {:?} to {:?}",
+                        ctx.worker_id,
+                        ctx.operator_id,
+                        e,
+                        clients.keys().collect_vec()
+                    );
 
                     postbox::broadcast(clients.values(), ExchangedMessage::Epoch(e.clone()))
                         .unwrap();
@@ -57,7 +56,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
                 Message::ShutdownMarker(s) => {
                     postbox::broadcast(clients.values(), ExchangedMessage::<T>::Shutdown).unwrap();
                     local_shutdown = Some(s)
-                },
+                }
                 Message::AbsBarrier(mut b) => {
                     b.persist(&epoch_states, &ctx.operator_id);
                     output.send(Message::AbsBarrier(b))
@@ -73,9 +72,12 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
             for network_msg in client.recv_all() {
                 match network_msg.unwrap() {
                     ExchangedMessage::Epoch(e) => {
-                        debug!("{}-{} Got epoch {:?} from {:?}", ctx.worker_id, ctx.operator_id, e, sender);
+                        debug!(
+                            "{}-{} Got epoch {:?} from {:?}",
+                            ctx.worker_id, ctx.operator_id, e, sender
+                        );
                         epoch_states.get_mut(sender).unwrap().replace(e);
-    
+
                         if let Some(m) = merge_timestamps(epoch_states.values()) {
                             output.send(Message::Epoch(m))
                         }

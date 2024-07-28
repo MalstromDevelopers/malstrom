@@ -1,16 +1,22 @@
+use std::{iter, rc::Rc, sync::Mutex};
+
 use super::operator::{
     pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder,
 };
 use crate::{
-    channels::selective_broadcast::{self, Sender}, time::{MaybeTime, NoTime}, Data, MaybeKey, NoData, NoKey
+    channels::selective_broadcast::{self, Sender},
+    time::{MaybeTime, NoTime},
+    worker::{split_n, union, InnerRuntimeBuilder},
+    Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
 };
 
 #[must_use]
 // must use is intended here to guard from forgetting to add the stream to a worker
 pub struct JetStreamBuilder<K, V: ?Sized, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
-    // these are probes for every operator in operators
     tail: Box<dyn AppendableOperator<K, V, T>>,
+    // the runtime this stream is registered to
+    runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 
 impl JetStreamBuilder<NoKey, NoData, NoTime> {
@@ -20,7 +26,8 @@ impl JetStreamBuilder<NoKey, NoData, NoTime> {
     /// This method is intented for construction streams in unit tests.
     /// For actual deployments you should use [`jetstream::Worker::new_stream`]
     pub fn new_test() -> Self {
-        JetStreamBuilder::from_operator(pass_through_operator())
+        todo!()
+        // JetStreamBuilder::from_operator(pass_through_operator())
     }
 }
 
@@ -32,10 +39,12 @@ where
 {
     pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: MaybeTime>(
         operator: OperatorBuilder<KI, VI, TI, K, V, T>,
+        runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     ) -> JetStreamBuilder<K, V, T> {
         JetStreamBuilder {
             operators: Vec::new(),
             tail: Box::new(operator),
+            runtime,
         }
     }
 }
@@ -65,6 +74,7 @@ where
         JetStreamBuilder {
             operators: self.operators,
             tail: Box::new(operator),
+            runtime: self.runtime,
         }
     }
 
@@ -83,5 +93,26 @@ where
     pub fn label(mut self, label: &str) -> Self {
         self.tail.label(label.into());
         self
-    } 
+    }
+
+    pub fn finish(self) -> () {
+        let rt = self.runtime.clone();
+        rt.lock().unwrap().add_stream(self);
+    }
+
+    pub fn union(
+        self,
+        others: impl Iterator<Item = JetStreamBuilder<K, V, T>>,
+    ) -> JetStreamBuilder<K, V, T> {
+        let runtime = self.runtime.clone();
+        union(runtime, iter::once(self).chain(others))
+    }
+
+    pub fn split_n<const N: usize>(
+        self,
+        partitioner: impl OperatorPartitioner<K, V, T>,
+    ) -> [JetStreamBuilder<K, V, T>; N] {
+        let runtime = self.runtime.clone();
+        split_n(runtime, self, partitioner)
+    }
 }

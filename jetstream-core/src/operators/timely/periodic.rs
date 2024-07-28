@@ -6,7 +6,7 @@ use crate::{
     snapshot::PersistenceBackend,
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
     time::{NoTime, Timestamp},
-    MaybeData, MaybeKey, Message, Worker,
+    MaybeData, MaybeKey, Message,
 };
 
 use super::{
@@ -21,7 +21,6 @@ pub trait PeriodicEpochs<K, V, T> {
 
     fn generate_periodic_epochs(
         self,
-        worker: &mut Worker,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>);
@@ -35,11 +34,10 @@ where
 {
     fn generate_periodic_epochs(
         self,
-        worker: &mut Worker,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
-        self.0.generate_periodic_epochs(worker, gen)
+        self.0.generate_periodic_epochs(gen)
     }
 }
 
@@ -51,7 +49,6 @@ where
 {
     fn generate_periodic_epochs(
         self,
-        worker: &mut Worker,
         // previously issued epoch and sys time elapsed since last epoch
         mut gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
@@ -89,6 +86,6 @@ where
             }
         });
         let mixed = self.then(operator);
-        split_mixed_stream(mixed, worker)
+        split_mixed_stream(mixed)
     }
 }

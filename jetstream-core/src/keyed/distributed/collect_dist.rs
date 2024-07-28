@@ -62,9 +62,12 @@ where
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         version: Version,
-        ctx: &mut OperatorContext
+        ctx: &mut OperatorContext,
     ) -> Self {
-        let workers: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>> = old_worker_set.union(&new_worker_set).map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id))).collect();
+        let workers: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>> = old_worker_set
+            .union(&new_worker_set)
+            .map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id)))
+            .collect();
 
         Self {
             worker_id,
@@ -88,16 +91,16 @@ where
         ctx: &OperatorContext,
         partitioner: Rc<dyn WorkerPartitioner<K>>,
     ) -> Result<DistributorKind<K, V, T>, Self> {
-
-        if self.whitelist.is_empty() && self.current_collect.is_none() && !self.done_workers.contains(&self.worker_id) {
+        if self.whitelist.is_empty()
+            && self.current_collect.is_none()
+            && !self.done_workers.contains(&self.worker_id)
+        {
             broadcast(self.clients.values(), DirectlyExchangedMessage::<K>::Done).unwrap();
             self.done_workers.insert(self.worker_id);
         }
 
         // will be false for empty diff
-        let _any_outstanding = self
-            .done_workers
-            .symmetric_difference(&self.old_worker_set);
+        let _any_outstanding = self.done_workers.symmetric_difference(&self.old_worker_set);
         let any_outstanding = self
             .done_workers
             .symmetric_difference(&self.old_worker_set)
@@ -179,20 +182,12 @@ where
                 let old_target = *partitioner(&msg.key, &self.old_worker_set);
                 if old_target == msg.value.sender {
                     Some(TargetedMessage::new(
-                        VersionedMessage::new(
-                            msg.value.inner,
-                            self.version,
-                            self.worker_id,
-                        ),
+                        VersionedMessage::new(msg.value.inner, self.version, self.worker_id),
                         None,
                     ))
                 } else {
                     Some(TargetedMessage::new(
-                        VersionedMessage::new(
-                            msg.value.inner,
-                            self.version,
-                            self.worker_id,
-                        ),
+                        VersionedMessage::new(msg.value.inner, self.version, self.worker_id),
                         Some(old_target),
                     ))
                 }
@@ -237,9 +232,9 @@ where
                     }
                     DirectlyExchangedMessage::Acquire(a) => {
                         println!("Got Acquire");
-                    
+
                         output.send(Message::Acquire(a.into()))
-                    },
+                    }
                 }
             }
         }
@@ -270,7 +265,7 @@ where
         }
         match self.try_close(output, ctx, partitioner) {
             Ok(x) => x,
-            Err(x) => DistributorKind::Collect(x)
+            Err(x) => DistributorKind::Collect(x),
         }
     }
 
@@ -288,10 +283,14 @@ where
             Some(x) => match x.try_unwrap() {
                 Ok((key, collection)) => {
                     let target = partitioner(&key, &self.new_worker_set);
-                    self.clients.get(target).unwrap().send(DirectlyExchangedMessage::Acquire(NetworkAcquire::new(
-                        key.clone(),
-                        collection,
-                    ))).unwrap();
+                    self.clients
+                        .get(target)
+                        .unwrap()
+                        .send(DirectlyExchangedMessage::Acquire(NetworkAcquire::new(
+                            key.clone(),
+                            collection,
+                        )))
+                        .unwrap();
                     println!("Sent Acquire");
 
                     // send out any held back messages

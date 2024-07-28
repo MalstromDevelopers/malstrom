@@ -48,7 +48,10 @@ fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             timer,
         ))
     } else {
-        Box::new(build_follower_controller_logic(backend_builder, build_context))
+        Box::new(build_follower_controller_logic(
+            backend_builder,
+            build_context,
+        ))
     }
 }
 fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
@@ -82,17 +85,19 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
         None;
 
     let worker_ids = build_context.get_worker_ids().collect_vec();
-    let clients: IndexMap<WorkerId, Client<ComsMessage>> = worker_ids.iter().cloned()
-    .filter_map(|i| {
-        if i != build_context.worker_id {
-            Some((
-                i,
-                build_context.create_communication_client(i, build_context.operator_id),
-            ))
-        } else {
-            None
-        }
-    })
+    let clients: IndexMap<WorkerId, Client<ComsMessage>> = worker_ids
+        .iter()
+        .cloned()
+        .filter_map(|i| {
+            if i != build_context.worker_id {
+                Some((
+                    i,
+                    build_context.create_communication_client(i, build_context.operator_id),
+                ))
+            } else {
+                None
+            }
+        })
         .collect();
 
     move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
@@ -116,7 +121,11 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             println!("Starting new snapshot at epoch {snapshot_version}");
 
             // instruct other workers to start snapshotting
-            broadcast(clients.values(), ComsMessage::StartSnapshot(snapshot_version)).unwrap();
+            broadcast(
+                clients.values(),
+                ComsMessage::StartSnapshot(snapshot_version),
+            )
+            .unwrap();
             output.send(Message::AbsBarrier(barrier));
         }
 
@@ -159,7 +168,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
 
 fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackendBuilder>,
-    build_context: &mut BuildContext
+    build_context: &mut BuildContext,
 ) -> impl Logic<K, V, T, K, V, T> {
     let mut in_progress: Option<Barrier> = None;
 

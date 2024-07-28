@@ -14,15 +14,15 @@ use jetstream::time::NoTime;
 use jetstream::{DataMessage, Message, NoData, NoKey};
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::ConsumerContext;
+use rdkafka::consumer::DefaultConsumerContext;
 use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 use rdkafka::message::{BorrowedMessage, OwnedMessage};
 use rdkafka::metadata::MetadataPartition;
-use rdkafka::{ClientContext, Offset};
 use rdkafka::Message as _;
+use rdkafka::TopicPartitionList;
+use rdkafka::{ClientContext, Offset};
 use serde::{Deserialize, Serialize};
-use rdkafka::consumer::DefaultConsumerContext;
-use rdkafka::{TopicPartitionList};
 
 struct DefaultKafkaContext;
 impl ClientContext for DefaultKafkaContext {}
@@ -61,14 +61,20 @@ impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
             .fetch_metadata(Some(&topic), metadata_timeout)
             .expect("Failed to fetch metadata");
         // idx 0 since we selected a single topic beforehand
-        let partitions = metadata.topics()[0].partitions().iter().map(|x| x.id()).collect_vec();
+        let partitions = metadata.topics()[0]
+            .partitions()
+            .iter()
+            .map(|x| x.id())
+            .collect_vec();
 
         self.source(partitions)
             .key_distribute(
                 |x| x.value.clone(),
                 |k, workers| rendezvous_select(k, workers.iter()).unwrap(),
             )
-            .then(OperatorBuilder::built_by(|ctx| build_consumer(brokers, topic, group_id, auto_offset_reset, ctx)))
+            .then(OperatorBuilder::built_by(|ctx| {
+                build_consumer(brokers, topic, group_id, auto_offset_reset, ctx)
+            }))
     }
 }
 
@@ -77,7 +83,6 @@ struct ConsumerState {
     // offset of the last received record
     last_recvd_offset: Option<i64>,
 }
-
 
 fn build_consumer(
     brokers: Vec<String>,
@@ -96,19 +101,28 @@ fn build_consumer(
 
     move |input, output, ctx| {
         for (partition_idx, offset) in state.iter_mut() {
-            let consumer = consumers.entry(*partition_idx).or_insert_with(|| create_and_subscribe_consumer(
-                brokers.clone(), 
-                topic.clone(),
-                group_id.clone(),
-                auto_offset_reset.clone(),
-                offset.last_recvd_offset.map(|x| x + 1),
-                *partition_idx
-            ));
-            if let Some(record) = consumer.poll(Duration::default()).map(|res| res.map(|msg| msg.detach())) {
+            let consumer = consumers.entry(*partition_idx).or_insert_with(|| {
+                create_and_subscribe_consumer(
+                    brokers.clone(),
+                    topic.clone(),
+                    group_id.clone(),
+                    auto_offset_reset.clone(),
+                    offset.last_recvd_offset.map(|x| x + 1),
+                    *partition_idx,
+                )
+            });
+            if let Some(record) = consumer
+                .poll(Duration::default())
+                .map(|res| res.map(|msg| msg.detach()))
+            {
                 if let Ok(r) = &record {
                     offset.last_recvd_offset = Some(r.offset());
                 }
-                output.send(Message::Data(DataMessage::new(*partition_idx, record, NoTime)))
+                output.send(Message::Data(DataMessage::new(
+                    *partition_idx,
+                    record,
+                    NoTime,
+                )))
             }
         }
         let msg = match input.recv() {
@@ -156,7 +170,6 @@ fn build_consumer(
     }
 }
 
-
 /// Create a consumer from a given Kafka topic and broker.
 /// The function returns a consumer which is already subscribed
 /// to the given topic.
@@ -189,9 +202,18 @@ pub fn create_and_subscribe_consumer(
     // subscribe to topic
     let mut topic_parititon = TopicPartitionList::new();
     topic_parititon.add_partition(&topic, partition);
-    consumer.assign(&topic_parititon).expect("Failed to subscribe to topic");
+    consumer
+        .assign(&topic_parititon)
+        .expect("Failed to subscribe to topic");
     if let Some(offset) = starting_offset {
-        consumer.seek(&topic, partition, Offset::Offset(offset), Duration::from_secs(16)).expect("Error setting partition offset");
+        consumer
+            .seek(
+                &topic,
+                partition,
+                Offset::Offset(offset),
+                Duration::from_secs(16),
+            )
+            .expect("Error setting partition offset");
     }
     println!("Subscribed to {topic} partition {partition}");
     consumer

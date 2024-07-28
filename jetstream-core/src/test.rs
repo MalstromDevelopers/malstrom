@@ -7,7 +7,7 @@ use crate::operators::{sink::Sink, timely::InspectFrontier};
 use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
 use crate::time::Timestamp;
-use crate::{Key, RescaleMessage, ShutdownMarker};
+use crate::worker::RuntimeBuilder;
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
@@ -17,8 +17,9 @@ use crate::{
         operator::{AppendableOperator, BuildContext, Logic, OperatorBuilder, RunnableOperator},
     },
     time::{MaybeTime, NoTime},
-    Data, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, Worker, WorkerId,
+    Data, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, WorkerId,
 };
+use crate::{Key, RescaleMessage, ShutdownMarker};
 use indexmap::{IndexMap, IndexSet};
 /// Test utilities for JetStream
 use itertools::Itertools;
@@ -79,8 +80,8 @@ impl<T> IntoIterator for VecCollector<T> {
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
-pub fn get_test_stream() -> (Worker, JetStreamBuilder<NoKey, NoData, NoTime>) {
-    let mut worker = Worker::new(NoPersistence::default(), || false);
+pub fn get_test_stream() -> (RuntimeBuilder, JetStreamBuilder<NoKey, NoData, NoTime>) {
+    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -328,54 +329,90 @@ where
 }
 
 /// A test which panics if the given operator does not forward a system message from local upstream
-pub fn test_forward_system_messages<KI: Key + Default, VI: MaybeData, TI: MaybeTime, KO: MaybeKey, VO: MaybeData, TO: MaybeTime, R: postbox::Data>(tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>) -> () {
+pub fn test_forward_system_messages<
+    KI: Key + Default,
+    VI: MaybeData,
+    TI: MaybeTime,
+    KO: MaybeKey,
+    VO: MaybeData,
+    TO: MaybeTime,
+    R: postbox::Data,
+>(
+    tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
+) -> () {
     let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence::default())));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::AbsBarrier(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::AbsBarrier(_)
+    ));
 
-
-    let msg = Message::Acquire(Acquire::new(KI::default(), Rc::new(Mutex::new(IndexMap::new()))));
+    let msg = Message::Acquire(Acquire::new(
+        KI::default(),
+        Rc::new(Mutex::new(IndexMap::new())),
+    ));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::Acquire(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::Acquire(_)
+    ));
 
     let msg = Message::Collect(Collect::new(KI::default()));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::Collect(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::Collect(_)
+    ));
 
     let msg = Message::DropKey(KI::default());
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::DropKey(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::DropKey(_)
+    ));
 
     let msg = Message::Interrogate(Interrogate::new(Rc::new(|_| false)));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::Interrogate(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::Interrogate(_)
+    ));
 
     let msg = Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new()));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::Rescale(RescaleMessage::ScaleAddWorker(_))));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::Rescale(RescaleMessage::ScaleAddWorker(_))
+    ));
 
     let msg = Message::Rescale(RescaleMessage::ScaleRemoveWorker(IndexSet::new()));
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))
+    ));
 
     let msg = Message::ShutdownMarker(ShutdownMarker::default());
     tester.send_from_local(msg);
     tester.step();
-    assert!(matches!(tester.receive_on_local().unwrap(), Message::ShutdownMarker(_)));
+    assert!(matches!(
+        tester.receive_on_local().unwrap(),
+        Message::ShutdownMarker(_)
+    ));
 }
 
 /// Runs a stream until the MAX timestamp is reached and returns all emitted messages
 pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
     stream: JetStreamBuilder<K, V, T>,
 ) -> Vec<Message<K, V, T>> {
-    let mut worker = Worker::new(NoPersistence::default(), || false);
+    let mut worker = RuntimeBuilder::new(NoPersistence::default(), || false);
 
     let collector = VecCollector::new();
     let collector_cloned = collector.clone();
@@ -388,7 +425,7 @@ pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
         }))
         .inspect_frontier();
 
-    worker.add_stream(stream);
+    stream.finish();
 
     let [config] = get_test_configs();
     let mut runtime = worker.build(config).unwrap();

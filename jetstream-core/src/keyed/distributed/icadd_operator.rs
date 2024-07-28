@@ -1,4 +1,4 @@
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use derive_new::new;
 use indexmap::IndexSet;
@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     keyed::WorkerPartitioner,
-    stream::operator::{BuildContext, Logic}, MaybeData, WorkerId,
+    stream::operator::{BuildContext, Logic},
+    MaybeData, WorkerId,
 };
 
 use super::{

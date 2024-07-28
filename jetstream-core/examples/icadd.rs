@@ -2,16 +2,14 @@ use indexmap::IndexSet;
 use jetstream::operators::stateful_map::StatefulMap;
 use jetstream::{
     config::Config, keyed::KeyDistribute, snapshot::NoPersistence,
-    stream::operator::OperatorBuilder, test::get_test_configs, time::NoTime, DataMessage, Message,
-    NoKey, RescaleMessage, Worker,
+    stream::operator::OperatorBuilder, test::get_test_configs, time::NoTime, DataMessage,
+    InnerRuntimeBuilder, Message, NoKey, RescaleMessage,
 };
 
-use opentelemetry_sdk::trace::{BatchConfigBuilder};
+use opentelemetry_sdk::trace::BatchConfigBuilder;
 use std::net::SocketAddrV4;
 
-use std::{
-    iter,
-};
+use std::iter;
 
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -21,22 +19,27 @@ use tracing_subscriber::prelude::*;
 async fn main() {
     // otel tracing
     let tracer = opentelemetry_otlp::new_pipeline()
-    .tracing()
-    .with_exporter(opentelemetry_otlp::new_exporter().tonic())
-    .with_batch_config(BatchConfigBuilder::default().with_max_concurrent_exports(4).with_max_queue_size(320000).build())
-    .install_batch(opentelemetry_sdk::runtime::Tokio)
-    .expect("Couldn't create OTLP tracer");
+        .tracing()
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
+        .with_batch_config(
+            BatchConfigBuilder::default()
+                .with_max_concurrent_exports(4)
+                .with_max_queue_size(320000)
+                .build(),
+        )
+        .install_batch(opentelemetry_sdk::runtime::Tokio)
+        .expect("Couldn't create OTLP tracer");
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     tracing_subscriber::registry()
-    .with(tracing_subscriber::EnvFilter::from_default_env())
-    .with(telemetry_layer)
-    .init();
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(telemetry_layer)
+        .init();
 
     // prometheus metrics
     metrics_exporter_prometheus::PrometheusBuilder::new()
-    .with_http_listener(SocketAddrV4::new("127.0.0.1".parse().unwrap(), 9091))
-    .install()
-    .unwrap();
+        .with_http_listener(SocketAddrV4::new("127.0.0.1".parse().unwrap(), 9091))
+        .install()
+        .unwrap();
 
     let [config0, config1] = get_test_configs::<2>();
     let threads = [
@@ -47,7 +50,6 @@ async fn main() {
     for x in threads {
         let _ = x.join();
     }
-
 }
 
 fn run_stream(config: Config, key: String) {
@@ -59,7 +61,7 @@ fn run_stream(config: Config, key: String) {
         .chain(iter::once(Message::Rescale(rescale_message)))
         .chain(last_msgs);
 
-    let mut worker = Worker::new(NoPersistence::default(), || false);
+    let mut worker = InnerRuntimeBuilder::new(NoPersistence::default(), || false);
 
     let thread_name = key.clone();
 
@@ -72,7 +74,8 @@ fn run_stream(config: Config, key: String) {
             if let Some(x) = the_source.next() {
                 output.send(x)
             }
-        })).label("source")
+        }))
+        .label("source")
         .key_distribute(
             move |_| key.clone(),
             move |k, targets| {
@@ -92,7 +95,8 @@ fn run_stream(config: Config, key: String) {
             //     exit(0);
             // }
             (msg, Some(state))
-        }).label("sum");
+        })
+        .label("sum");
 
     worker.add_stream(stream);
     let mut runtime = worker.build(config).unwrap();

@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, marker::PhantomData, rc::Rc};
 
-use indexmap::{IndexSet};
+use indexmap::IndexSet;
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -52,9 +52,7 @@ where
             RescaleMessage::ScaleRemoveWorker(x) => {
                 old_worker_set.difference(&x).copied().collect()
             }
-            RescaleMessage::ScaleAddWorker(x) => {
-                old_worker_set.union(&x).copied().collect()
-            }
+            RescaleMessage::ScaleAddWorker(x) => old_worker_set.union(&x).copied().collect(),
         };
         Self {
             worker_id,
@@ -140,7 +138,10 @@ where
     }
 
     #[allow(clippy::result_large_err)]
-    pub(super) fn try_into_collect(self, ctx: &mut OperatorContext) -> Result<CollectDistributor<K, V, T>, Self> {
+    pub(super) fn try_into_collect(
+        self,
+        ctx: &mut OperatorContext,
+    ) -> Result<CollectDistributor<K, V, T>, Self> {
         if let Some(interrogate) = self.running_interrogate {
             match interrogate.try_unwrap() {
                 Ok(whitelist) => {
@@ -151,7 +152,7 @@ where
                         self.old_worker_set,
                         self.new_worker_set,
                         self.version,
-                        ctx
+                        ctx,
                     );
                     Ok(collector)
                 }

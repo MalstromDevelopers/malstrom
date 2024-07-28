@@ -19,8 +19,6 @@ pub mod test;
 pub mod time;
 pub mod worker;
 
-pub use worker::Worker;
-
 type OperatorId = usize;
 type WorkerId = usize;
 type Scale = usize;

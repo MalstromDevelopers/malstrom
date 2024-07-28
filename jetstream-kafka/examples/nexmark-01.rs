@@ -1,19 +1,19 @@
 use jetstream::config::Config;
 use jetstream::operators::filter::Filter;
 use jetstream::operators::map::Map;
-use jetstream::{snapshot::NoPersistence, test::get_test_configs, Worker,};
+use jetstream::{snapshot::NoPersistence, test::get_test_configs, InnerRuntimeBuilder};
+use jetstream_kafka::consumer::KafkaInput;
 use rdkafka::Message as _;
 use serde::{Deserialize, Serialize};
+use serde_json::de::from_slice;
 use std::process::exit;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use jetstream_kafka::consumer::KafkaInput;
-use serde_json::de::from_slice;
 
 fn main() {
     let [config0, config1] = get_test_configs::<2>();
-    
+
     let counter = Arc::new(AtomicU32::default());
     let counter1 = counter.clone();
     let threads = [
@@ -30,7 +30,7 @@ fn main() {
 }
 
 fn run_stream(config: Config, counter: Arc<AtomicU32>) -> () {
-    let mut worker = Worker::new(NoPersistence::default(), || false);
+    let mut worker = InnerRuntimeBuilder::new(NoPersistence::default(), || false);
 
     let total = 78_200_000;
     let counter_moved = counter.clone();
@@ -41,7 +41,7 @@ fn run_stream(config: Config, counter: Arc<AtomicU32>) -> () {
             "jetstream.example".into(),
             "nexmark-bid".into(),
             "earliest".into(),
-            Duration::from_secs(3)
+            Duration::from_secs(3),
         )
         .filter(|x| x.is_ok())
         // decode messages
@@ -51,9 +51,11 @@ fn run_stream(config: Config, counter: Arc<AtomicU32>) -> () {
             let decoded: Bid = from_slice(payload).unwrap();
             decoded
         })
-        .map(|mut x| {x.price = (x.price as f64 * 0.908) as usize; x})
-    .map(move |_| counter_moved.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
-    ;
+        .map(|mut x| {
+            x.price = (x.price as f64 * 0.908) as usize;
+            x
+        })
+        .map(move |_| counter_moved.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
 
     worker.add_stream(stream);
     let mut runtime = worker.build(config).unwrap();

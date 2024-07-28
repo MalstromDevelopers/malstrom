@@ -11,7 +11,7 @@ pub enum ClientCreationError {
     ConnectionError(#[from] ConnectionError),
 
     #[error("Address {0} could not be resolved to an endpoint")]
-    AddressResolutionError(String)
+    AddressResolutionError(String),
 }
 
 #[derive(Error, Debug)]
@@ -25,5 +25,5 @@ pub enum SendError {
     #[error("Message could not be serialized")]
     EncodingError(#[from] bincode::error::EncodeError),
     #[error("GRPC client is dead, possibly due to loosing connection")]
-    DeadClientError
+    DeadClientError,
 }

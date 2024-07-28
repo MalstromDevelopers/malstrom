@@ -6,8 +6,6 @@ use grpc::{ExchangeMessage, ExchangeResponse};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
-use tokio_stream::StreamExt;
-use tracing::{debug, warn};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -16,9 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use tonic::metadata::{Binary, BinaryMetadataKey, MetadataValue};
 use tonic::transport::{Server, Uri};
 use tonic::{Request, Response, Status};
+use tracing::{debug, warn};
 
 mod grpc {
     tonic::include_proto!("postbox");
@@ -32,8 +32,8 @@ pub trait Address:
     Clone + Serialize + DeserializeOwned + Hash + Eq + Ord + Sync + Send + Debug + 'static
 {
 }
-impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Ord + Sync + Send + Debug + 'static> Address
-    for T
+impl<T: Clone + Serialize + DeserializeOwned + Hash + Eq + Ord + Sync + Send + Debug + 'static>
+    Address for T
 {
 }
 /// Data which is transferrable via Postbox
@@ -62,15 +62,21 @@ impl Default for PostboxConfig {
 
 pub struct PostboxBuilder<A> {
     config: PostboxConfig,
-    address_type: PhantomData<A>
+    address_type: PhantomData<A>,
 }
 impl<A> Default for PostboxBuilder<A> {
     fn default() -> Self {
-        Self { config: PostboxConfig::default(), address_type: PhantomData }
+        Self {
+            config: PostboxConfig::default(),
+            address_type: PhantomData,
+        }
     }
 }
 
-impl<A> PostboxBuilder<A> where A: Address {
+impl<A> PostboxBuilder<A>
+where
+    A: Address,
+{
     pub fn new() -> Self {
         Self::default()
     }
@@ -94,8 +100,14 @@ impl<A> PostboxBuilder<A> where A: Address {
 
     /// Build this postbox with the current configuration and starts the
     /// Postbox server
-    pub fn build(self, socket: SocketAddr, address_resolver: impl FnMut(&A) -> Option<Uri> + 'static) -> Result<Postbox<A>, BuildError> {
-        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    pub fn build(
+        self,
+        socket: SocketAddr,
+        address_resolver: impl FnMut(&A) -> Option<Uri> + 'static,
+    ) -> Result<Postbox<A>, BuildError> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
         let remotes = AddressMap::default();
         let server = PostBoxServer::new(remotes.clone(), self.config.clone());
 
@@ -106,12 +118,12 @@ impl<A> PostboxBuilder<A> where A: Address {
                 .await
                 .unwrap();
         });
-        Ok(Postbox{
+        Ok(Postbox {
             rt,
             _server_task: server_task,
             remotes,
             config: self.config,
-            address_resolver: Box::new(address_resolver)
+            address_resolver: Box::new(address_resolver),
         })
     }
 }
@@ -219,7 +231,10 @@ where
                 }
             };
             let mut request = Request::new(stream);
-            request.metadata_mut().insert_bin(BinaryMetadataKey::from_static("postbox-target-bin"), address);
+            request.metadata_mut().insert_bin(
+                BinaryMetadataKey::from_static("postbox-target-bin"),
+                address,
+            );
             let connection = loop {
                 match tonic::transport::Endpoint::new(endpoint.clone())
                     .unwrap()
@@ -235,7 +250,10 @@ where
                         if retries_left == 0 {
                             e.expect("Error connecting to remote");
                         } else {
-                            warn!("Timeout connecting to {:?}. Trying {} more times...", endpoint, retries_left);
+                            warn!(
+                                "Timeout connecting to {:?}. Trying {} more times...",
+                                endpoint, retries_left
+                            );
                             tokio::time::sleep(config.retry_interval).await;
                             continue;
                         }
@@ -267,7 +285,9 @@ where
         if self.outgoing.is_full() {
             // warn!("{} outgoing queue is full", self.conn_str);
         }
-        self.outgoing.send(encoded).map_err(|_| SendError::DeadClientError)?;
+        self.outgoing
+            .send(encoded)
+            .map_err(|_| SendError::DeadClientError)?;
         Ok(())
     }
 
@@ -285,10 +305,13 @@ where
 }
 
 pub struct RecvIterator<'a, T> {
-    client: &'a Client<T>
+    client: &'a Client<T>,
 }
 
-impl<'a, T> Iterator for RecvIterator<'a, T> where T: Data{
+impl<'a, T> Iterator for RecvIterator<'a, T>
+where
+    T: Data,
+{
     type Item = Result<T, bincode::error::DecodeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -296,7 +319,7 @@ impl<'a, T> Iterator for RecvIterator<'a, T> where T: Data{
     }
 }
 
-impl<T> Drop for Client<T>  {
+impl<T> Drop for Client<T> {
     fn drop(&mut self) {
         // drain the channel
         while !self.outgoing.is_empty() {
@@ -320,7 +343,7 @@ impl<T> Drop for Client<T>  {
 struct PostBoxServer<A> {
     // key: client addr, value: keyed by sender
     channels: AddressMap<A>,
-    config: PostboxConfig
+    config: PostboxConfig,
 }
 
 impl<A> PostBoxServer<A> {
@@ -341,15 +364,24 @@ where
         let target = request
             .metadata()
             .get_bin("postbox-target-bin")
-            .ok_or(Status::invalid_argument("Missing 'postbox-target-bin' header"))?
+            .ok_or(Status::invalid_argument(
+                "Missing 'postbox-target-bin' header",
+            ))?
             .to_bytes()
             .map_err(|_| Status::invalid_argument("Invalid 'postbox-target-bin' header"))?;
-        
+
         let target = bincode::serde::decode_from_slice(&target, BC_CONFIG)
-            .map_err(|_| Status::invalid_argument("Error decoding 'postbox-target-bin' header"))?.0;
+            .map_err(|_| Status::invalid_argument("Error decoding 'postbox-target-bin' header"))?
+            .0;
 
         let sender = {
-            self.channels.lock().unwrap().entry(target).or_insert_with(|| flume::bounded(self.config.queue_size)).0.clone()
+            self.channels
+                .lock()
+                .unwrap()
+                .entry(target)
+                .or_insert_with(|| flume::bounded(self.config.queue_size))
+                .0
+                .clone()
         };
 
         let mut stream = request.into_inner();
@@ -369,16 +401,23 @@ where
 /// Sends a message to multiple clients by copying it as often as necessary.
 /// This function returns an error as soon as one send fails. Therefore broadcasting
 /// may result in partially broadcasted messages.
-pub fn broadcast<'a, T: Data + Clone + 'a>(clients: impl Iterator<Item = &'a Client<T>>, msg: T) -> Result<(), SendError> {
+pub fn broadcast<'a, T: Data + Clone + 'a>(
+    clients: impl Iterator<Item = &'a Client<T>>,
+    msg: T,
+) -> Result<(), SendError> {
     for c in clients {
         c.send(msg.clone())?;
-    };
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod test {
-    use std::{net::{SocketAddr, SocketAddrV4, TcpListener}, rc::Rc, time::Duration};
+    use std::{
+        net::{SocketAddr, SocketAddrV4, TcpListener},
+        rc::Rc,
+        time::Duration,
+    };
 
     use itertools::Itertools;
     use tonic::{client, transport::Uri};
@@ -399,8 +438,15 @@ mod test {
     /// Returns a very ego-centric postbox (it resolves all addresses to itself)
     fn self_postbox<A: Address>() -> Postbox<A> {
         let sock = get_socket();
-        let here = Uri::builder().scheme("http").authority(sock.to_string()).path_and_query("").build().unwrap();
-        PostboxBuilder::<A>::new().build(sock, move |_| Some(here.clone())).unwrap()
+        let here = Uri::builder()
+            .scheme("http")
+            .authority(sock.to_string())
+            .path_and_query("")
+            .build()
+            .unwrap();
+        PostboxBuilder::<A>::new()
+            .build(sock, move |_| Some(here.clone()))
+            .unwrap()
     }
 
     /// returns a pair of postboxes, that always connect to each other
@@ -408,11 +454,25 @@ mod test {
         let sock_a = get_socket();
         let sock_b = get_socket();
 
-        let uri_a = Uri::builder().scheme("http").authority(sock_a.to_string()).path_and_query("").build().unwrap();
-        let uri_b = Uri::builder().scheme("http").authority(sock_b.to_string()).path_and_query("").build().unwrap();
+        let uri_a = Uri::builder()
+            .scheme("http")
+            .authority(sock_a.to_string())
+            .path_and_query("")
+            .build()
+            .unwrap();
+        let uri_b = Uri::builder()
+            .scheme("http")
+            .authority(sock_b.to_string())
+            .path_and_query("")
+            .build()
+            .unwrap();
 
-        let pb_a = PostboxBuilder::<A>::new().build(sock_a, move |_| Some(uri_b.clone())).unwrap();
-        let pb_b = PostboxBuilder::<A>::new().build(sock_b, move |_| Some(uri_a.clone())).unwrap();
+        let pb_a = PostboxBuilder::<A>::new()
+            .build(sock_a, move |_| Some(uri_b.clone()))
+            .unwrap();
+        let pb_b = PostboxBuilder::<A>::new()
+            .build(sock_b, move |_| Some(uri_a.clone()))
+            .unwrap();
         (pb_a, pb_b)
     }
 
@@ -452,20 +512,35 @@ mod test {
         drop(client_a);
         let client_b = pb_b.new_client::<i32>("bar".into(), "foo".into()).unwrap();
         let mut collected = Vec::with_capacity(500);
-        while let Some(Ok(x)) = client_b.recv()  {
+        while let Some(Ok(x)) = client_b.recv() {
             collected.push(x)
-        };
+        }
         assert_eq!(collected, (0..500).into_iter().collect::<Vec<i32>>())
     }
 
     #[test]
     fn broadcast_broadcasts() {
         let socks = (0..5).map(|_| get_socket()).collect_vec();
-        let uris = socks.iter().map(|s| Uri::builder().scheme("http").authority(s.to_string()).path_and_query("").build().unwrap()).collect_vec();
+        let uris = socks
+            .iter()
+            .map(|s| {
+                Uri::builder()
+                    .scheme("http")
+                    .authority(s.to_string())
+                    .path_and_query("")
+                    .build()
+                    .unwrap()
+            })
+            .collect_vec();
         let resolver = move |i: &usize| uris.get(*i).map(|x| x.clone());
 
-        let mut pbs = socks.into_iter().map(|s| PostboxBuilder::new().build(s, resolver.clone()).unwrap()).collect_vec();
-        let clients = (1..5).map(|i| pbs.get_mut(0).unwrap().new_client(i, 0).unwrap()).collect_vec();
+        let mut pbs = socks
+            .into_iter()
+            .map(|s| PostboxBuilder::new().build(s, resolver.clone()).unwrap())
+            .collect_vec();
+        let clients = (1..5)
+            .map(|i| pbs.get_mut(0).unwrap().new_client(i, 0).unwrap())
+            .collect_vec();
 
         broadcast(clients.iter(), "Hello World".to_string()).unwrap();
         std::thread::sleep(Duration::from_millis(500));

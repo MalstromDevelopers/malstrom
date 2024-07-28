@@ -1,8 +1,4 @@
-use crate::{
-    stream::{jetstream::JetStreamBuilder},
-};
-
-
+use crate::stream::jetstream::JetStreamBuilder;
 
 /// Intermediate builder for a timestamped stream.
 /// Turn this type into a stream by calling
