@@ -40,7 +40,11 @@ mod tests {
     use std::{rc::Rc, sync::Mutex};
 
     use crate::{
-        operators::{inspect::Inspect, source::Source},
+        operators::{
+            inspect::Inspect,
+            source::Source,
+            timely::{GenerateEpochs, TimelyStream},
+        },
         stream::jetstream::JetStreamBuilder,
         test::collect_stream_values,
     };
@@ -56,6 +60,15 @@ mod tests {
 
         let stream = JetStreamBuilder::new_test()
             .source(input)
+            .assign_timestamps(|_| 0)
+            .generate_epochs(|x, _| {
+                if x.value == "bar" {
+                    Some(i32::MAX)
+                } else {
+                    None
+                }
+            })
+            .0
             .inspect(move |x| *cnt.lock().unwrap() += x.len());
 
         // check we still get unmodified output

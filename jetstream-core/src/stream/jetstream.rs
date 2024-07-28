@@ -5,8 +5,9 @@ use super::operator::{
 };
 use crate::{
     channels::selective_broadcast::{self, Sender},
+    snapshot::NoPersistence,
     time::{MaybeTime, NoTime},
-    worker::{split_n, union, InnerRuntimeBuilder},
+    worker::{split_n, union, InnerRuntimeBuilder, RuntimeBuilder},
     Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
 };
 
@@ -26,8 +27,8 @@ impl JetStreamBuilder<NoKey, NoData, NoTime> {
     /// This method is intented for construction streams in unit tests.
     /// For actual deployments you should use [`jetstream::Worker::new_stream`]
     pub fn new_test() -> Self {
-        todo!()
-        // JetStreamBuilder::from_operator(pass_through_operator())
+        let rt = Rc::new(Mutex::new(InnerRuntimeBuilder::default()));
+        JetStreamBuilder::from_operator(pass_through_operator(), rt)
     }
 }
 

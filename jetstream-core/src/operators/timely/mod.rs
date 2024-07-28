@@ -151,11 +151,11 @@ mod tests {
         let (ontime, late) = stream
             .source(0..10)
             .assign_timestamps(|x| x.value * 2)
-            .generate_epochs(&mut worker, |_x, _y| None);
+            .generate_epochs(|_x, _y| None);
         let ontime = ontime.sink(collector.clone());
 
-        worker.add_stream(ontime);
-        worker.add_stream(late);
+        ontime.finish();
+        late.finish();
 
         let mut runtime = worker.build(config).unwrap();
         while collector.len() < 10 {
@@ -182,15 +182,13 @@ mod tests {
         let (stream, late) = stream
             .source(0..10)
             .assign_timestamps(|x| x.value)
-            .generate_epochs(&mut worker, |msg, epoch| {
-                Some(msg.timestamp + epoch.unwrap_or(0))
-            });
+            .generate_epochs(|msg, epoch| Some(msg.timestamp + epoch.unwrap_or(0)));
         let (stream, frontier) = stream.inspect_frontier();
         let stream = stream.sink(collector.clone());
         let late = late.sink(late_collector.clone());
 
-        worker.add_stream(stream);
-        worker.add_stream(late);
+        stream.finish();
+        late.finish();
         let mut runtime = worker.build(config).unwrap();
 
         let mut timestamps: Vec<i32> = vec![0];
@@ -216,7 +214,7 @@ mod tests {
         let (stream, late) = stream
             .source(0..10)
             .assign_timestamps(|x| x.value)
-            .generate_epochs(&mut worker, |msg, _| Some(msg.timestamp));
+            .generate_epochs(|msg, _| Some(msg.timestamp));
 
         // this should remove epochs
         let stream = stream.remove_timestamps();
@@ -235,8 +233,8 @@ mod tests {
 
         let stream = stream.sink(collector.clone());
 
-        worker.add_stream(stream);
-        worker.add_stream(late);
+        stream.finish();
+        late.finish();
         let mut runtime = worker.build(config).unwrap();
 
         while collector.len() < 10 {
@@ -257,9 +255,10 @@ mod tests {
         let (stream, late) = stream
             .source(0..10)
             .assign_timestamps(|x| x.value)
-            .generate_epochs(&mut worker, |msg, _| Some(msg.timestamp));
+            .generate_epochs(|msg, _| Some(msg.timestamp));
+
         // this should remove epochs
-        let stream = stream.generate_epochs(&mut worker, |_x, _y| None).0;
+        let stream = stream.generate_epochs(|_x, _y| None).0;
 
         let time_collector = VecCollector::new();
         let collector_moved = time_collector.clone();
@@ -275,8 +274,8 @@ mod tests {
 
         let stream = stream.sink(collector.clone());
 
-        worker.add_stream(stream);
-        worker.add_stream(late);
+        stream.finish();
+        late.finish();
         let mut runtime = worker.build(config).unwrap();
 
         while collector.len() < 10 {
@@ -296,7 +295,7 @@ mod tests {
         let (ontime, late) = stream
             .source(1..4)
             .assign_timestamps(|x| x.value)
-            .generate_epochs(&mut worker, |msg, _epoch| Some(msg.timestamp));
+            .generate_epochs(|msg, _epoch| Some(msg.timestamp));
 
         let collector = VecCollector::new();
         let collector_moved = collector.clone();
@@ -317,8 +316,8 @@ mod tests {
                 };
             },
         ));
-        worker.add_stream(ontime);
-        worker.add_stream(late);
+        ontime.finish();
+        late.finish();
         let mut runtime = worker.build(config).unwrap();
 
         while collector.len() < 6 {
@@ -340,10 +339,10 @@ mod tests {
         let (ontime, late) = stream
             .source((5..10).chain(0..5))
             .assign_timestamps(|x| x.value)
-            .generate_epochs(&mut worker, |msg, _epoch| Some(msg.timestamp));
+            .generate_epochs(|msg, _epoch| Some(msg.timestamp));
 
-        worker.add_stream(ontime.sink(collector_ontime.clone()));
-        worker.add_stream(late.sink(collector_late.clone()));
+        ontime.sink(collector_ontime.clone()).finish();
+        late.sink(collector_late.clone()).finish();
         let mut runtime = worker.build(config).unwrap();
 
         while (collector_late.len() < 5) | (collector_ontime.len() < 5) {

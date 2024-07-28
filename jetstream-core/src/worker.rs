@@ -110,6 +110,7 @@ impl std::fmt::Debug for BuildError {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct InnerRuntimeBuilder {
     operators: Vec<Box<dyn BuildableOperator>>,
 }

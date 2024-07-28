@@ -145,6 +145,7 @@ where
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
+    use std::i32;
     use std::rc::Rc;
     use std::sync::Mutex;
 
@@ -152,6 +153,7 @@ mod test {
     use itertools::Itertools;
 
     use crate::keyed::distributed::{decode, encode, Acquire, Collect, Interrogate};
+    use crate::operators::timely::{GenerateEpochs, TimelyStream};
     use crate::operators::KeyLocal;
     use crate::snapshot::{Barrier, PersistenceBackend};
     use crate::test::{CapturingPersistenceBackend, OperatorTester};
@@ -170,6 +172,9 @@ mod test {
     fn keeps_state() {
         let stream = JetStreamBuilder::new_test()
             .source(0..100)
+            .assign_timestamps(|x| x.value)
+            .generate_epochs(|x, _| if x.value == 100 { Some(i32::MAX) } else { None })
+            .0
             // calculate a running total split by odd and even numbers
             .key_local(|x| (x.value & 1) == 1)
             .stateful_map(|_, i, s: i32| (s + i, Some(s + i)));
@@ -193,6 +198,15 @@ mod test {
     fn discards_state() {
         let stream = JetStreamBuilder::new_test()
             .source(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()))
+            .assign_timestamps(|_| 0)
+            .generate_epochs(|x, _| {
+                if x.value == "baz" {
+                    Some(usize::MAX)
+                } else {
+                    None
+                }
+            })
+            .0
             // concat the words
             .key_local(|x| x.value.len())
             .stateful_map(|_, x, mut s: String| {

@@ -459,7 +459,10 @@ mod tests {
     use indexmap::IndexMap;
 
     use crate::{
-        operators::source::Source,
+        operators::{
+            source::Source,
+            timely::{GenerateEpochs, TimelyStream},
+        },
         snapshot::{deserialize_state, serialize_state},
         stream::operator::OperatorContext,
         DataMessage,
@@ -475,34 +478,14 @@ mod tests {
         assert_eq!(b.worker_id, 1);
         assert_eq!(c.worker_id, 2);
 
-        assert_eq!(a.port, 29091);
-        assert_eq!(b.port, 29092);
-        assert_eq!(c.port, 29093);
-
-        assert_eq!(
-            a.get_cluster_uris(),
-            IndexMap::<usize, Uri>::from([
-                (0, "http://localhost:29091".parse().unwrap()),
-                (1, "http://localhost:29092".parse().unwrap()),
-                (2, "http://localhost:29093".parse().unwrap())
-            ])
-        );
-        assert_eq!(
-            b.get_cluster_uris(),
-            IndexMap::<usize, Uri>::from([
-                (0, "http://localhost:29091".parse().unwrap()),
-                (1, "http://localhost:29092".parse().unwrap()),
-                (2, "http://localhost:29093".parse().unwrap())
-            ])
-        );
-        assert_eq!(
-            c.get_cluster_uris(),
-            IndexMap::<usize, Uri>::from([
-                (0, "http://localhost:29091".parse().unwrap()),
-                (1, "http://localhost:29092".parse().unwrap()),
-                (2, "http://localhost:29093".parse().unwrap())
-            ])
-        );
+        let expected_uris = IndexMap::<usize, Uri>::from([
+            (0, format!("http://localhost:{}", a.port).parse().unwrap()),
+            (1, format!("http://localhost:{}", b.port).parse().unwrap()),
+            (2, format!("http://localhost:{}", c.port).parse().unwrap()),
+        ]);
+        assert_eq!(a.get_cluster_uris(), expected_uris);
+        assert_eq!(b.get_cluster_uris(), expected_uris);
+        assert_eq!(c.get_cluster_uris(), expected_uris);
     }
 
     #[test]
@@ -582,14 +565,29 @@ mod tests {
 
     #[test]
     fn test_get_stream_values() {
-        let stream = JetStreamBuilder::new_test().source(vec![1, 2, 3]);
+        let stream = JetStreamBuilder::new_test()
+            .source(vec![1, 2, 3])
+            .assign_timestamps(|_| 0)
+            .generate_epochs(|x, _| if x.value == 3 { Some(i32::MAX) } else { None })
+            .0;
         let expected = vec![1, 2, 3];
         assert_eq!(collect_stream_values(stream), expected);
     }
 
     #[test]
     fn test_collect_stream_messages() {
-        let stream = JetStreamBuilder::new_test().source(0..3);
+        let stream = JetStreamBuilder::new_test()
+            .source(0..3)
+            .assign_timestamps(|x| x.value)
+            .generate_epochs(|x, _| {
+                if x.value == 2 {
+                    Some(usize::MAX)
+                } else {
+                    Some(x.timestamp)
+                }
+            })
+            .0;
+
         let expected = (0..3)
             .enumerate()
             .flat_map(|(i, x)| {

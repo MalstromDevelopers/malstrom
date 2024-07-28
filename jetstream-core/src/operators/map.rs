@@ -38,7 +38,11 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{map::Map, source::Source},
+        operators::{
+            map::Map,
+            source::Source,
+            timely::{GenerateEpochs, TimelyStream},
+        },
         stream::jetstream::JetStreamBuilder,
         test::collect_stream_values,
     };
@@ -48,7 +52,18 @@ mod tests {
         let input = ["hello", "world", "foo", "bar"];
         let output = input.iter().map(|x| x.len()).collect_vec();
 
-        let stream = JetStreamBuilder::new_test().source(input).map(|x| x.len());
+        let stream = JetStreamBuilder::new_test()
+            .source(input)
+            .assign_timestamps(|_| 0)
+            .generate_epochs(|x, _| {
+                if x.value == "bar" {
+                    Some(i32::MAX)
+                } else {
+                    None
+                }
+            })
+            .0
+            .map(|x| x.len());
 
         assert_eq!(collect_stream_values(stream), output);
     }

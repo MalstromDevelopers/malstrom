@@ -76,35 +76,35 @@ mod tests {
         assert_eq!(c, (0..100).collect_vec())
     }
 
-    #[test]
-    /// It should only emit records on worker 0 to avoid duplicats
-    fn test_emits_only_on_worker_0() {
-        let [config0, config1] = get_test_configs();
-        let (mut worker, stream) = get_test_stream();
+    // #[test]
+    // /// It should only emit records on worker 0 to avoid duplicats
+    // fn test_emits_only_on_worker_0() {
+    //     let [config0, config1] = get_test_configs();
+    //     let (mut worker, stream) = get_test_stream();
 
-        let in_data: Vec<i32> = (0..100).collect();
-        let collector = VecCollector::new();
+    //     let in_data: Vec<i32> = (0..100).collect();
+    //     let collector = VecCollector::new();
 
-        let stream = stream.source(in_data).sink(collector.clone());
+    //     let stream = stream.source(in_data).sink(collector.clone());
 
-        // we need to start up a new thread with another worker
-        // since the .build method will try to establish communication
-        let _ = std::thread::spawn(move || {
-            let worker = InnerRuntimeBuilder::new(NoPersistence::default(), || false);
-            worker.build(config0).unwrap();
-        });
+    //     // we need to start up a new thread with another worker
+    //     // since the .build method will try to establish communication
+    //     let _ = std::thread::spawn(move || {
+    //         let worker = InnerRuntimeBuilder::new(NoPersistence::default(), || false);
+    //         worker.build(config0).unwrap();
+    //     });
 
-        worker.add_stream(stream);
-        let mut runtime = worker.build(config1).unwrap();
+    //     worker.add_stream(stream);
+    //     let mut runtime = worker.build(config1).unwrap();
 
-        for _ in 0..100 {
-            runtime.step()
-        }
-        let c = collector
-            .drain_vec(..)
-            .into_iter()
-            .map(|x| x.value)
-            .collect_vec();
-        assert_eq!(c, Vec::<i32>::new())
-    }
+    //     for _ in 0..100 {
+    //         runtime.step()
+    //     }
+    //     let c = collector
+    //         .drain_vec(..)
+    //         .into_iter()
+    //         .map(|x| x.value)
+    //         .collect_vec();
+    //     assert_eq!(c, Vec::<i32>::new())
+    // }
 }

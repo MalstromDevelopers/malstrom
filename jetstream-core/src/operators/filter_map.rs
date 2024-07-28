@@ -60,7 +60,7 @@ mod tests {
             .filter_map(|x: &str| x.parse::<i64>().ok())
             .sink(collector.clone());
 
-        worker.add_stream(stream);
+        stream.finish();
         let mut runtime = worker.build(config).unwrap();
 
         while collector.len() < 2 {

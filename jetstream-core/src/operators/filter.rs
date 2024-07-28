@@ -57,7 +57,7 @@ mod tests {
             .filter(|x| *x < 42)
             .sink(collector.clone());
 
-        worker.add_stream(stream);
+        stream.finish();
         let mut runtime = worker.build(config).unwrap();
 
         while collector.len() < 42 {

@@ -20,9 +20,10 @@ pub trait GenerateEpochs<K, V, T> {
     /// *than the previously issued epoch* and an untimed stream with all late message, i.e. messages with a timestamp
     /// lower than the previously issued Epoch.
     ///
-    /// NOTE: The Epoch generated is always issued *after* the given message.
-    /// NOTE: This Operator removes any incoming epochs
-    /// NOTE: If the returned epoch is smaller than the previous epoch, it is ignored
+    /// **NOTES:**
+    /// - The Epoch generated is always issued *after* the given message.
+    /// - This Operator removes any incoming epochs
+    /// - If the returned epoch is smaller than the previous epoch, it is ignored
     fn generate_epochs(
         self,
         // previously issued epoch and sys time elapsed since last epoch
@@ -90,10 +91,10 @@ where
                             output.send(Message::AbsBarrier(b))
                         }
                         Message::Epoch(e) => {
-                            if prev_epoch.as_ref().map_or(true, |prev| *prev < e) {
-                                let _ = prev_epoch.insert(e.clone());
-                                output.send(Message::Epoch(e))
-                            }
+                            // if prev_epoch.as_ref().map_or(true, |prev| *prev < e) {
+                            //     let _ = prev_epoch.insert(e.clone());
+                            //     output.send(Message::Epoch(e))
+                            // }
                         }
                         Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                         Message::Collect(c) => output.send(Message::Collect(c)),

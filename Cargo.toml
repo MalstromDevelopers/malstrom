@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "jetstream-core", "jetstream-kafka", "jetstream-nexmark", "playground",
+    "jetstream-core",
+    "jetstream-kafka",
+    "jetstream-nexmark",
     "postbox"
 ]
