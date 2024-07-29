@@ -8,7 +8,7 @@ use jetstream::operators::*;
 use jetstream::worker::RuntimeBuilder;
 use jetstream::{snapshot::NoPersistence, test::get_test_configs};
 use nexmark::config::NexmarkConfig;
-use nexmark::event::Event;
+use nexmark::event::{Auction, Bid, Event};
 use nexmark::EventGenerator;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering::Relaxed;
@@ -85,26 +85,25 @@ fn run_stream(config: Config, msg_count: usize, _coordination: Arc<AtomicI16>) -
     let (ontime, _) = worker
         .new_stream()
         .source(gen.enumerate())
-        .filter(|x| match x.1 {
-            Event::Auction(_) => true,
-            Event::Bid(_) => true,
-            Event::Person(_) => false,
+        .filter_map(|x| match x.1 {
+            Event::Auction(a) => Some((x.0, PartialEvent::Auction(a))),
+            Event::Bid(b) => Some((x.0, PartialEvent::Bid(b))),
+            Event::Person(_) => None,
         })
         .assign_timestamps(move |x| {
-            if x.value.0 == msg_count_clnd {
-                return u64::MAX;
-            };
             match &x.value.1 {
-                Event::Auction(a) => a.date_time,
-                Event::Bid(b) => b.date_time,
-                Event::Person(_) => unreachable!(),
+                PartialEvent::Auction(a) => a.date_time,
+                PartialEvent::Bid(b) => b.date_time,
             }
         })
-        .generate_epochs(|x, last| {
+        .generate_epochs(move |x, last| {
+            if x.value.0 == msg_count_clnd - 1 {
+                println!("{} emitting MAX epoch", this);
+                return Some(u64::MAX);
+            };
             let msg_time = match &x.value.1 {
-                Event::Auction(a) => a.date_time,
-                Event::Bid(b) => b.date_time,
-                Event::Person(_) => unreachable!(),
+                PartialEvent::Auction(a) => a.date_time,
+                PartialEvent::Bid(b) => b.date_time,
             };
             // // emit epoch every second at most
             if last.map_or(true, |x| (msg_time - x) > 1) {
@@ -113,28 +112,21 @@ fn run_stream(config: Config, msg_count: usize, _coordination: Arc<AtomicI16>) -
                 None
             }
         });
+
     let stream = ontime.map(|x| x.1);
     let (stream, local_frontier) = stream.inspect_frontier();
-    // the event time monotonically advances the epoch, with out of order
-    // messages getting dropped
-    // let (stream, _late) = stream.generate_epochs(&mut worker, move |x, _| match &x.value {
-    //     Event::Auction(a) => Some(a.date_time),
-    //     Event::Bid(b) => Some(b.date_time),
-    //     Event::Person(_) => unreachable!(),
-    // });
 
     let (stream, global_frontier) = stream
         .key_distribute(
             |x| match &x.value {
-                Event::Auction(a) => a.id,
-                Event::Bid(b) => b.auction,
-                Event::Person(_) => unreachable!(),
+                PartialEvent::Auction(a) => a.id,
+                PartialEvent::Bid(b) => b.auction,
             },
-            |key, workers| rendezvous_select(&(key + 13), workers.iter()).unwrap(),
+            |key, workers| rendezvous_select(key, workers.iter()).unwrap(),
         )
         .flexible_window(
             |msg| match &msg.value {
-                Event::Auction(a) => {
+                PartialEvent::Auction(a) => {
                     Some((AuctionState::new(a.id, 0, a.expires, a.category), a.expires))
                 }
                 _ => None,
@@ -144,14 +136,14 @@ fn run_stream(config: Config, msg_count: usize, _coordination: Arc<AtomicI16>) -
                 if msg.timestamp > *end {
                     return;
                 }
-                if let Event::Bid(x) = msg.value {
+                if let PartialEvent::Bid(x) = msg.value {
                     state.max_bid = state.max_bid.max(x.price);
                 }
             },
         )
         .key_distribute(
             |x| x.value.category,
-            |key, targets| rendezvous_select(&(key + 13), targets.iter()).unwrap(),
+            |key, targets| rendezvous_select(key, targets.iter()).unwrap(),
         )
         .stateful_map(move |_key, auction, mut prices: Vec<usize>| {
             prices.push(auction.max_bid);
@@ -186,4 +178,10 @@ fn run_stream(config: Config, msg_count: usize, _coordination: Arc<AtomicI16>) -
         usize::MAX,
         global_frontier.get_time()
     );
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum PartialEvent {
+    Auction(Auction),
+    Bid(Bid)
 }
