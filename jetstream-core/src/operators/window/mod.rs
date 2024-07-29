@@ -1,4 +1,3 @@
-
-
 pub mod flexible;
-pub mod sliding;
+
+pub use flexible::FlexibleWindow;
