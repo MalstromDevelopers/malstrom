@@ -92,7 +92,9 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
             if *is_barred {
                 continue;
             }
-            for network_msg in client.recv_all().map(|x| x.unwrap()) {
+            // only read one message from the buffer, to make it "fair"
+            // with our own upstream
+            if let Some(network_msg) = client.recv().map(|x| x.unwrap()) {
                 match network_msg {
                     ExchangedMessage::Barrier => {
                         *is_barred = true;
