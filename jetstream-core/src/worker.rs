@@ -61,7 +61,6 @@ impl RuntimeBuilder {
             (0..(operators.len() + root_operators.len())).collect();
 
         let mut communication_backend = postbox::PostboxBuilder::new()
-            .with_queue_size(1)
             .build(listen_addr, move |addr: &(WorkerId, OperatorId)| {
                 peers.get(&addr.0).cloned()
             })
