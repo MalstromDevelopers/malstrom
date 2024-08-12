@@ -90,11 +90,11 @@ where
                             b.persist(&prev_epoch, &ctx.operator_id);
                             output.send(Message::AbsBarrier(b))
                         }
-                        Message::Epoch(_e) => {
-                            // if prev_epoch.as_ref().map_or(true, |prev| *prev < e) {
-                            //     let _ = prev_epoch.insert(e.clone());
-                            //     output.send(Message::Epoch(e))
-                            // }
+                        Message::Epoch(e) => {
+                            if prev_epoch.as_ref().map_or(true, |prev| *prev < e) {
+                                let _ = prev_epoch.insert(e.clone());
+                                output.send(Message::Epoch(e))
+                            }
                         }
                         Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                         Message::Collect(c) => output.send(Message::Collect(c)),

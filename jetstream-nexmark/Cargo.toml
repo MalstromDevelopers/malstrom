@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 env_logger = "0.11.3"
+flume = "0.11.0"
 jetstream = { version = "0.1.0", path = "../jetstream-core" }
 nexmark = { version = "0.2.0", features = ["serde"] }
 rand = "0.8.5"

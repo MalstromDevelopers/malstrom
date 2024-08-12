@@ -95,7 +95,9 @@ impl RuntimeBuilder {
 pub enum BuildError {
     #[error("Error building Postbox communication backend")]
     PostboxError(RuntimeBuilder, postbox::errors::BuildError),
-    #[error("{0} Unfinished streams in this runtime. You must call `.finish()` on all streams created on this runtime")]
+    #[error("{0} Unfinished streams in this runtime.
+    You must call `.finish()` on all streams created on this runtime
+    or drop them before building the Runtime")]
     UnfinishedStreams(usize),
 }
 impl std::fmt::Debug for BuildError {

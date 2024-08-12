@@ -8,10 +8,12 @@ mod inspect_frontier;
 mod needs_epochs;
 mod periodic;
 mod util;
+mod align_frontiers;
 pub use self::from_data::GenerateEpochs;
 pub use self::inspect_frontier::InspectFrontier;
 pub use self::needs_epochs::NeedsEpochs;
 pub use self::periodic::PeriodicEpochs;
+pub use self::align_frontiers::AlignFrontiers;
 
 #[derive(Clone)]
 enum OnTimeLate<V> {
@@ -27,7 +29,7 @@ pub trait TimelyStream<K, V, T> {
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
     ) -> NeedsEpochs<K, V, TO>;
 
-    fn assign_and_convert<TO: MaybeTime>(
+    fn assign_timestamps_and_convert_epochs<TO: MaybeTime>(
         self,
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
         converter: impl FnMut(T) -> Option<TO> + 'static,
@@ -95,7 +97,7 @@ where
         self.then(operator)
     }
 
-    fn assign_and_convert<TO: MaybeTime>(
+    fn assign_timestamps_and_convert_epochs<TO: MaybeTime>(
         self,
         mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
         mut converter: impl FnMut(T) -> Option<TO> + 'static,
