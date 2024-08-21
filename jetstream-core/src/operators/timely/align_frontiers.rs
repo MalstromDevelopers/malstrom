@@ -1,9 +1,10 @@
 use indexmap::IndexMap;
-use postbox::{broadcast, Client};
 
 use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::keyed::distributed::DistTimestamp;
 use crate::operators::stateless_op::StatelessOp;
+use crate::runtime::communication::broadcast;
+use crate::runtime::CommunicationClient;
 use crate::stream::jetstream::JetStreamBuilder;
 
 use crate::stream::operator::{
@@ -42,7 +43,7 @@ where
         .collect();
 
     let this_id = build_ctx.worker_id;
-    let clients: IndexMap<WorkerId, Client<T>> = build_ctx
+    let clients: IndexMap<WorkerId, CommunicationClient<T>> = build_ctx
         .get_worker_ids()
         .filter(|wid| *wid != this_id)
         .map(|wid| {
@@ -58,7 +59,7 @@ where
         for (wid, client) in clients.iter() {
             // last msg will always be highest epoch
             if let Some(x) = client.recv_all().last() {
-                other_frontiers.get_mut(wid).unwrap().replace(x.unwrap());
+                other_frontiers.get_mut(wid).unwrap().replace(x);
             }
         }
 
@@ -87,12 +88,12 @@ where
 fn advance_input<K: MaybeKey, V: MaybeData, T: DistTimestamp + Timestamp>(
     input: &mut Receiver<K, V, T>,
     output: &mut Sender<K, V, T>,
-    clients: &IndexMap<WorkerId, Client<T>>,
+    clients: &IndexMap<WorkerId, CommunicationClient<T>>,
 ) -> Option<T> {
     let msg = input.recv()?;
     match msg {
         Message::Epoch(e) => {
-            broadcast(clients.values(), e.clone()).unwrap();
+            broadcast(clients.values(), e.clone());
             output.send(Message::Epoch(e.clone()));
             Some(e)
         },

@@ -2,10 +2,11 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use itertools::Itertools;
-use postbox::{broadcast, Client};
 use serde::{Deserialize, Serialize};
 
 use crate::channels::selective_broadcast::Sender;
+use crate::runtime::communication::broadcast;
+use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::operator::{BuildContext, Logic, OperatorContext};
 use crate::time::{MaybeTime, NoTime};
@@ -13,7 +14,7 @@ use crate::{Data, MaybeKey, Message, NoData, NoKey, WorkerId};
 
 use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorBuilder};
 
-use super::{PersistenceBackendBuilder, SnapshotVersion};
+use super::{PersistenceBackend, SnapshotVersion};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum ComsMessage {
@@ -37,7 +38,7 @@ struct ControllerState {
 
 fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     build_context: &mut BuildContext,
-    backend_builder: Rc<dyn PersistenceBackendBuilder>,
+    backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
 ) -> Box<dyn Logic<K, V, T, K, V, T>> {
     // TODO: Commit snapshot to backend
@@ -72,7 +73,7 @@ fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
 
 fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     build_context: &mut BuildContext,
-    backend_builder: Rc<dyn PersistenceBackendBuilder>,
+    backend_builder: Rc<dyn PersistenceBackend>,
     mut timer: impl FnMut() -> bool + 'static,
 ) -> impl Logic<K, V, T, K, V, T> {
     let mut last_committed: Option<SnapshotVersion> = build_context.load_state();
@@ -85,7 +86,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
         None;
 
     let worker_ids = build_context.get_worker_ids().collect_vec();
-    let clients: IndexMap<WorkerId, Client<ComsMessage>> = worker_ids
+    let clients: IndexMap<WorkerId, CommunicationClient<ComsMessage>> = worker_ids
         .iter()
         .cloned()
         .filter_map(|i| {
@@ -124,8 +125,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             broadcast(
                 clients.values(),
                 ComsMessage::StartSnapshot(snapshot_version),
-            )
-            .unwrap();
+            );
             output.send(Message::AbsBarrier(barrier));
         }
 
@@ -138,7 +138,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
 
             for (wid, client) in clients.iter() {
                 for msg in client.recv_all() {
-                    match msg.unwrap() {
+                    match msg {
                         ComsMessage::StartSnapshot(_i) => {
                             unreachable!(
                                 "Lead node received instruction which can only be given by lead node"
@@ -167,7 +167,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
 }
 
 fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
-    backend_builder: Rc<dyn PersistenceBackendBuilder>,
+    backend_builder: Rc<dyn PersistenceBackend>,
     build_context: &mut BuildContext,
 ) -> impl Logic<K, V, T, K, V, T> {
     let mut in_progress: Option<Barrier> = None;
@@ -182,7 +182,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                 if b.strong_count() == 1 {
                     let version = b.get_version();
                     println!("Completed snapshot at {version}");
-                    leader.send(ComsMessage::CommitSnapshot(version)).unwrap();
+                    leader.send(ComsMessage::CommitSnapshot(version));
                     None
                 } else {
                     Some(b)
@@ -191,7 +191,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             None => None,
         };
 
-        for msg in leader.recv_all().map(|x| x.unwrap()) {
+        for msg in leader.recv_all() {
             match msg {
                 ComsMessage::StartSnapshot(i) => {
                     let barrier = Barrier::new(backend_builder.for_version(ctx.worker_id, &i));
@@ -211,7 +211,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
 }
 
 pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
-    backend_builder: Rc<dyn PersistenceBackendBuilder>,
+    backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
 ) -> OperatorBuilder<K, V, T, K, V, T> {
     OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend_builder, timer))

@@ -40,8 +40,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        operators::{sink::Sink, source::Source},
-        test::{get_test_configs, get_test_stream, VecCollector},
+        operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
     };
 
     use super::*;
@@ -53,12 +52,12 @@ mod tests {
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(0..100)
+            .source(SingleIteratorSource::new(0..100))
             .filter(|x| *x < 42)
             .sink(collector.clone());
 
         stream.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while collector.len() < 42 {
             runtime.step()

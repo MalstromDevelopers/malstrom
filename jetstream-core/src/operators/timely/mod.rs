@@ -133,11 +133,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        channels::selective_broadcast::Receiver,
-        operators::{sink::Sink, source::Source},
-        stream::operator::OperatorBuilder,
-        test::{get_test_configs, get_test_stream, VecCollector},
-        Message, NoKey,
+        channels::selective_broadcast::Receiver, operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, stream::operator::OperatorBuilder, test::{get_test_configs, get_test_stream, VecCollector}, Message, NoKey
     };
     use itertools::Itertools;
 
@@ -151,7 +147,7 @@ mod tests {
         let collector = VecCollector::new();
 
         let (ontime, late) = stream
-            .source(0..10)
+            .source(SingleIteratorSource::new(0..10))
             .assign_timestamps(|x| x.value * 2)
             .generate_epochs(|_x, _y| None);
         let ontime = ontime.sink(collector.clone());
@@ -159,7 +155,7 @@ mod tests {
         ontime.finish();
         late.finish();
 
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
         while collector.len() < 10 {
             runtime.step()
         }
@@ -182,7 +178,7 @@ mod tests {
         let late_collector = VecCollector::new();
 
         let (stream, late) = stream
-            .source(0..10)
+            .source(SingleIteratorSource::new(0..10))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|msg, epoch| Some(msg.timestamp + epoch.unwrap_or(0)));
         let (stream, frontier) = stream.inspect_frontier();
@@ -191,7 +187,7 @@ mod tests {
 
         stream.finish();
         late.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         let mut timestamps: Vec<i32> = vec![0];
         while collector.len() + late_collector.len() < 10 {
@@ -214,7 +210,7 @@ mod tests {
 
         let collector = VecCollector::new();
         let (stream, late) = stream
-            .source(0..10)
+            .source(SingleIteratorSource::new(0..10))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|msg, _| Some(msg.timestamp));
 
@@ -237,7 +233,7 @@ mod tests {
 
         stream.finish();
         late.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while collector.len() < 10 {
             runtime.step();
@@ -255,7 +251,7 @@ mod tests {
 
         let collector = VecCollector::new();
         let (stream, late) = stream
-            .source(0..10)
+            .source(SingleIteratorSource::new(0..10))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|msg, _| Some(msg.timestamp));
 
@@ -278,7 +274,7 @@ mod tests {
 
         stream.finish();
         late.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while collector.len() < 10 {
             runtime.step();
@@ -295,7 +291,7 @@ mod tests {
         let (worker, stream) = get_test_stream();
 
         let (ontime, late) = stream
-            .source(1..4)
+            .source(SingleIteratorSource::new(1..4))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|msg, _epoch| Some(msg.timestamp));
 
@@ -320,7 +316,7 @@ mod tests {
         ));
         ontime.finish();
         late.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while collector.len() < 6 {
             runtime.step()
@@ -339,13 +335,13 @@ mod tests {
         let collector_late = VecCollector::new();
 
         let (ontime, late) = stream
-            .source((5..10).chain(0..5))
+            .source(SingleIteratorSource::new((5..10).chain(0..5)))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|msg, _epoch| Some(msg.timestamp));
 
         ontime.sink(collector_ontime.clone()).finish();
         late.sink(collector_late.clone()).finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while (collector_late.len() < 5) | (collector_ontime.len() < 5) {
             runtime.step()

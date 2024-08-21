@@ -46,6 +46,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 metrics = "0.22.3"
 metrics-exporter-prometheus = "0.14.0"
 proptest = "1.5.0"
+erased-serde = "0.4.5"
 
 
 [build-dependencies]

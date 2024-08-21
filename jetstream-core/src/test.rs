@@ -7,11 +7,11 @@ use crate::operators::{timely::InspectFrontier};
 use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
 use crate::time::Timestamp;
-use crate::worker::RuntimeBuilder;
+use crate::runtime::{RuntimeBuilder, SingleThreadRuntime};
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
-    snapshot::{NoPersistence, PersistenceBackend, PersistenceBackendBuilder},
+    snapshot::{NoPersistence, PersistenceClient, PersistenceBackend},
     stream::{
         jetstream::JetStreamBuilder,
         operator::{AppendableOperator, BuildContext, Logic, OperatorBuilder, RunnableOperator},
@@ -80,8 +80,8 @@ impl<T> IntoIterator for VecCollector<T> {
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
-pub fn get_test_stream() -> (RuntimeBuilder, JetStreamBuilder<NoKey, NoData, NoTime>) {
-    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+pub fn get_test_stream() -> (RuntimeBuilder<SingleThreadRuntime, NoPersistence>, JetStreamBuilder<NoKey, NoData, NoTime>) {
+    let mut worker = RuntimeBuilder::new(SingleThreadRuntime::default());
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -124,8 +124,8 @@ pub fn get_test_configs<const N: usize>() -> [Config; N] {
 pub struct CapturingPersistenceBackend {
     capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
 }
-impl PersistenceBackendBuilder for CapturingPersistenceBackend {
-    fn latest(&self, _worker_id: crate::WorkerId) -> Box<dyn PersistenceBackend> {
+impl PersistenceBackend for CapturingPersistenceBackend {
+    fn latest(&self, _worker_id: crate::WorkerId) -> Box<dyn PersistenceClient> {
         Box::new(self.clone())
     }
 
@@ -133,12 +133,12 @@ impl PersistenceBackendBuilder for CapturingPersistenceBackend {
         &self,
         _worker_id: crate::WorkerId,
         _snapshot_epoch: &crate::snapshot::SnapshotVersion,
-    ) -> Box<dyn PersistenceBackend> {
+    ) -> Box<dyn PersistenceClient> {
         Box::new(self.clone())
     }
 }
 
-impl PersistenceBackend for CapturingPersistenceBackend {
+impl PersistenceClient for CapturingPersistenceBackend {
     fn get_version(&self) -> crate::snapshot::SnapshotVersion {
         0
     }
@@ -211,7 +211,7 @@ pub struct OperatorTester<KI, VI, TI, KO, VO, TO, R> {
     // used to emulate another worker sending messages
     remote_postbox: Postbox<(WorkerId, OperatorId)>,
     remote_pb_client: Client<R>,
-    persistence_backend: Box<dyn PersistenceBackend>,
+    persistence_backend: Box<dyn PersistenceClient>,
 }
 
 impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
@@ -412,7 +412,7 @@ pub fn test_forward_system_messages<
 pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
     stream: JetStreamBuilder<K, V, T>,
 ) -> Vec<Message<K, V, T>> {
-    let worker = RuntimeBuilder::new(NoPersistence::default(), || false);
+    let worker = RuntimeBuilder::new(SingleThreadRuntime::default());
 
     let collector = VecCollector::new();
     let collector_cloned = collector.clone();
@@ -428,7 +428,7 @@ pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
     stream.finish();
 
     let [config] = get_test_configs();
-    let mut runtime = worker.build(config).unwrap();
+    let mut runtime = worker.build().unwrap();
 
     while frontier.get_time().map_or(true, |x| x != T::MAX) {
         runtime.step()
@@ -462,10 +462,7 @@ mod tests {
         operators::{
             source::Source,
             timely::{GenerateEpochs, TimelyStream},
-        },
-        snapshot::{deserialize_state, serialize_state},
-        stream::operator::OperatorContext,
-        DataMessage,
+        }, snapshot::{deserialize_state, serialize_state}, sources::SingleIteratorSource, stream::operator::OperatorContext, DataMessage
     };
 
     use super::*;
@@ -519,7 +516,7 @@ mod tests {
     #[test]
     fn test_operator_tester() {
         let mut tester = OperatorTester::new_built_by(|build_ctx| {
-            let client = build_ctx.create_communication_client(1, 0);
+            let client = build_ctx.create_communication_client::<i32>(1, 0);
             move |input: &mut Receiver<NoKey, i32, NoTime>,
                   output: &mut Sender<NoKey, i32, NoTime>,
                   _ctx: &mut OperatorContext| {
@@ -528,8 +525,7 @@ mod tests {
                     output.send(Message::Data(DataMessage::new(d.key, v, d.timestamp)));
                 };
 
-                for x in client.recv_all() {
-                    let value = x.unwrap();
+                for value in client.recv_all() {
                     output.send(Message::Data(DataMessage::new(NoKey, value, NoTime)))
                 }
             }
@@ -566,7 +562,7 @@ mod tests {
     #[test]
     fn test_get_stream_values() {
         let stream = JetStreamBuilder::new_test()
-            .source(vec![1, 2, 3])
+            .source(SingleIteratorSource::new(vec![1, 2, 3]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| if x.value == 3 { Some(i32::MAX) } else { None })
             .0;
@@ -577,7 +573,7 @@ mod tests {
     #[test]
     fn test_collect_stream_messages() {
         let stream = JetStreamBuilder::new_test()
-            .source(0..3)
+            .source(SingleIteratorSource::new(0..3))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|x, _| {
                 if x.value == 2 {

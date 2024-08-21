@@ -19,15 +19,19 @@ pub(super) use epoch_align::epoch_aligner;
 pub(super) use icadd_operator::icadd;
 pub(super) use versioner::versioner;
 
-/// Marker trait for distributable key
-pub trait DistKey: Key + Serialize + DeserializeOwned + 'static {}
-impl<T: Key + Serialize + DeserializeOwned + 'static> DistKey for T {}
-/// Marker trait for distributable value
-pub trait DistData: MaybeData + Serialize + DeserializeOwned {}
-impl<T: MaybeData + Serialize + DeserializeOwned> DistData for T {}
+// Marker trait for distributable keys, values or time
+pub trait Distributable: Serialize + DeserializeOwned + 'static{}
+impl<T: Serialize + DeserializeOwned + 'static> Distributable for T {}
 
-pub trait DistTimestamp: MaybeTime + Serialize + DeserializeOwned {}
-impl<T: MaybeTime + Serialize + DeserializeOwned> DistTimestamp for T {}
+/// Marker trait for distributable key
+pub trait DistKey: Key + Distributable {}
+impl<T: Key + Distributable> DistKey for T {}
+/// Marker trait for distributable value
+pub trait DistData: MaybeData + Distributable {}
+impl<T: MaybeData + Distributable> DistData for T {}
+
+pub trait DistTimestamp: MaybeTime + Distributable {}
+impl<T: MaybeTime + Distributable> DistTimestamp for T {}
 
 type Version = u64;
 

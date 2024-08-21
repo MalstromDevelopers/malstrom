@@ -1,7 +1,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    snapshot::PersistenceBackend,
+    snapshot::PersistenceClient,
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
     time::{NoTime, Timestamp},
     DataMessage, MaybeData, MaybeKey, Message,

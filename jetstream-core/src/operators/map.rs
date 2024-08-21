@@ -11,7 +11,7 @@ pub trait Map<K, V, T, VO> {
     /// # Example
     /// ```
     /// stream: JetStreamBuilder<NoKey, &str, NoTime, NoPersistence>
-    /// let lenghts = JetStreamBuilder<NoKey, usize, NoTime, NoPersistence> = stream.map(|x| x.len())
+    /// let lengths = JetStreamBuilder<NoKey, usize, NoTime, NoPersistence> = stream.map(|x| x.len())
     /// ```
     fn map(self, mapper: impl (FnMut(V) -> VO) + 'static) -> JetStreamBuilder<K, VO, T>;
 }
@@ -42,9 +42,7 @@ mod tests {
             map::Map,
             source::Source,
             timely::{GenerateEpochs, TimelyStream},
-        },
-        stream::jetstream::JetStreamBuilder,
-        test::collect_stream_values,
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::collect_stream_values
     };
 
     #[test]
@@ -53,7 +51,7 @@ mod tests {
         let output = input.iter().map(|x| x.len()).collect_vec();
 
         let stream = JetStreamBuilder::new_test()
-            .source(input)
+            .source(SingleIteratorSource::new(input))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value == "bar" {

@@ -19,16 +19,16 @@ pub(crate) fn deserialize_state<S: DeserializeOwned>(state: Vec<u8>) -> S {
         .0
 }
 
-pub trait PersistenceBackendBuilder: 'static {
-    fn latest(&self, worker_id: WorkerId) -> Box<dyn PersistenceBackend>;
+pub trait PersistenceBackend: 'static {
+    fn latest(&self, worker_id: WorkerId) -> Box<dyn PersistenceClient>;
     fn for_version(
         &self,
         worker_id: WorkerId,
         snapshot_epoch: &SnapshotVersion,
-    ) -> Box<dyn PersistenceBackend>;
+    ) -> Box<dyn PersistenceClient>;
 }
 
-pub trait PersistenceBackend: Debug {
+pub trait PersistenceClient: Debug {
     fn get_version(&self) -> SnapshotVersion;
     fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>>;
     fn persist(&mut self, state: &[u8], operator_id: &OperatorId);
@@ -36,7 +36,7 @@ pub trait PersistenceBackend: Debug {
 
 #[derive(Debug)]
 pub struct Barrier {
-    backend: Rc<Mutex<Box<dyn PersistenceBackend>>>,
+    backend: Rc<Mutex<Box<dyn PersistenceClient>>>,
 }
 impl Clone for Barrier {
     fn clone(&self) -> Self {
@@ -47,7 +47,7 @@ impl Clone for Barrier {
 }
 
 impl Barrier {
-    pub(super) fn new(backend: Box<dyn PersistenceBackend>) -> Self {
+    pub(super) fn new(backend: Box<dyn PersistenceClient>) -> Self {
         Self {
             backend: Rc::new(Mutex::new(backend)),
         }
@@ -72,7 +72,7 @@ impl Barrier {
 }
 #[derive(Debug)]
 pub struct Load {
-    backend: Rc<Mutex<Box<dyn PersistenceBackend>>>,
+    backend: Rc<Mutex<Box<dyn PersistenceClient>>>,
 }
 impl Clone for Load {
     fn clone(&self) -> Self {
@@ -83,7 +83,7 @@ impl Clone for Load {
 }
 
 impl Load {
-    pub(super) fn new(backend: Box<dyn PersistenceBackend>) -> Self {
+    pub(super) fn new(backend: Box<dyn PersistenceClient>) -> Self {
         Self {
             backend: Rc::new(Mutex::new(backend)),
         }
@@ -101,8 +101,8 @@ impl Load {
 pub struct NoPersistence {
     epoch: SnapshotVersion,
 }
-impl PersistenceBackendBuilder for NoPersistence {
-    fn latest(&self, _worker_id: WorkerId) -> Box<dyn PersistenceBackend> {
+impl PersistenceBackend for NoPersistence {
+    fn latest(&self, _worker_id: WorkerId) -> Box<dyn PersistenceClient> {
         Box::new(self.clone())
     }
 
@@ -110,14 +110,14 @@ impl PersistenceBackendBuilder for NoPersistence {
         &self,
         _worker_id: WorkerId,
         snapshot_epoch: &SnapshotVersion,
-    ) -> Box<dyn PersistenceBackend> {
+    ) -> Box<dyn PersistenceClient> {
         Box::new(NoPersistence {
             epoch: *snapshot_epoch,
         })
     }
 }
 
-impl PersistenceBackend for NoPersistence {
+impl PersistenceClient for NoPersistence {
     fn get_version(&self) -> SnapshotVersion {
         self.epoch
     }
@@ -139,13 +139,13 @@ impl PersistenceBackend for NoPersistence {
 
 #[cfg(test)]
 mod test {
-    use super::PersistenceBackend;
+    use super::PersistenceClient;
 
     /// This test won't compile if PersistenceBackend is not object safe
     #[test]
     fn is_object_safe() {
         struct Foo {
-            _bar: Box<dyn PersistenceBackend>,
+            _bar: Box<dyn PersistenceClient>,
         }
     }
 }

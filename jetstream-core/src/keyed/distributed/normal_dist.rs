@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     keyed::WorkerPartitioner,
-    snapshot::{Barrier, PersistenceBackend},
+    snapshot::{Barrier, PersistenceClient},
     stream::operator::OperatorContext,
     time::MaybeTime,
     DataMessage, MaybeData, Message, WorkerId,

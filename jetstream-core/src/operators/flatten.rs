@@ -54,17 +54,14 @@ mod tests {
             source::Source,
             timely::{GenerateEpochs, TimelyStream},
             KeyLocal,
-        },
-        stream::jetstream::JetStreamBuilder,
-        test::{collect_stream_messages, collect_stream_values},
-        Message,
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{collect_stream_messages, collect_stream_values}, Message
     };
 
     use super::Flatten;
     #[test]
     fn test_flatten() {
         let stream = JetStreamBuilder::new_test()
-            .source([vec![1, 2], vec![3, 4], vec![5]])
+            .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value[0] == 5 {
@@ -83,7 +80,7 @@ mod tests {
     #[test]
     fn test_preserves_time() {
         let stream = JetStreamBuilder::new_test()
-            .source([vec![1, 2], vec![3, 4], vec![5]])
+            .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value[0] == 5 {
@@ -113,7 +110,7 @@ mod tests {
     #[test]
     fn test_preserves_key() {
         let stream = JetStreamBuilder::new_test()
-            .source([vec![1, 2], vec![3, 4, 5], vec![6]])
+            .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4, 5], vec![6]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value[0] == 6 {

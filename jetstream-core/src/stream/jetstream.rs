@@ -6,7 +6,7 @@ use super::operator::{
 use crate::{
     channels::selective_broadcast::{self, Sender},
     time::{MaybeTime, NoTime},
-    worker::{split_n, union, InnerRuntimeBuilder},
+    runtime::{split_n, union, InnerRuntimeBuilder},
     Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
 };
 

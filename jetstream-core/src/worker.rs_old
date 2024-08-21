@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use crate::channels::selective_broadcast::{self};
 use crate::operators::void::Void;
 use crate::snapshot::controller::make_snapshot_controller;
-use crate::snapshot::PersistenceBackendBuilder;
+use crate::snapshot::PersistenceBackend;
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
@@ -16,12 +16,12 @@ use thiserror::Error;
 
 pub struct RuntimeBuilder {
     root_stream: JetStreamBuilder<NoKey, NoData, NoTime>,
-    persistence_backend: Rc<dyn PersistenceBackendBuilder>,
+    persistence_backend: Rc<dyn PersistenceBackend>,
     inner: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 impl RuntimeBuilder {
     pub fn new(
-        persistence_backend: impl PersistenceBackendBuilder,
+        persistence_backend: impl PersistenceBackend,
         snapshot_timer: impl FnMut() -> bool + 'static,
     ) -> RuntimeBuilder {
         let persistence_backend = Rc::new(persistence_backend);

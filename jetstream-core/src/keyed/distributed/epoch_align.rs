@@ -4,6 +4,8 @@ use postbox::Client;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::runtime::communication::broadcast;
+use crate::runtime::CommunicationClient;
 use crate::stream::operator::Logic;
 use crate::ShutdownMarker;
 use crate::{
@@ -21,7 +23,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
 
     let mut local_shutdown: Option<ShutdownMarker> = None;
 
-    let mut clients: IndexMap<WorkerId, Client<ExchangedMessage<T>>> = ctx
+    let mut clients: IndexMap<WorkerId, CommunicationClient<ExchangedMessage<T>>> = ctx
         .get_worker_ids()
         .filter_map(|i| {
             if i != ctx.worker_id {
@@ -44,8 +46,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
                         clients.keys().collect_vec()
                     );
 
-                    postbox::broadcast(clients.values(), ExchangedMessage::Epoch(e.clone()))
-                        .unwrap();
+                    broadcast(clients.values(), ExchangedMessage::Epoch(e.clone()));
                     // PANIC: We can unwrap, since our own workerid is guaranteed to exist
                     epoch_states.get_mut(&ctx.worker_id).unwrap().replace(e);
 
@@ -54,7 +55,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
                     }
                 }
                 Message::ShutdownMarker(s) => {
-                    postbox::broadcast(clients.values(), ExchangedMessage::<T>::Shutdown).unwrap();
+                    broadcast(clients.values(), ExchangedMessage::<T>::Shutdown);
                     local_shutdown = Some(s)
                 }
                 Message::AbsBarrier(mut b) => {
@@ -70,7 +71,7 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
         let mut to_remove = Vec::new();
         for (sender, client) in clients.iter() {
             for network_msg in client.recv_all() {
-                match network_msg.unwrap() {
+                match network_msg {
                     ExchangedMessage::Epoch(e) => {
                         debug!(
                             "{}-{} Got epoch {:?} from {:?}",

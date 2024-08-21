@@ -155,7 +155,8 @@ mod test {
     use crate::keyed::distributed::{decode, encode, Acquire, Collect, Interrogate};
     use crate::operators::timely::{GenerateEpochs, TimelyStream};
     use crate::operators::KeyLocal;
-    use crate::snapshot::{Barrier, PersistenceBackend};
+    use crate::snapshot::{Barrier, PersistenceClient};
+    use crate::sources::SingleIteratorSource;
     use crate::test::{CapturingPersistenceBackend, OperatorTester};
     use crate::time::NoTime;
     use crate::{
@@ -171,7 +172,7 @@ mod test {
     #[test]
     fn keeps_state() {
         let stream = JetStreamBuilder::new_test()
-            .source(0..100)
+            .source(SingleIteratorSource::new(0..100))
             .assign_timestamps(|x| x.value)
             .generate_epochs(|x, _| if x.value == 100 { Some(i32::MAX) } else { None })
             .0
@@ -197,7 +198,7 @@ mod test {
     #[test]
     fn discards_state() {
         let stream = JetStreamBuilder::new_test()
-            .source(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()))
+            .source(SingleIteratorSource::new(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string())))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value == "baz" {

@@ -44,9 +44,7 @@ mod tests {
             inspect::Inspect,
             source::Source,
             timely::{GenerateEpochs, TimelyStream},
-        },
-        stream::jetstream::JetStreamBuilder,
-        test::collect_stream_values,
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::collect_stream_values
     };
 
     #[test]
@@ -59,7 +57,7 @@ mod tests {
         let total_letters = input.iter().fold(0, |folder, x| folder + x.len());
 
         let stream = JetStreamBuilder::new_test()
-            .source(input)
+            .source(SingleIteratorSource::new(input))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
                 if x.value == "bar" {

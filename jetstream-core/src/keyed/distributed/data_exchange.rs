@@ -1,7 +1,8 @@
 use indexmap::IndexMap;
-use postbox::{broadcast, Client};
 use serde::{Deserialize, Serialize};
 
+use crate::runtime::communication::broadcast;
+use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::operator::Logic;
 use crate::{stream::operator::BuildContext, Message, WorkerId};
@@ -28,7 +29,7 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
     // tuple of client and is_barred
     let mut symmetric_clients: IndexMap<
         WorkerId,
-        (Client<ExchangedMessage<K, VersionedMessage<V>, T>>, bool),
+        (CommunicationClient<ExchangedMessage<K, VersionedMessage<V>, T>>, bool),
     > = ctx
         .get_worker_ids()
         .filter_map(|i| {
@@ -47,7 +48,7 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 
     let mut downstream_clients: IndexMap<
         WorkerId,
-        (Client<ExchangedMessage<K, VersionedMessage<V>, T>>, bool),
+        (CommunicationClient<ExchangedMessage<K, VersionedMessage<V>, T>>, bool),
     > = ctx
         .get_worker_ids()
         .filter_map(|i| {
@@ -67,16 +68,14 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
                         broadcast(
                             symmetric_clients.values().map(|x| &x.0),
                             ExchangedMessage::Barrier,
-                        )
-                        .unwrap();
+                        );
                         local_barrier.replace(x);
                     }
                     Message::ShutdownMarker(x) => {
                         broadcast(
                             symmetric_clients.values().map(|x| &x.0),
                             ExchangedMessage::Shutdown,
-                        )
-                        .unwrap();
+                        );
                         // shutdownmarker needs to get aligned before we can send it downstream
                         local_shutdown = Some(x);
                     }
@@ -94,7 +93,7 @@ pub(crate) fn upstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
             }
             // only read one message from the buffer, to make it "fair"
             // with our own upstream
-            if let Some(network_msg) = client.recv().map(|x| x.unwrap()) {
+            if let Some(network_msg) = client.recv() {
                 match network_msg {
                     ExchangedMessage::Barrier => {
                         *is_barred = true;
@@ -137,7 +136,7 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 ) -> impl Logic<K, TargetedMessage<V>, T, K, V, T> {
     let upstream = ctx.operator_id - upstream_offset;
 
-    let clients: IndexMap<WorkerId, Client<ExchangedMessage<K, VersionedMessage<V>, T>>> = ctx
+    let clients: IndexMap<WorkerId, CommunicationClient<ExchangedMessage<K, VersionedMessage<V>, T>>> = ctx
         .get_worker_ids()
         .filter_map(|i| {
             if i != ctx.worker_id {
@@ -169,7 +168,6 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
                             .get(&target)
                             .expect("Partitioner target out of range")
                             .send(exmsg)
-                            .unwrap()
                     }
                 }
                 Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),

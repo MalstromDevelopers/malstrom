@@ -6,12 +6,14 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::channels::selective_broadcast::{self, full_broadcast, Receiver, Sender};
+use crate::keyed::distributed::Distributable;
+use crate::runtime::{CommunicationBackend, CommunicationClient};
 /// Operators:
 /// Lifecycle:
 /// OperatorBuilder -> Appendable Operator -> FrontieredOperator
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
-use crate::snapshot::{deserialize_state, PersistenceBackend};
+use crate::snapshot::{deserialize_state, PersistenceClient};
 use crate::time::MaybeTime;
 use crate::{MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
 
@@ -23,22 +25,23 @@ use crate::Data;
 pub struct OperatorContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
-    communication: &'a mut Postbox<(WorkerId, OperatorId)>,
+    communication: &'a mut dyn CommunicationBackend,
 }
 
 impl<'a> OperatorContext<'a> {
     /// Create a client for inter-worker communication
-    pub fn create_communication_client<T: postbox::Data>(
+    pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
         other_operator: OperatorId,
-    ) -> Client<T> {
-        self.communication
-            .new_client(
-                (other_worker, other_operator),
-                (self.worker_id, self.operator_id),
-            )
-            .unwrap()
+    ) -> CommunicationClient<T> {
+        CommunicationClient::new(
+            other_worker,
+            other_operator,
+            self.operator_id,
+            self.communication,
+        )
+        .unwrap()
     }
 }
 
@@ -46,8 +49,8 @@ pub struct BuildContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub label: String,
-    persistence_backend: Box<dyn PersistenceBackend>,
-    communication: &'a mut Postbox<(WorkerId, OperatorId)>,
+    persistence_backend: Box<dyn PersistenceClient>,
+    communication: &'a mut dyn CommunicationBackend,
     worker_ids: Range<usize>,
 }
 impl<'a> BuildContext<'a> {
@@ -55,8 +58,8 @@ impl<'a> BuildContext<'a> {
         worker_id: WorkerId,
         operator_id: OperatorId,
         label: String,
-        persistence_backend: Box<dyn PersistenceBackend>,
-        communication: &'a mut Postbox<(WorkerId, OperatorId)>,
+        persistence_backend: Box<dyn PersistenceClient>,
+        communication: &'a mut dyn CommunicationBackend,
         worker_ids: Range<usize>,
     ) -> Self {
         Self {
@@ -84,17 +87,18 @@ impl<'a> BuildContext<'a> {
     }
 
     /// Create a client for inter-worker communication
-    pub fn create_communication_client<T: postbox::Data>(
+    pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
         other_operator: OperatorId,
-    ) -> Client<T> {
-        self.communication
-            .new_client(
-                (other_worker, other_operator),
-                (self.worker_id, self.operator_id),
-            )
-            .unwrap()
+    ) -> CommunicationClient<T> {
+        CommunicationClient::new(
+            other_worker,
+            other_operator,
+            self.operator_id,
+            self.communication,
+        )
+        .unwrap()
     }
 }
 
@@ -353,7 +357,7 @@ impl RunnableOperator {
         }
     }
 
-    pub fn step(&mut self, communication: &mut Postbox<(WorkerId, OperatorId)>) {
+    pub fn step(&mut self, communication: &mut dyn CommunicationBackend) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,
             operator_id: self.operator_id,

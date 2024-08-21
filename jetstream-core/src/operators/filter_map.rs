@@ -43,8 +43,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        operators::{sink::Sink, source::Source},
-        test::{get_test_configs, get_test_stream, VecCollector},
+        operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
     };
 
     use super::*;
@@ -56,12 +55,12 @@ mod tests {
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(["foobar", "42", "baz", "1337"])
+            .source(SingleIteratorSource::new(["foobar", "42", "baz", "1337"]))
             .filter_map(|x: &str| x.parse::<i64>().ok())
             .sink(collector.clone());
 
         stream.finish();
-        let mut runtime = worker.build(config).unwrap();
+        let mut runtime = worker.build().unwrap();
 
         while collector.len() < 2 {
             runtime.step()

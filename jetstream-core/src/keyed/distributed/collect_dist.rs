@@ -1,15 +1,9 @@
 use std::{collections::VecDeque, rc::Rc};
 
 use indexmap::{IndexMap, IndexSet};
-use postbox::{broadcast, Client};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    keyed::WorkerPartitioner,
-    snapshot::Barrier,
-    stream::operator::OperatorContext,
-    time::MaybeTime,
-    DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
+    channels::selective_broadcast::{Receiver, Sender}, keyed::WorkerPartitioner, runtime::{communication::broadcast, CommunicationClient}, snapshot::Barrier, stream::operator::OperatorContext, time::MaybeTime, DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId
 };
 
 use super::{
@@ -34,7 +28,7 @@ pub(super) struct CollectDistributor<K, V, T> {
     old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
     // this contains the union of old and new workers
-    clients: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>>,
+    clients: IndexMap<WorkerId, CommunicationClient<DirectlyExchangedMessage<K>>>,
     version: Version,
     // if we receive another scale instruction during the interrogation,
     // there is no real good way for us to handle that, so we will
@@ -64,7 +58,7 @@ where
         version: Version,
         ctx: &mut OperatorContext,
     ) -> Self {
-        let workers: IndexMap<WorkerId, Client<DirectlyExchangedMessage<K>>> = old_worker_set
+        let workers: IndexMap<WorkerId, CommunicationClient<DirectlyExchangedMessage<K>>> = old_worker_set
             .union(&new_worker_set)
             .map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id)))
             .collect();
@@ -95,7 +89,7 @@ where
             && self.current_collect.is_none()
             && !self.done_workers.contains(&self.worker_id)
         {
-            broadcast(self.clients.values(), DirectlyExchangedMessage::<K>::Done).unwrap();
+            broadcast(self.clients.values(), DirectlyExchangedMessage::<K>::Done);
             self.done_workers.insert(self.worker_id);
         }
 
@@ -225,7 +219,7 @@ where
         self.lifecycle_collector(output, partitioner.as_ref(), ctx);
 
         for (sender, client) in self.clients.iter() {
-            for x in client.recv_all().map(|x| x.unwrap()) {
+            for x in client.recv_all() {
                 match x {
                     DirectlyExchangedMessage::Done => {
                         self.done_workers.insert(*sender);
@@ -289,9 +283,7 @@ where
                         .send(DirectlyExchangedMessage::Acquire(NetworkAcquire::new(
                             key.clone(),
                             collection,
-                        )))
-                        .unwrap();
-                    println!("Sent Acquire");
+                        )));
 
                     // send out any held back messages
                     for x in self.hold.swap_remove(&key).unwrap_or_default().into_iter() {

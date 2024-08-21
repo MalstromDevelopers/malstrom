@@ -1,3 +1,5 @@
+// TODO: clean up here
+
 use indexmap::IndexSet;
 use keyed::distributed::{Acquire, Collect, Interrogate};
 use serde_derive::{Deserialize, Serialize};
@@ -6,6 +8,7 @@ use snapshot::Barrier;
 use std::{hash::Hash, rc::Rc};
 // use time::Epoch;
 mod util;
+pub mod runtime;
 
 pub mod channels;
 pub mod config;
@@ -17,7 +20,6 @@ pub mod sources;
 pub mod stream;
 pub mod test;
 pub mod time;
-pub mod worker;
 
 type OperatorId = usize;
 type WorkerId = usize;
