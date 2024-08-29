@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 use itertools::{self};
 
 use crate::{
-    snapshot::Barrier, time::{NoTime, Timestamp}, Message, OperatorId, OperatorPartitioner, Scale,
+    snapshot::Barrier, time::{MaybeTime, NoTime, Timestamp}, Message, OperatorId, OperatorPartitioner, Scale,
     ShutdownMarker,
 };
 
@@ -65,7 +65,7 @@ impl<K, V, T> Sender<K, V, T>
 where
     K: Clone,
     V: Clone,
-    T: Clone + Timestamp,
+    T: Clone + MaybeTime,
 {
     pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {
@@ -226,13 +226,13 @@ impl<K, V, T> Receiver<K, V, T> {
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: Timestamp>(
+fn merge_timestamps<'a, T: MaybeTime>(
     mut timestamps: impl Iterator<Item = &'a Option<T>>,
 ) -> Option<T> {
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.and_then(|a| Some(a.merge(y)));
+            merged = merged.and_then(|a| a.try_merge(y));
         } else {
             return None;
         }
@@ -240,7 +240,7 @@ fn merge_timestamps<'a, T: Timestamp>(
     merged
 }
 
-fn handle_received<K, V, T: Timestamp>(
+fn handle_received<K, V, T: MaybeTime>(
     states: &mut IndexMap<usize, UpstreamState<T>>,
     buffer: &mut VecDeque<Message<K, V, T>>,
     sender: usize,
@@ -290,7 +290,7 @@ fn handle_received<K, V, T: Timestamp>(
 
 impl<K, V, T> Receiver<K, V, T>
 where
-    T: Timestamp,
+    T: MaybeTime,
 {
     /// Receive a value. None if no value to receive or all Senders dropped.
     ///

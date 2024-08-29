@@ -39,38 +39,37 @@ where
 mod tests {
     use std::{rc::Rc, sync::Mutex};
 
+    use itertools::Itertools;
+
     use crate::{
         operators::{
             inspect::Inspect,
             source::Source,
-            timely::{GenerateEpochs, TimelyStream},
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::collect_stream_values
+            timely::{GenerateEpochs, TimelyStream}, Sink,
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}
     };
 
     #[test]
     fn test_inspect() {
-        let cnt = Rc::new(Mutex::new(0));
-        let cnt_cloned = Rc::clone(&cnt);
+        let (builder, stream) = get_test_stream();
 
-        let input = ["hello", "world", "foo", "bar"];
-        let output = input.clone();
-        let total_letters = input.iter().fold(0, |folder, x| folder + x.len());
+        let inspect_collector = VecCollector::new();
+        let inspect_collector_moved = inspect_collector.clone();
 
-        let stream = JetStreamBuilder::new_test()
+        let output_collector = VecCollector::new();
+
+
+        let input = vec!["hello", "world", "foo", "bar"];
+        let expected = input.clone();
+        stream
             .source(SingleIteratorSource::new(input))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value == "bar" {
-                    Some(i32::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
-            .inspect(move |x| *cnt.lock().unwrap() += x.len());
+            .inspect(move |x| inspect_collector_moved.give(x.to_owned()))
+            .sink(output_collector.clone())
+            .finish();
+        builder.build().unwrap().execute();
 
+        assert_eq!(inspect_collector.drain_vec(..), expected);
         // check we still get unmodified output
-        assert_eq!(collect_stream_values(stream), output);
-        assert_eq!(total_letters, *cnt_cloned.lock().unwrap());
+        assert_eq!(output_collector.into_iter().map(|x| x.value).collect_vec(), expected);
     }
 }

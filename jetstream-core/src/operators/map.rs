@@ -41,28 +41,24 @@ mod tests {
         operators::{
             map::Map,
             source::Source,
-            timely::{GenerateEpochs, TimelyStream},
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::collect_stream_values
+            timely::{GenerateEpochs, TimelyStream}, Sink,
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}
     };
 
     #[test]
     fn test_map() {
+        let (builder, stream) = get_test_stream();
         let input = ["hello", "world", "foo", "bar"];
-        let output = input.iter().map(|x| x.len()).collect_vec();
+        let expected = input.iter().map(|x| x.len()).collect_vec();
+        let collector = VecCollector::new();
 
-        let stream = JetStreamBuilder::new_test()
+        let stream = stream
             .source(SingleIteratorSource::new(input))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value == "bar" {
-                    Some(i32::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
-            .map(|x| x.len());
+            .map(|x| x.len())
+            .sink(collector.clone())
+            .finish();
+        builder.build().unwrap().execute();
 
-        assert_eq!(collect_stream_values(stream), output);
+        assert_eq!(collector.into_iter().map(|x| x.value).collect_vec(), expected);
     }
 }

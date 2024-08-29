@@ -9,7 +9,7 @@ use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::operator::{AppendableOperator, BuildContext, Logic, OperatorContext};
-use crate::time::{NoTime, Timestamp};
+use crate::time::{MaybeTime, NoTime, Timestamp};
 use crate::{Data, MaybeKey, Message, NoData, NoKey, WorkerId};
 
 use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorBuilder};
@@ -36,7 +36,7 @@ struct ControllerState {
     commited_snapshots: IndexMap<WorkerId, SnapshotVersion>,
 }
 
-fn build_controller_logic<K: MaybeKey, V: Data, T>(
+fn build_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     build_context: &mut BuildContext,
     backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
@@ -55,7 +55,7 @@ fn build_controller_logic<K: MaybeKey, V: Data, T>(
         ))
     }
 }
-fn pass_messages<K: Clone, V: Clone, T: Timestamp>(
+fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
     input: &mut Receiver<K, V, T>,
     output: &mut Sender<K, V, T>,
 ) {
@@ -71,7 +71,7 @@ fn pass_messages<K: Clone, V: Clone, T: Timestamp>(
     };
 }
 
-fn build_leader_controller_logic<K: MaybeKey, V: Data, T: Timestamp>(
+fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     build_context: &mut BuildContext,
     backend_builder: Rc<dyn PersistenceBackend>,
     mut timer: impl FnMut() -> bool + 'static,
@@ -166,7 +166,7 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: Timestamp>(
     }
 }
 
-fn build_follower_controller_logic<K: MaybeKey, V: Data, T: Timestamp>(
+fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackend>,
     build_context: &mut BuildContext,
 ) -> impl Logic<K, V, T, K, V, T> {
@@ -210,7 +210,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: Timestamp>(
     }
 }
 
-pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: Timestamp>(
+pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
 ) -> OperatorBuilder<K, V, T, K, V,T> {
@@ -238,11 +238,4 @@ pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: Timestamp>(
 mod tests {
     use crate::snapshot::NoPersistence;
     use super::*;
-
-    /// check we indicate to the worker that this operator does not produce data
-    #[test]
-    fn indicate_no_output() {
-        let mut op = make_snapshot_controller::<NoKey, NoData>(Rc::new(NoPersistence::default()), || false);
-        assert_eq!(*op.get_output_mut().get_frontier().as_ref().unwrap(), NoTime::MAX);
-    }
 }

@@ -11,7 +11,7 @@ use crate::stream::operator::{
     pass_through_operator, AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder,
     RunnableOperator,
 };
-use crate::time::{NoTime, Timestamp};
+use crate::time::{MaybeTime, NoTime, Timestamp};
 use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 use thiserror::Error;
 
@@ -80,7 +80,7 @@ where
         JetStreamBuilder::from_operator(pass_through_operator(), self.inner.clone())
     }
 
-    pub fn build(mut self) -> Result<<F as RuntimeFlavor>::ExecutionHandle, BuildError> {
+    pub fn build(mut self) -> Result<Worker<<F as RuntimeFlavor>::Communication>, BuildError> {
         let mut snapshot_op =
             make_snapshot_controller(self.persistence_backend.clone(), self.snapshot_timer);
         snapshot_op.label("jetstream::snapshot".to_owned());
@@ -112,7 +112,7 @@ where
         let cluster_size = self.flavor.runtime_size();
         let this_worker = self.flavor.this_worker_id();
         let mut communication_backend = self.flavor.establish_communication()?;
-        let operators: Vec<(RunnableOperator, bool)> = operators
+        let operators: Vec<RunnableOperator> = operators
             .into_iter()
             .enumerate()
             .map(|(i, x)| {
@@ -127,7 +127,6 @@ where
                 );
                 x.into_runnable(&mut ctx)
             })
-            .map(|x| (x, false))
             .collect();
         let worker = Worker {
             worker_id: this_worker,
@@ -135,7 +134,7 @@ where
             communication: communication_backend,
         };
 
-        Ok(self.flavor.create_handle(worker))
+        Ok(worker)
     }
 }
 
@@ -162,7 +161,7 @@ impl InnerRuntimeBuilder {
     //     JetStreamBuilder::from_operator(new_op).label("jetstream::pass_through")
     // }
 
-    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
+    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
         &mut self,
         stream: JetStreamBuilder<K, V, T>,
     ) {
@@ -181,7 +180,7 @@ impl InnerRuntimeBuilder {
 }
 
 /// Unions N streams with identical output types into a single stream
-pub(crate) fn union<K: MaybeKey, V: MaybeData, T: Timestamp>(
+pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     streams: impl Iterator<Item = JetStreamBuilder<K, V, T>>,
 ) -> JetStreamBuilder<K, V, T> {
@@ -197,7 +196,7 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: Timestamp>(
     JetStreamBuilder::from_operator(unioned, runtime)
 }
 
-pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: Timestamp>(
+pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     input: JetStreamBuilder<K, V, T>,
     partitioner: impl OperatorPartitioner<K, V, T>,
@@ -233,7 +232,7 @@ pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: Timestamp>(
 
 pub struct Worker<C> {
     worker_id: WorkerId,
-    operators: Vec<(RunnableOperator, bool)>,
+    operators: Vec<RunnableOperator>,
     communication: C,
 }
 impl<C> Worker<C>
@@ -244,9 +243,7 @@ where
         let span = tracing::debug_span!("scheduling::run_graph", worker_id = self.worker_id);
         let _span_guard = span.enter();
         let mut all_done = true;
-        for (op, done) in self.operators.iter_mut().rev() {
-            println!("=====================");
-            println!("OP {} is finished: {}", op.get_label(), op.is_finished());
+        for op in self.operators.iter_mut().rev() {
             op.step(&mut self.communication);
             while op.has_queued_work() {
                 op.step(&mut self.communication);

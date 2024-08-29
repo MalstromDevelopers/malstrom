@@ -14,8 +14,8 @@ use crate::runtime::{CommunicationBackend, CommunicationClient};
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
 use crate::snapshot::{deserialize_state, PersistenceClient};
-use crate::time::{NoTime, Timestamp};
-use crate::{MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
+use crate::time::{MaybeTime, NoTime, Timestamp};
+use crate::{MaybeData, MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
 
 use crate::Data;
 
@@ -140,7 +140,7 @@ pub trait Operator {
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<K: MaybeKey, V: Data, T: Timestamp>(
+pub fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
 ) -> OperatorBuilder<K, V, T, K, V, T> {
    let mut op = OperatorBuilder::direct(|input, output, _ctx| {
         if let Some(x) = input.recv() {
@@ -182,9 +182,8 @@ where
     VI: Data,
     KO: MaybeKey,
     VO: Data,
-    TI: Timestamp,
-    TO: Timestamp,
-    // P: PersistenceBackend,
+    TI: MaybeTime,
+    TO: MaybeTime,
 {
     pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO>>(logic: M) -> Self {
         Self::built_by(|_| Box::new(logic))
@@ -227,10 +226,10 @@ impl<KI, VI, TI, KO, VO, TO> AppendableOperator<KO, VO, TO>
 where
     KI: MaybeKey,
     VI: Data,
-    // TI: Timestamp,
+    TI: MaybeTime,
     KO: MaybeKey,
     VO: Data,
-    // TO: Timestamp,
+    TO: MaybeTime,
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO> {
         &mut self.output
@@ -249,10 +248,10 @@ impl<KI, VI, TI, KO, VO, TO> BuildableOperator for OperatorBuilder<KI, VI, TI, K
 where
     KI: MaybeKey,
     VI: Data,
-    // TI: Timestamp,
+    TI: MaybeTime,
     KO: MaybeKey,
     VO: Data,
-    // TO: Timestamp,
+    TO: MaybeTime
 {
     fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator {
         let operator = StandardOperator {
@@ -274,46 +273,20 @@ pub struct StandardOperator<KI, VI, TI, KO, VO, TO> {
     logic: Box<dyn Logic<KI, VI, TI, KO, VO, TO>>,
     output: Sender<KO, VO, TO>,
 }
-impl<KI, VI, TI, KO, VO, TO> StandardOperator<KI, VI, TI, KO, VO, TO> {
+
+
+impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> where KO: Clone, VO: Clone, TO: MaybeTime {
+    
+    fn is_finished(&self) -> bool {
+        TO::CHECK_FINISHED(self.output.get_frontier()) && self.input.is_empty()
+    }
+    
     fn step(&mut self, context: &mut OperatorContext) {
         (self.logic)(&mut self.input, &mut self.output, context);
     }
-
+    
     fn has_queued_work(&self) -> bool {
         !self.input.is_empty()
-    }
-}
-
-impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> where TO: Timestamp {
-
-    
-    fn is_finished(&self) -> bool {
-        println!("Frontier {:?}", self.output.get_frontier().as_ref());
-        let what = self.output.get_frontier().as_ref().map_or(false, |x| *x == TO::MAX);
-        println!("Is MAX {:?}",what);
-        what 
-    }
-    
-    fn step(&mut self, context: &mut OperatorContext) {
-        self.step(context)
-    }
-    
-    fn has_queued_work(&self) -> bool {
-        self.has_queued_work()
-    }
-}
-
-impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> {
-    fn is_finished(&self) -> bool {
-        true
-    }
-    
-    fn step(&mut self, context: &mut OperatorContext) {
-        self.step(context)
-    }
-    
-    fn has_queued_work(&self) -> bool {
-        self.has_queued_work()
     }
 }
 

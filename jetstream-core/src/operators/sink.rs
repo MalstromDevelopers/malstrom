@@ -1,7 +1,5 @@
 use crate::{
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::Timestamp,
-    Data, MaybeKey, NoData,
+    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder}, time::{MaybeTime, NoTime, Timestamp}, Data, MaybeData, MaybeKey, NoData, NoKey
 };
 
 pub trait IntoSink<K, V, T> {
@@ -16,9 +14,28 @@ impl<K, V, T> Sink<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: Timestamp,
+    T: MaybeTime,
 {
     fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
         self.then(sink.into_sink())
+    }
+}
+
+pub trait IntoSinkFull<K, V, T> {
+    fn into_sink_full(self) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime>;
+}
+
+pub trait SinkFull<K, V, T> {
+    fn sink_full(self, sink: impl IntoSinkFull<K, V, T>) -> JetStreamBuilder<NoKey, NoData, NoTime>;
+}
+
+impl<K, V, T> SinkFull<K, V, T> for JetStreamBuilder<K, V, T>
+where
+    K: MaybeKey,
+    V: MaybeData,
+    T: MaybeTime,
+{
+    fn sink_full(self, sink: impl IntoSinkFull<K, V, T>) -> JetStreamBuilder<NoKey, NoData, NoTime> {
+        self.then(sink.into_sink_full())
     }
 }

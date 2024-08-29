@@ -90,7 +90,7 @@ mod tests {
     /// The into_iter source should emit the iterator values
     #[test]
     fn emits_values() {
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
 
         let in_data: Vec<i32> = (0..100).collect();
         let collector = VecCollector::new();
@@ -101,14 +101,9 @@ mod tests {
 
         stream.finish();
         let [conf] = get_test_configs();
-        let mut runtime = worker.build().unwrap();
-
-        while collector.len() < 100 {
-            runtime.step()
-        }
+        builder.build().unwrap().execute();
 
         let c = collector
-            .drain_vec(..)
             .into_iter()
             .map(|x| x.value)
             .collect_vec();

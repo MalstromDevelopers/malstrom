@@ -142,8 +142,7 @@ mod tests {
     /// Check that the assigner assigns a timestamp to every record
     #[test]
     fn test_timestamp_gets_assigned() {
-        let [config] = get_test_configs();
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
         let collector = VecCollector::new();
 
         let (ontime, late) = stream
@@ -155,12 +154,8 @@ mod tests {
         ontime.finish();
         late.finish();
 
-        let mut runtime = worker.build().unwrap();
-        while collector.len() < 10 {
-            runtime.step()
-        }
+        builder.build().unwrap().execute();
         let timestamps = collector
-            .drain_vec(..)
             .into_iter()
             .map(|x| x.timestamp)
             .collect_vec();
@@ -171,8 +166,7 @@ mod tests {
     /// check epochs get issued according to the given function
     #[test]
     fn test_epoch_gets_issued() {
-        let [config] = get_test_configs();
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
 
         let collector = VecCollector::new();
         let late_collector = VecCollector::new();
@@ -187,25 +181,15 @@ mod tests {
 
         stream.finish();
         late.finish();
-        let mut runtime = worker.build().unwrap();
+        builder.build().unwrap().execute();
 
         let mut timestamps: Vec<i32> = vec![0];
-        while collector.len() + late_collector.len() < 10 {
-            runtime.step();
-            if let Some(i) = frontier.get_time() {
-                if i != *timestamps.last().unwrap() {
-                    timestamps.push(i)
-                }
-            }
-        }
-
         assert_eq!(timestamps, vec![0, 1, 3, 6, 10, 15, 21, 28, 36, 45])
     }
 
     /// check epochs get removed if timestamps are reassigned
     #[test]
     fn test_epoch_gets_removed() {
-        let [config] = get_test_configs();
         let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
@@ -287,8 +271,7 @@ mod tests {
     /// epoch generator
     #[test]
     fn test_epoch_issued_after_message() {
-        let [config] = get_test_configs();
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
 
         let (ontime, late) = stream
             .source(SingleIteratorSource::new(1..4))
@@ -316,11 +299,7 @@ mod tests {
         ));
         ontime.finish();
         late.finish();
-        let mut runtime = worker.build().unwrap();
-
-        while collector.len() < 6 {
-            runtime.step()
-        }
+        builder.build().unwrap().execute();
 
         assert_eq!(collector.drain_vec(..), vec![1, -1, 2, -2, 3, -3])
     }
@@ -328,8 +307,7 @@ mod tests {
     /// Test late messages are placed into the late stream
     #[test]
     fn test_late_message_into_late_stream() {
-        let [config] = get_test_configs();
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
 
         let collector_ontime = VecCollector::new();
         let collector_late = VecCollector::new();
@@ -341,11 +319,8 @@ mod tests {
 
         ontime.sink(collector_ontime.clone()).finish();
         late.sink(collector_late.clone()).finish();
-        let mut runtime = worker.build().unwrap();
+        builder.build().unwrap().execute();
 
-        while (collector_late.len() < 5) | (collector_ontime.len() < 5) {
-            runtime.step()
-        }
         assert_eq!(
             collector_ontime
                 .into_iter()

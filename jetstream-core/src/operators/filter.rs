@@ -40,31 +40,28 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        operators::{sink::Sink, source::Source}, runtime::ExecutionHandle, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
+        operators::{sink::Sink, source::Source},
+        sources::SingleIteratorSource,
+        test::{get_test_stream, VecCollector},
     };
 
     use super::*;
     #[test]
     fn test_filter() {
-        println!("??!?!?!?");
-        let (worker, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
 
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(SingleIteratorSource::new(0..100)).label("source")
-            .filter(|x| *x < 42).label("filter")
-            .sink(collector.clone()).label("sink");
+            .source(SingleIteratorSource::new(0..100))
+            .filter(|x| *x < 42)
+            .sink(collector.clone());
         stream.finish();
-        let runtime = worker.build().unwrap();
+        let mut worker = builder.build().unwrap();
 
-        runtime.execute().unwrap();
+        worker.execute();
 
-        let collected: Vec<usize> = collector
-            .drain_vec(..)
-            .into_iter()
-            .map(|x| x.value)
-            .collect();
+        let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
         let expected: Vec<usize> = (0..42).collect();
         assert_eq!(expected, collected)
     }

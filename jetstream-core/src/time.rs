@@ -19,14 +19,14 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
 
 #[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialEq, Eq)]
 pub struct NoTime;
-impl Timestamp for NoTime {
-    const MAX: Self = NoTime;
-    const MIN: Self = NoTime;
+// impl Timestamp for NoTime {
+//     const MAX: Self = NoTime;
+//     const MIN: Self = NoTime;
     
-    fn merge(&self, other: &Self) -> Self {
-        NoTime
-    }
-}
+//     fn merge(&self, other: &Self) -> Self {
+//         NoTime
+//     }
+// }
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
@@ -38,20 +38,31 @@ impl PartialOrd for NoTime {
 //     }
 // }
 
-// /// Time where the timestamp may not yet have been set
-// pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
-//     /// Try to merge two times, returning Some if the
-//     /// specific type implementing this trait implements
-//     /// Timestamp and None if it does not
-//     fn try_merge(&self, other: &Self) -> Option<Self>;
-// }
-// impl<T: Timestamp + Clone + 'static> MaybeTime for T {
-//     fn try_merge(&self, other: &Self) -> Option<Self> {
-//         Some(self.merge(other))
-//     }
-// }
+/// Time where the timestamp may not yet have been set
+pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
+    /// Try to merge two times, returning Some if the
+    /// specific type implementing this trait implements
+    /// Timestamp and None if it does not
+    fn try_merge(&self, other: &Self) -> Option<Self>;
 
-// TODO: Maybe make it so we always give out two streams: OnTime/Late
+    /// Check if an optional timestamp is equal to the max timestamp
+    /// This absolutely cursed implementation of a static function allows
+    /// us to indicate that NoTime emitting operators are always done
+    const CHECK_FINISHED: fn(&Option<Self>) -> bool;
+}
+impl<T> MaybeTime for T where T: Timestamp + Clone + 'static {
+    fn try_merge(&self, other: &Self) -> Option<Self> {
+        Some(self.merge(other))
+    }
+    
+    const CHECK_FINISHED: fn(&Option<Self>) -> bool = |opt_t| opt_t.as_ref().map_or(false, |t| *t == T::MAX);
+}
+impl MaybeTime for NoTime {
+    fn try_merge(&self, other: &Self) -> Option<Self> {
+        Some(NoTime)
+    }
+    const CHECK_FINISHED: fn(&Option<Self>) -> bool = |_| true;
+}
 
 pub trait TimestampAssigner<K, V, T, TO> {
     fn assign_timestamp(
@@ -115,6 +126,7 @@ timestamp_impl!(i128);
 // }
 
 use serde::{Deserialize, Serialize};
+use tokio::time::Sleep;
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},

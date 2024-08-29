@@ -43,34 +43,28 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
+        operators::{sink::Sink, source::Source},
+        sources::SingleIteratorSource,
+        test::{get_test_stream, VecCollector},
     };
 
     use super::*;
     #[test]
     fn test_filter_map() {
-        let [config] = get_test_configs();
-        let (worker, stream) = get_test_stream();
-
+        let (builder, stream) = get_test_stream();
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(SingleIteratorSource::new(["foobar", "42", "baz", "1337"]))
-            .filter_map(|x: &str| x.parse::<i64>().ok())
+            .source(SingleIteratorSource::new(0..100))
+            .filter_map(|x| if x < 42 { Some(x * 2) } else { None })
             .sink(collector.clone());
-
         stream.finish();
-        let mut runtime = worker.build().unwrap();
+        let mut worker = builder.build().unwrap();
 
-        while collector.len() < 2 {
-            runtime.step()
-        }
-        let collected: Vec<i64> = collector
-            .drain_vec(..)
-            .into_iter()
-            .map(|x| x.value)
-            .collect();
-        let expected: Vec<i64> = vec![42, 1337];
+        worker.execute();
+
+        let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
+        let expected: Vec<usize> = (0..42).map(|x| x * 2).collect();
         assert_eq!(expected, collected)
     }
 }

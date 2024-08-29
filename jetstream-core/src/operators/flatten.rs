@@ -51,35 +51,34 @@ mod tests {
 
     use crate::{
         operators::{
-            source::Source,
-            timely::{GenerateEpochs, TimelyStream},
-            KeyLocal,
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{collect_stream_messages, collect_stream_values}, Message
+             source::Source, timely::{GenerateEpochs, TimelyStream}, KeyLocal, Sink
+        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}, DataMessage, Message
     };
 
     use super::Flatten;
     #[test]
     fn test_flatten() {
-        let stream = JetStreamBuilder::new_test()
+        let (builder, stream) = get_test_stream();
+
+        let collector = VecCollector::new();
+        stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value[0] == 5 {
-                    Some(i32::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
-            .flatten();
+            .flatten()
+            .sink(collector.clone())
+            .finish();
+        builder.build().unwrap().execute();
+        
+        let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![1, 2, 3, 4, 5];
-        assert_eq!(collect_stream_values(stream), expected);
+        assert_eq!(result, expected);
     }
 
     /// check we preserve the timestamp on every message
     #[test]
     fn test_preserves_time() {
-        let stream = JetStreamBuilder::new_test()
+        let (builder, stream) = get_test_stream();
+        let collector = VecCollector::new();
+        let stream = stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
@@ -90,26 +89,21 @@ mod tests {
                 }
             })
             .0
-            .flatten();
-        let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
+            .flatten()
+            .sink(collector.clone());
 
-        let out = collect_stream_messages(stream)
-            .into_iter()
-            .filter_map(|msg| {
-                if let Message::Data(d) = msg {
-                    Some((d.value, d.timestamp))
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-        assert_eq!(out, expected);
+        builder.build().unwrap().execute();
+        let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
+        let result = collector.into_iter().map(|x| (x.value, x.timestamp)).collect_vec();
+        assert_eq!(result, expected);
     }
 
     // check we preserve the key
     #[test]
     fn test_preserves_key() {
-        let stream = JetStreamBuilder::new_test()
+        let (builder, stream) = get_test_stream();
+        let collector = VecCollector::new();
+        let stream = stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4, 5], vec![6]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
@@ -121,18 +115,11 @@ mod tests {
             })
             .0
             .key_local(|x| x.value.len())
-            .flatten();
+            .flatten()
+            .sink(collector.clone())
+            ;
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
-        let out = collect_stream_messages(stream)
-            .into_iter()
-            .filter_map(|msg| {
-                if let Message::Data(d) = msg {
-                    Some((d.value, d.key))
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-        assert_eq!(out, expected);
+        let result = collector.into_iter().map(|d| (d.value, d.key)).collect_vec();
+        assert_eq!(result, expected);
     }
 }

@@ -9,6 +9,7 @@ use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
 use crate::runtime::{CommunicationBackend, CommunicationClient, RuntimeBuilder};
 use crate::runtime::threaded::SingleThreadRuntime;
+use crate::time::MaybeTime;
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
@@ -220,10 +221,10 @@ impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
-    TI: Timestamp,
+    TI: MaybeTime,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: Timestamp,
+    TO: MaybeTime,
     R: Distributable,
 {
     pub fn new_built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
@@ -279,10 +280,10 @@ impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
-    TI: Timestamp,
+    TI: MaybeTime,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: Timestamp,
+    TO: MaybeTime,
     R: Distributable,
 {
     /// Schedule the operator
@@ -337,10 +338,10 @@ where
 pub fn test_forward_system_messages<
     KI: Key + Default,
     VI: MaybeData,
-    TI: Timestamp,
+    TI: MaybeTime,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: Timestamp,
+    TO: MaybeTime,
     R: Distributable,
 >(
     tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
@@ -412,51 +413,6 @@ pub fn test_forward_system_messages<
         Message::ShutdownMarker(_)
     ));
 }
-
-/// Runs a stream until the MAX timestamp is reached and returns all emitted messages
-pub fn collect_stream_messages<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    stream: JetStreamBuilder<K, V, T>,
-) -> Vec<Message<K, V, T>> {
-    let worker = RuntimeBuilder::new(SingleThreadRuntime::default());
-
-    let collector = VecCollector::new();
-    let collector_cloned = collector.clone();
-    let (stream, frontier) = stream
-        .then(OperatorBuilder::direct(move |input, output, _| {
-            if let Some(msg) = input.recv() {
-                collector.give(msg.clone());
-                output.send(msg)
-            }
-        }))
-        .inspect_frontier();
-
-    stream.finish();
-
-    let [config] = get_test_configs();
-    let mut runtime = worker.build().unwrap();
-
-    while frontier.get_time().map_or(true, |x| x != T::MAX) {
-        runtime.step()
-    }
-    collector_cloned.into_iter().collect()
-}
-
-/// Runs a stream until the MAX timestamp is reached and returns all emitted values
-pub fn collect_stream_values<K: MaybeKey, V: Data, T: Timestamp>(
-    stream: JetStreamBuilder<K, V, T>,
-) -> Vec<V> {
-    collect_stream_messages(stream)
-        .into_iter()
-        .filter_map(|msg| {
-            if let Message::Data(d) = msg {
-                Some(d.value)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 
 /// A CommunicationBackend which will always return an error when trying to create a connection
 /// This is only really useful for unit tests where you know the operator will not attempt
@@ -583,54 +539,6 @@ mod tests {
                     })
                 ));
                 break;
-            }
-        }
-    }
-
-    #[test]
-    fn test_get_stream_values() {
-        let stream = JetStreamBuilder::new_test()
-            .source(SingleIteratorSource::new(vec![1, 2, 3]))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| if x.value == 3 { Some(i32::MAX) } else { None })
-            .0;
-        let expected = vec![1, 2, 3];
-        assert_eq!(collect_stream_values(stream), expected);
-    }
-
-    #[test]
-    fn test_collect_stream_messages() {
-        let stream = JetStreamBuilder::new_test()
-            .source(SingleIteratorSource::new(0..3))
-            .assign_timestamps(|x| x.value)
-            .generate_epochs(|x, _| {
-                if x.value == 2 {
-                    Some(usize::MAX)
-                } else {
-                    Some(x.timestamp)
-                }
-            })
-            .0;
-
-        let expected = (0..3)
-            .enumerate()
-            .flat_map(|(i, x)| {
-                [
-                    Message::Data(DataMessage::new(NoKey, x, i)),
-                    Message::Epoch(i),
-                ]
-            })
-            .chain(once(Message::Epoch(usize::MAX)));
-        for (s, e) in collect_stream_messages(stream).into_iter().zip_eq(expected) {
-            match (s, e) {
-                (Message::Data(a), Message::Data(b)) => {
-                    assert_eq!(a.value, b.value);
-                    assert_eq!(a.timestamp, b.timestamp);
-                }
-                (Message::Epoch(a), Message::Epoch(b)) => {
-                    assert_eq!(a, b)
-                }
-                x => panic!("{x:?}"),
             }
         }
     }

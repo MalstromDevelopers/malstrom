@@ -4,12 +4,10 @@ use super::operator::{
     pass_through_operator, AppendableOperator, BuildableOperator, OperatorBuilder,
 };
 use crate::{
-    channels::selective_broadcast::{self, Sender},
-    time::{NoTime, Timestamp},
-    runtime::{split_n, union, InnerRuntimeBuilder},
-    Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
+    channels::selective_broadcast::{self, Sender}, runtime::{split_n, union, InnerRuntimeBuilder}, time::{MaybeTime, NoTime, Timestamp}, Data, MaybeKey, NoData, NoKey, OperatorPartitioner
 };
 
+#[must_use]
 pub struct JetStreamBuilder<K, V: ?Sized, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
     tail: Box<dyn AppendableOperator<K, V, T>>,
@@ -17,25 +15,25 @@ pub struct JetStreamBuilder<K, V: ?Sized, T> {
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 
-impl JetStreamBuilder<NoKey, NoData, NoTime> {
-    /// Create a new JetStreamBuilder which does not produce any data, keys,
-    /// timestamps and does not have any persistence.
-    ///
-    /// This method is intented for construction streams in unit tests.
-    /// For actual deployments you should use [`jetstream::Worker::new_stream`]
-    pub fn new_test() -> Self {
-        let rt = Rc::new(Mutex::new(InnerRuntimeBuilder::default()));
-        JetStreamBuilder::from_operator(pass_through_operator(), rt)
-    }
-}
+// impl JetStreamBuilder<NoKey, NoData, NoTime> {
+//     /// Create a new JetStreamBuilder which does not produce any data, keys,
+//     /// timestamps and does not have any persistence.
+//     ///
+//     /// This method is intented for construction streams in unit tests.
+//     /// For actual deployments you should use [`jetstream::Worker::new_stream`]
+//     pub fn new_test() -> Self {
+//         let rt = Rc::new(Mutex::new(InnerRuntimeBuilder::default()));
+//         JetStreamBuilder::from_operator(pass_through_operator(), rt)
+//     }
+// }
 
 impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: Timestamp,
+    T: MaybeTime,
 {
-    pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: Timestamp>(
+    pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: MaybeTime>(
         operator: OperatorBuilder<KI, VI, TI, K, V, T>,
         runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     ) -> JetStreamBuilder<K, V, T> {
@@ -51,7 +49,7 @@ impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: Timestamp,
+    T: MaybeTime,
 {
     pub fn get_output_mut(&mut self) -> &mut Sender<K, V, T> {
         self.tail.get_output_mut()
@@ -59,7 +57,7 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<KO: MaybeKey, VO: Data, TO: Timestamp>(
+    pub fn then<KO: MaybeKey, VO: Data, TO: MaybeTime>(
         mut self,
         mut operator: OperatorBuilder<K, V, T, KO, VO, TO>,
     ) -> JetStreamBuilder<KO, VO, TO> {

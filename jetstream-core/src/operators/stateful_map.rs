@@ -12,7 +12,7 @@ use crate::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, OperatorBuilder, OperatorContext},
     },
-    time::Timestamp,
+    time::{MaybeTime, Timestamp},
     Data, DataMessage, Key, Message,
 };
 
@@ -60,7 +60,7 @@ pub trait StatefulMap<K, VI, T> {
 fn build_stateful_map<
     K: Key + Serialize + DeserializeOwned,
     VI,
-    T: Timestamp,
+    T: MaybeTime,
     VO: Clone,
     S: Default + Serialize + DeserializeOwned,
 >(
@@ -154,15 +154,14 @@ mod test {
 
     use crate::keyed::distributed::{decode, encode, Acquire, Collect, Interrogate};
     use crate::operators::timely::{GenerateEpochs, TimelyStream};
-    use crate::operators::KeyLocal;
+    use crate::operators::{KeyLocal, Sink};
     use crate::snapshot::{Barrier, PersistenceClient};
     use crate::sources::SingleIteratorSource;
-    use crate::test::{CapturingPersistenceBackend, OperatorTester};
+    use crate::test::{get_test_stream, CapturingPersistenceBackend, OperatorTester, VecCollector};
     use crate::time::NoTime;
     use crate::{
         operators::{source::Source},
         stream::jetstream::JetStreamBuilder,
-        test::collect_stream_values,
     };
     use crate::{DataMessage, Message};
 
@@ -171,16 +170,21 @@ mod test {
     /// Simple test to check we are keeping state
     #[test]
     fn keeps_state() {
-        let stream = JetStreamBuilder::new_test()
+        let (builder, stream) = get_test_stream();
+
+        let collector = VecCollector::new();
+
+        stream
             .source(SingleIteratorSource::new(0..100))
-            .assign_timestamps(|x| x.value)
-            .generate_epochs(|x, _| if x.value == 100 { Some(i32::MAX) } else { None })
-            .0
             // calculate a running total split by odd and even numbers
             .key_local(|x| (x.value & 1) == 1)
-            .stateful_map(|_, i, s: i32| (s + i, Some(s + i)));
+            .stateful_map(|_, i, s: i32| (s + i, Some(s + i)))
+            .sink(collector.clone())
+            .finish();
 
-        let result = collect_stream_values(stream);
+        builder.build().unwrap().execute();
+
+        let result = collector.into_iter().map(|x| x.value).collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
             *s += i;
             Some(s.clone())
@@ -189,7 +193,6 @@ mod test {
             *s += i;
             Some(s.clone())
         });
-
         let expected: Vec<i32> = even_sums.zip(odd_sums).flat_map(|x| [x.0, x.1]).collect();
         assert_eq!(result, expected)
     }
@@ -197,17 +200,12 @@ mod test {
     /// check we discard state when requested
     #[test]
     fn discards_state() {
-        let stream = JetStreamBuilder::new_test()
+        let (builder, stream) = get_test_stream();
+        let collector = VecCollector::new();
+        
+        stream
             .source(SingleIteratorSource::new(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string())))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value == "baz" {
-                    Some(usize::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
+
             // concat the words
             .key_local(|x| x.value.len())
             .stateful_map(|_, x, mut s: String| {
@@ -217,9 +215,13 @@ mod test {
                 } else {
                     (s.clone(), Some(s))
                 }
-            });
+            })
+            .sink(collector.clone())
+            .finish()
+            ;
+        builder.build().unwrap().execute();
 
-        let result = collect_stream_values(stream);
+        let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec!["foo", "foobar", "hello", "helloworld", "baz"];
         assert_eq!(result, expected)
     }

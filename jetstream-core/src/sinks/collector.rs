@@ -1,13 +1,12 @@
 use crate::{
-    operators::sink::IntoSink, stream::operator::OperatorBuilder, test::VecCollector,
-    time::Timestamp, Data, DataMessage, MaybeKey, Message, NoData,
+    operators::sink::{IntoSink, IntoSinkFull}, stream::operator::OperatorBuilder, test::VecCollector, time::{MaybeTime, NoTime, Timestamp}, Data, DataMessage, MaybeData, MaybeKey, Message, NoData, NoKey
 };
 
 impl<K, V, T> IntoSink<K, V, T> for VecCollector<DataMessage<K, V, T>>
 where
     K: MaybeKey,
     V: Data,
-    T: Timestamp,
+    T: MaybeTime,
 {
     fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T> {
         OperatorBuilder::direct(move |input, output, _ctx| {
@@ -24,6 +23,21 @@ where
                     Message::Acquire(x) => output.send(Message::Acquire(x)),
                     Message::DropKey(x) => output.send(Message::DropKey(x)),
                 }
+            }
+        })
+    }
+}
+
+impl<K, V, T> IntoSinkFull<K, V, T> for VecCollector<Message<K, V, T>>
+where
+    K: MaybeKey,
+    V: MaybeData,
+    T: MaybeTime,
+{
+    fn into_sink_full(self) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime> {
+        OperatorBuilder::direct(move |input, _, _ctx| {
+            if let Some(msg) = input.recv() {
+                self.give(msg)
             }
         })
     }

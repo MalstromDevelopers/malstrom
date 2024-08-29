@@ -4,7 +4,7 @@ use crate::{
         jetstream::JetStreamBuilder,
         operator::{AppendableOperator, OperatorBuilder, OperatorContext},
     },
-    time::{NoTime, Timestamp},
+    time::{MaybeTime, NoTime, Timestamp},
     MaybeData, MaybeKey, NoData, NoKey,
 };
 
@@ -20,17 +20,15 @@ impl<K, V, T> Void<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: MaybeData,
-    T: Timestamp,
+    T: MaybeTime,
 {
     fn void(self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
         let mut op = OperatorBuilder::direct(void);
-        // indicate we will never emit records
-        op.get_output_mut().send(crate::Message::Epoch(NoTime::MAX));
         self.then(op)
     }
 }
 
-fn void<K: MaybeKey, V: MaybeData, T: Timestamp>(
+fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     input: &mut Receiver<K, V, T>,
     _output: &mut Sender<NoKey, NoData, NoTime>,
     _out: &mut OperatorContext,
@@ -75,10 +73,4 @@ mod test {
         }
     }
 
-    /// check we indicate to the worker that this operator does not produce outputs
-    #[test]
-    fn indicate_no_output() {
-        let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> = OperatorTester::new_direct(void);
-        assert!(matches!(tester.receive_on_local().unwrap(), Message::Epoch(NoTime::MAX)));
-    }
 }
