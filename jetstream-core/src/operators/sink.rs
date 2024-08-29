@@ -1,6 +1,6 @@
 use crate::{
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::MaybeTime,
+    time::Timestamp,
     Data, MaybeKey, NoData,
 };
 
@@ -16,7 +16,7 @@ impl<K, V, T> Sink<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
         self.then(sink.into_sink())

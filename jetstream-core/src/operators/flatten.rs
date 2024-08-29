@@ -1,6 +1,6 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::MaybeTime;
+use crate::time::Timestamp;
 use crate::{Data, DataMessage, MaybeKey};
 
 pub trait Flatten<K, VI, T, VO, I> {
@@ -28,7 +28,7 @@ where
     I: Iterator<Item = VO>,
     VI: IntoIterator<Item = VO, IntoIter = I> + Data,
     VO: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn flatten(self) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(move |item, out| {

@@ -5,7 +5,7 @@ use super::operator::{
 };
 use crate::{
     channels::selective_broadcast::{self, Sender},
-    time::{MaybeTime, NoTime},
+    time::{NoTime, Timestamp},
     runtime::{split_n, union, InnerRuntimeBuilder},
     Data, MaybeKey, NoData, NoKey, OperatorPartitioner,
 };
@@ -33,9 +33,9 @@ impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
-    pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: MaybeTime>(
+    pub(crate) fn from_operator<KI: MaybeKey, VI: Data, TI: Timestamp>(
         operator: OperatorBuilder<KI, VI, TI, K, V, T>,
         runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     ) -> JetStreamBuilder<K, V, T> {
@@ -51,7 +51,7 @@ impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     pub fn get_output_mut(&mut self) -> &mut Sender<K, V, T> {
         self.tail.get_output_mut()
@@ -59,7 +59,7 @@ where
 
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    pub fn then<KO: MaybeKey, VO: Data, TO: MaybeTime>(
+    pub fn then<KO: MaybeKey, VO: Data, TO: Timestamp>(
         mut self,
         mut operator: OperatorBuilder<K, V, T, KO, VO, TO>,
     ) -> JetStreamBuilder<KO, VO, TO> {

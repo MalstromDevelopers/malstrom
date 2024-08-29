@@ -3,7 +3,13 @@ use std::{collections::VecDeque, rc::Rc};
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, keyed::WorkerPartitioner, runtime::{communication::broadcast, CommunicationClient}, snapshot::Barrier, stream::operator::OperatorContext, time::MaybeTime, DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId
+    channels::selective_broadcast::{Receiver, Sender},
+    keyed::WorkerPartitioner,
+    runtime::{communication::broadcast, CommunicationClient},
+    snapshot::Barrier,
+    stream::operator::OperatorContext,
+    time::Timestamp,
+    DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
 };
 
 use super::{
@@ -48,7 +54,7 @@ impl<K, V, T> CollectDistributor<K, V, T>
 where
     K: DistKey,
     V: MaybeData,
-    T: MaybeTime,
+    T: Timestamp,
 {
     pub(super) fn new(
         worker_id: WorkerId,
@@ -58,10 +64,11 @@ where
         version: Version,
         ctx: &mut OperatorContext,
     ) -> Self {
-        let workers: IndexMap<WorkerId, CommunicationClient<DirectlyExchangedMessage<K>>> = old_worker_set
-            .union(&new_worker_set)
-            .map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id)))
-            .collect();
+        let workers: IndexMap<WorkerId, CommunicationClient<DirectlyExchangedMessage<K>>> =
+            old_worker_set
+                .union(&new_worker_set)
+                .map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id)))
+                .collect();
 
         Self {
             worker_id,

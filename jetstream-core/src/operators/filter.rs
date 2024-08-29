@@ -1,6 +1,6 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::MaybeTime;
+use crate::time::Timestamp;
 use crate::{Data, MaybeKey};
 
 pub trait Filter<K, V, T> {
@@ -26,7 +26,7 @@ impl<K, V, T> Filter<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn filter(self, mut filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T> {
         self.stateless_op(move |item, out| {
@@ -40,28 +40,26 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
+        operators::{sink::Sink, source::Source}, runtime::ExecutionHandle, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
     };
 
     use super::*;
     #[test]
     fn test_filter() {
-        let [config] = get_test_configs();
+        println!("??!?!?!?");
         let (worker, stream) = get_test_stream();
 
         let collector = VecCollector::new();
 
         let stream = stream
-            .source(SingleIteratorSource::new(0..100))
-            .filter(|x| *x < 42)
-            .sink(collector.clone());
-
+            .source(SingleIteratorSource::new(0..100)).label("source")
+            .filter(|x| *x < 42).label("filter")
+            .sink(collector.clone()).label("sink");
         stream.finish();
-        let mut runtime = worker.build().unwrap();
+        let runtime = worker.build().unwrap();
 
-        while collector.len() < 42 {
-            runtime.step()
-        }
+        runtime.execute().unwrap();
+
         let collected: Vec<usize> = collector
             .drain_vec(..)
             .into_iter()

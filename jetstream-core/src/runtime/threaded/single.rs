@@ -1,19 +1,18 @@
-use crate::runtime::{execution_handle::ExecutionHandle, RuntimeFlavor};
+use crate::runtime::{execution_handle::ExecutionHandle, CommunicationBackend, RuntimeFlavor, Worker};
 
-use super::communication::InterThreadCommunication;
+use super::{communication::InterThreadCommunication, Shared};
 
 /// Runs all dataflows in a single thread on a
 /// single machine with no parrallelism.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SingleThreadRuntime;
-
 
 impl RuntimeFlavor for SingleThreadRuntime {
     type Communication = InterThreadCommunication;
-    type ExecutionHandle = SingleThreadExecution;
+    type ExecutionHandle = SingleThreadExecution<Self::Communication>;
     
     fn establish_communication(&mut self) -> Result<Self::Communication, crate::runtime::runtime_flavor::CommunicationError> {
-        todo!()
+        Ok(InterThreadCommunication::new(Shared::default(), 0))
     }
     
     fn runtime_size(&self) -> usize {
@@ -25,19 +24,22 @@ impl RuntimeFlavor for SingleThreadRuntime {
     }
     
     fn create_handle(self, worker: crate::runtime::Worker<Self::Communication>) -> Self::ExecutionHandle {
-        todo!()
+        SingleThreadExecution{worker}
     }
 }
 
 
-pub struct SingleThreadExecution;
-impl SingleThreadExecution {
+pub struct SingleThreadExecution<C>{
+    worker: Worker<C>
+}
+impl <C> SingleThreadExecution<C> {
     pub(crate) fn step(&self) {
         todo!()
     }
 }
-impl ExecutionHandle for SingleThreadExecution {
-    fn execute(self) -> Result<(), crate::runtime::execution_handle::ExecutionError> {
-        todo!()
+impl <C> ExecutionHandle for SingleThreadExecution<C> where C: CommunicationBackend{
+    fn execute(mut self) -> Result<(), crate::runtime::execution_handle::ExecutionError> {
+        self.worker.execute();
+        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::MaybeTime,
+    time::Timestamp,
     Data, DataMessage, MaybeKey, Message,
 };
 
@@ -21,7 +21,7 @@ impl<K, VI, T> StatelessOp<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     VI: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn stateless_op<VO: Data>(
         self,

@@ -1,13 +1,13 @@
 use crate::{
     operators::sink::IntoSink, stream::operator::OperatorBuilder, test::VecCollector,
-    time::MaybeTime, Data, DataMessage, MaybeKey, Message, NoData,
+    time::Timestamp, Data, DataMessage, MaybeKey, Message, NoData,
 };
 
 impl<K, V, T> IntoSink<K, V, T> for VecCollector<DataMessage<K, V, T>>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T> {
         OperatorBuilder::direct(move |input, output, _ctx| {

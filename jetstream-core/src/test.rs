@@ -2,12 +2,13 @@ use std::net::{SocketAddr, SocketAddrV4, TcpListener};
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
 
-use crate::keyed::distributed::{Acquire, Collect, Interrogate};
+use crate::keyed::distributed::{Acquire, Collect, Distributable, Interrogate};
 use crate::operators::{timely::InspectFrontier};
+use crate::runtime::threaded::{InterThreadCommunication, Shared};
 use crate::snapshot::Barrier;
 use crate::stream::operator::BuildableOperator;
-use crate::time::Timestamp;
-use crate::runtime::{RuntimeBuilder, SingleThreadRuntime};
+use crate::runtime::{CommunicationBackend, CommunicationClient, RuntimeBuilder};
+use crate::runtime::threaded::SingleThreadRuntime;
 use crate::{
     channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     config::Config,
@@ -16,7 +17,7 @@ use crate::{
         jetstream::JetStreamBuilder,
         operator::{AppendableOperator, BuildContext, Logic, OperatorBuilder, RunnableOperator},
     },
-    time::{MaybeTime, NoTime},
+    time::{NoTime, Timestamp},
     Data, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, WorkerId,
 };
 use crate::{Key, RescaleMessage, ShutdownMarker};
@@ -25,6 +26,7 @@ use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use postbox::{Client, Postbox, PostboxBuilder};
 
+use thiserror::Error;
 use tonic::transport::Uri;
 
 /// A Helper to write values into a shared vector and take them out
@@ -207,10 +209,10 @@ pub struct OperatorTester<KI, VI, TI, KO, VO, TO, R> {
     /// Use this to get local messages out of the distributor
     local_out: Receiver<KO, VO, TO>,
 
-    local_postbox: Postbox<(WorkerId, OperatorId)>,
+    local_comm: InterThreadCommunication,
     // used to emulate another worker sending messages
-    remote_postbox: Postbox<(WorkerId, OperatorId)>,
-    remote_pb_client: Client<R>,
+    remote_comm: InterThreadCommunication,
+    remote_comm_client: CommunicationClient<R>,
     persistence_backend: Box<dyn PersistenceClient>,
 }
 
@@ -218,18 +220,21 @@ impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
-    TI: MaybeTime,
+    TI: Timestamp,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: MaybeTime,
-    R: postbox::Data,
+    TO: Timestamp,
+    R: Distributable,
 {
     pub fn new_built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
         let op_id: usize = 42;
 
-        let (mut pb_local, mut pb_remote) = pair_postbox();
+        
+        let shared = Shared::default();
+        let mut comm_0 = InterThreadCommunication::new(shared.clone(), 0);
+        let mut comm_1 = InterThreadCommunication::new(shared, 1);
 
         let persistence = CapturingPersistenceBackend::default();
         let mut buildcontext = BuildContext::new(
@@ -237,7 +242,7 @@ where
             op_id,
             "NO_LABEL".to_owned(),
             persistence.latest(0),
-            &mut pb_local,
+            &mut comm_0,
             0..2,
         );
         let mut op = OperatorBuilder::built_by(logic_builder);
@@ -247,15 +252,15 @@ where
         link(op.get_output_mut(), &mut local_out);
         let op = Box::new(op).into_runnable(&mut buildcontext);
 
-        let remote_recv = pb_remote.new_client((0, op_id), (1, op_id)).unwrap();
+        let remote_recv = CommunicationClient::new(0, op_id, op_id, &mut comm_1).unwrap();
         Self {
             op_id,
             op,
             local_in,
             local_out,
-            local_postbox: pb_local,
-            remote_postbox: pb_remote,
-            remote_pb_client: remote_recv,
+            local_comm: comm_0,
+            remote_comm: comm_1,
+            remote_comm_client: remote_recv,
             persistence_backend: persistence.latest(0),
         }
     }
@@ -274,15 +279,15 @@ impl<KI, VI, TI, KO, VO, TO, R> OperatorTester<KI, VI, TI, KO, VO, TO, R>
 where
     KI: MaybeKey,
     VI: MaybeData,
-    TI: MaybeTime,
+    TI: Timestamp,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: MaybeTime,
-    R: postbox::Data,
+    TO: Timestamp,
+    R: Distributable,
 {
     /// Schedule the operator
     pub fn step(&mut self) {
-        self.op.step(&mut self.local_postbox)
+        self.op.step(&mut self.local_comm)
     }
 
     /// Give a message to the distributor as if it where coming from a local upstream
@@ -299,7 +304,7 @@ where
         let timeout = timeout.unwrap_or(Duration::from_secs(3));
         let start = Instant::now();
         loop {
-            if let Some(msg) = self.remote_pb_client.recv().map(|x| x.unwrap()) {
+            if let Some(msg) = self.remote_comm_client.recv() {
                 return msg;
             }
             if Instant::now().duration_since(start) > timeout {
@@ -310,7 +315,7 @@ where
 
     /// places a message into the operatorcontext postbox, as if it was sent by a remote
     pub fn send_from_remote(&mut self, message: R) {
-        self.remote_pb_client.send(message).unwrap();
+        self.remote_comm_client.send(message);
     }
 
     /// receive all the messages for the remote worker
@@ -318,7 +323,7 @@ where
         let timeout = timeout.unwrap_or(Duration::from_secs(3));
         let start = Instant::now();
         loop {
-            if let Some(msg) = self.remote_pb_client.recv().map(|x| x.unwrap()) {
+            if let Some(msg) = self.remote_comm_client.recv() {
                 return msg;
             }
             if Instant::now().duration_since(start) > timeout {
@@ -332,11 +337,11 @@ where
 pub fn test_forward_system_messages<
     KI: Key + Default,
     VI: MaybeData,
-    TI: MaybeTime,
+    TI: Timestamp,
     KO: MaybeKey,
     VO: MaybeData,
-    TO: MaybeTime,
-    R: postbox::Data,
+    TO: Timestamp,
+    R: Distributable,
 >(
     tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
 ) -> () {
@@ -452,6 +457,28 @@ pub fn collect_stream_values<K: MaybeKey, V: Data, T: Timestamp>(
         .collect()
 }
 
+
+/// A CommunicationBackend which will always return an error when trying to create a connection
+/// This is only really useful for unit tests where you know the operator will not attempt
+/// to make a connection or want to assert it does not
+#[derive(Debug, Default)]
+pub struct NoCommunication;
+impl CommunicationBackend for NoCommunication {
+    fn new_connection(
+        &mut self,
+        to_worker: WorkerId,
+        to_operator: OperatorId,
+        from_operator: OperatorId,
+    ) -> Result<Box<dyn crate::runtime::communication::Transport>, crate::runtime::communication::CommunicationBackendError> {
+        Err(crate::runtime::communication::CommunicationBackendError::ClientBuildError(Box::new(NoCommunicationError::CannotCreateClientError)))
+    }
+}
+#[derive(Error, Debug)]
+pub enum NoCommunicationError {
+    #[error("NoCommunication backend cannot create clients")]
+    CannotCreateClientError,
+}
+
 #[cfg(test)]
 mod tests {
     use std::iter::once;
@@ -515,6 +542,7 @@ mod tests {
 
     #[test]
     fn test_operator_tester() {
+        panic!("TODO: This test hangs forever");
         let mut tester = OperatorTester::new_built_by(|build_ctx| {
             let client = build_ctx.create_communication_client::<i32>(1, 0);
             move |input: &mut Receiver<NoKey, i32, NoTime>,

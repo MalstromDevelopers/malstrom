@@ -1,6 +1,6 @@
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::{MaybeTime, NoTime};
+use crate::time::{NoTime, Timestamp};
 use crate::{Data, DataMessage, MaybeKey, Message};
 
 mod from_data;
@@ -24,12 +24,12 @@ enum OnTimeLate<V> {
 pub trait TimelyStream<K, V, T> {
     /// Assigns a new timestamp to every message.
     /// NOTE: Any Epochs arriving at this operator are dropped
-    fn assign_timestamps<TO: MaybeTime>(
+    fn assign_timestamps<TO: Timestamp>(
         self,
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
     ) -> NeedsEpochs<K, V, TO>;
 
-    fn assign_timestamps_and_convert_epochs<TO: MaybeTime>(
+    fn assign_timestamps_and_convert_epochs<TO: Timestamp>(
         self,
         assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
         converter: impl FnMut(T) -> Option<TO> + 'static,
@@ -44,9 +44,9 @@ impl<K, V, T> TimelyStream<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
-    fn assign_timestamps<TO: MaybeTime>(
+    fn assign_timestamps<TO: Timestamp>(
         self,
         mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
     ) -> NeedsEpochs<K, V, TO> {
@@ -97,7 +97,7 @@ where
         self.then(operator)
     }
 
-    fn assign_timestamps_and_convert_epochs<TO: MaybeTime>(
+    fn assign_timestamps_and_convert_epochs<TO: Timestamp>(
         self,
         mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
         mut converter: impl FnMut(T) -> Option<TO> + 'static,

@@ -10,7 +10,7 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     BuildContext, Logic, OperatorBuilder, OperatorContext, StandardOperator,
 };
-use crate::time::{MaybeTime, NoTime, Timestamp};
+use crate::time::{NoTime, Timestamp};
 use crate::{Data, DataMessage, MaybeData, MaybeKey, Message, WorkerId};
 
 pub trait AlignFrontiers<K, V, T> {

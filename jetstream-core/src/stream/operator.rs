@@ -14,7 +14,7 @@ use crate::runtime::{CommunicationBackend, CommunicationClient};
 /// transforms it into the immutable FrontieredOperator
 /// which can be used at runtime
 use crate::snapshot::{deserialize_state, PersistenceClient};
-use crate::time::MaybeTime;
+use crate::time::{NoTime, Timestamp};
 use crate::{MaybeKey, OperatorId, OperatorPartitioner, WorkerId};
 
 use crate::Data;
@@ -49,7 +49,7 @@ pub struct BuildContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub label: String,
-    persistence_backend: Box<dyn PersistenceClient>,
+    persistence_backend: Box<dyn PersistenceClient>, // TODO: use a mutable ref here
     communication: &'a mut dyn CommunicationBackend,
     worker_ids: Range<usize>,
 }
@@ -134,21 +134,21 @@ pub trait Operator {
     /// still not happy with this function name
     fn has_queued_work(&self) -> bool;
 
-    // /// create a new instance of this operator
-    // /// NOTE: The return type is only constrained to be
-    // /// of trait "Operator", but it is expected, that this
-    // /// method returns the exact same type as self
-    // fn duplicate(&self) -> Box<dyn Fn(&BuildContext) -> dyn Operator>;
+    /// Indicate to the worker this operator need not run again
+    /// The worker will stop execution once all operators are finished
+    fn is_finished(&self) -> bool;
 }
 
 /// An Operator which does nothing except passing data along
-pub fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
+pub fn pass_through_operator<K: MaybeKey, V: Data, T: Timestamp>(
 ) -> OperatorBuilder<K, V, T, K, V, T> {
-    OperatorBuilder::direct(|input, output, _ctx| {
+   let mut op = OperatorBuilder::direct(|input, output, _ctx| {
         if let Some(x) = input.recv() {
             output.send(x)
         }
-    })
+    });
+    op.label("pass_through".into());
+    op
 }
 
 /// A builder type to build generic operators
@@ -182,8 +182,8 @@ where
     VI: Data,
     KO: MaybeKey,
     VO: Data,
-    TI: MaybeTime,
-    TO: MaybeTime,
+    TI: Timestamp,
+    TO: Timestamp,
     // P: PersistenceBackend,
 {
     pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO>>(logic: M) -> Self {
@@ -227,10 +227,10 @@ impl<KI, VI, TI, KO, VO, TO> AppendableOperator<KO, VO, TO>
 where
     KI: MaybeKey,
     VI: Data,
-    TI: MaybeTime,
+    // TI: Timestamp,
     KO: MaybeKey,
     VO: Data,
-    TO: MaybeTime,
+    // TO: Timestamp,
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO> {
         &mut self.output
@@ -249,10 +249,10 @@ impl<KI, VI, TI, KO, VO, TO> BuildableOperator for OperatorBuilder<KI, VI, TI, K
 where
     KI: MaybeKey,
     VI: Data,
-    TI: MaybeTime,
+    // TI: Timestamp,
     KO: MaybeKey,
     VO: Data,
-    TO: MaybeTime,
+    // TO: Timestamp,
 {
     fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator {
         let operator = StandardOperator {
@@ -274,8 +274,7 @@ pub struct StandardOperator<KI, VI, TI, KO, VO, TO> {
     logic: Box<dyn Logic<KI, VI, TI, KO, VO, TO>>,
     output: Sender<KO, VO, TO>,
 }
-
-impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> {
+impl<KI, VI, TI, KO, VO, TO> StandardOperator<KI, VI, TI, KO, VO, TO> {
     fn step(&mut self, context: &mut OperatorContext) {
         (self.logic)(&mut self.input, &mut self.output, context);
     }
@@ -285,14 +284,48 @@ impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, T
     }
 }
 
+impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> where TO: Timestamp {
+
+    
+    fn is_finished(&self) -> bool {
+        println!("Frontier {:?}", self.output.get_frontier().as_ref());
+        let what = self.output.get_frontier().as_ref().map_or(false, |x| *x == TO::MAX);
+        println!("Is MAX {:?}",what);
+        what 
+    }
+    
+    fn step(&mut self, context: &mut OperatorContext) {
+        self.step(context)
+    }
+    
+    fn has_queued_work(&self) -> bool {
+        self.has_queued_work()
+    }
+}
+
+impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> {
+    fn is_finished(&self) -> bool {
+        true
+    }
+    
+    fn step(&mut self, context: &mut OperatorContext) {
+        self.step(context)
+    }
+    
+    fn has_queued_work(&self) -> bool {
+        self.has_queued_work()
+    }
+}
+
+
 impl<KI, VI, TI, KO, VO, TO> StandardOperator<KI, VI, TI, KO, VO, TO>
 where
     KI: MaybeKey,
     VI: Data,
-    TI: MaybeTime,
+    TI: Timestamp,
     KO: MaybeKey,
     VO: Data,
-    TO: MaybeTime,
+    TO: Timestamp,
 {
     fn add_input(&mut self, maybe_sender: &mut dyn Any) {
         let sender = maybe_sender.downcast_mut().unwrap();
@@ -368,5 +401,49 @@ impl RunnableOperator {
     }
     pub fn has_queued_work(&self) -> bool {
         self.operator.has_queued_work()
+    }
+
+    /// check if this operator will ever emit a message again
+    pub fn is_finished(&self) -> bool {
+        self.operator.is_finished()
+    }
+
+    pub(crate) fn get_label(&self) -> &str {
+        &self.label
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::i32;
+
+    use super::{pass_through_operator, AppendableOperator, OperatorBuilder, Operator, BuildableOperator, RunnableOperator};
+    use crate::{channels::selective_broadcast::{full_broadcast, link, Receiver, Sender}, snapshot::NoPersistence, stream::operator::BuildContext, test::NoCommunication, NoData, NoKey};
+
+    /// The operator should report as finished once the MAX time has passed it
+    #[test]
+    fn becomes_finished() {
+        let mut builder: OperatorBuilder<NoKey, NoData, i32, NoKey, NoData, i32> = pass_through_operator();
+        let mut sender = Sender::new_unlinked(full_broadcast);
+        link(&mut sender, builder.get_input_mut());
+
+        let buildable = Box::new(builder).into_buildable();
+        let mut comm = NoCommunication::default();
+        let mut ctx = BuildContext::new(0, 0, "".to_owned(), Box::new(NoPersistence::default()), &mut comm, 0..0);
+        let mut op = Box::new(buildable).into_runnable(&mut ctx);
+
+        assert!(!op.is_finished());
+        op.step(&mut comm);
+        assert!(!op.is_finished());
+
+        sender.send(crate::Message::Epoch(42));
+        op.step(&mut comm);
+        assert!(!op.is_finished());
+
+        sender.send(crate::Message::Epoch(i32::MAX));
+        assert!(!op.is_finished());
+        op.step(&mut comm);
+        // now finally finished
+        assert!(op.is_finished());
     }
 }

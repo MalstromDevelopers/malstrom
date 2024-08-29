@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 use itertools::{self};
 
 use crate::{
-    snapshot::Barrier, time::MaybeTime, Message, OperatorId, OperatorPartitioner, Scale,
+    snapshot::Barrier, time::{NoTime, Timestamp}, Message, OperatorId, OperatorPartitioner, Scale,
     ShutdownMarker,
 };
 
@@ -58,19 +58,21 @@ pub struct Sender<K, V, T> {
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     /// uniqe id of this sender
     id: usize,
+    frontier: Option<T>
 }
 
 impl<K, V, T> Sender<K, V, T>
 where
     K: Clone,
     V: Clone,
-    T: Clone,
+    T: Clone + Timestamp,
 {
     pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
             id: get_id(),
+            frontier: None
         }
     }
 
@@ -78,6 +80,12 @@ where
     /// Data messages are distributed as per the partioning function
     /// System messages are always broadcasted
     pub fn send(&mut self, msg: Message<K, V, T>) {
+        if let Message::Epoch(e) = &msg {
+            if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
+                let _ = self.frontier.replace(e.clone());
+            }
+        }
+
         if self.senders.is_empty() {
             return;
         }
@@ -93,14 +101,6 @@ where
                     let s = self.senders.get(i).expect("Partitioner index out of range");
                     let _ = s.send(MessageWrapper::Message(self.id, msg));
                 }
-
-                // for (sender, elem) in self
-                //     .senders
-                //     .iter_mut()
-                //     .zip(itertools::repeat_n(Message::Data(x), indices.len()))
-                // {
-                //     let _ = sender.send(elem);
-                // }
             }
             _ => {
                 // repeat_n will clone for every iteration except the last
@@ -115,9 +115,15 @@ where
             }
         };
     }
+    /// Get the frontier on this Sender, i.e the timestamp of the largest
+    /// Epoch sent with this sender or `None` if no Epoch has been sent with
+    /// this sender yet
+    pub fn get_frontier(&self) -> &Option<T> {
+        &self.frontier
+    }
 }
 
-impl<K, V, T> Clone for Sender<K, V, T> {
+impl<K, V, T> Clone for Sender<K, V, T>  where T: Clone{
     fn clone(&self) -> Self {
         let id = get_id();
         for s in &self.senders {
@@ -127,6 +133,7 @@ impl<K, V, T> Clone for Sender<K, V, T> {
             senders: self.senders.clone(),
             partitioner: self.partitioner.clone(),
             id,
+            frontier: self.frontier.clone()
         }
     }
 
@@ -175,7 +182,7 @@ pub struct Receiver<K, V, T> {
     // from upstream to issue them
     buffered: VecDeque<Message<K, V, T>>,
 }
-// impl<K, V, T> Receiver<K, V, T> where T: MaybeTime  {
+// impl<K, V, T> Receiver<K, V, T> where T: NoTime  {
 //     /// update the internally stored epoch and emit a copy
 //     /// if it increased or None if it did not increase
 //     fn has(&self) -> Option<T> {
@@ -219,13 +226,13 @@ impl<K, V, T> Receiver<K, V, T> {
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: MaybeTime>(
+fn merge_timestamps<'a, T: Timestamp>(
     mut timestamps: impl Iterator<Item = &'a Option<T>>,
 ) -> Option<T> {
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.and_then(|a| a.try_merge(y));
+            merged = merged.and_then(|a| Some(a.merge(y)));
         } else {
             return None;
         }
@@ -233,7 +240,7 @@ fn merge_timestamps<'a, T: MaybeTime>(
     merged
 }
 
-fn handle_received<K, V, T: MaybeTime>(
+fn handle_received<K, V, T: Timestamp>(
     states: &mut IndexMap<usize, UpstreamState<T>>,
     buffer: &mut VecDeque<Message<K, V, T>>,
     sender: usize,
@@ -283,7 +290,7 @@ fn handle_received<K, V, T: MaybeTime>(
 
 impl<K, V, T> Receiver<K, V, T>
 where
-    T: MaybeTime,
+    T: Timestamp,
 {
     /// Receive a value. None if no value to receive or all Senders dropped.
     ///
@@ -321,6 +328,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::i32;
+
     use crate::{snapshot::NoPersistence, time::NoTime, DataMessage, NoData, NoKey};
 
     use super::*;
@@ -479,5 +488,26 @@ mod test {
         ));
         receiver.recv();
         assert!(matches!(receiver.states.len(), 0));
+    }
+
+    /// Check the accessor for the largest sent epoch (frontier)
+    #[test]
+    fn observe_frontier() {
+        let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut receiver = Receiver::new_unlinked();
+        link(&mut sender, &mut receiver);
+
+        assert_eq!(*sender.get_frontier(), None);
+        // non-epoch messages should not influence this
+        sender.send(Message::Data(DataMessage::new(NoKey, NoData, 1337)));
+        assert_eq!(*sender.get_frontier(), None);
+
+        sender.send(Message::Epoch(42));
+        assert_eq!(*sender.get_frontier(), Some(42));
+        sender.send(Message::Epoch(15));
+        assert_eq!(*sender.get_frontier(), Some(42));
+        sender.send(Message::Epoch(i32::MAX));
+        assert_eq!(*sender.get_frontier(), Some(i32::MAX));
+
     }
 }

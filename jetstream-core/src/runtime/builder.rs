@@ -11,7 +11,7 @@ use crate::stream::operator::{
     pass_through_operator, AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder,
     RunnableOperator,
 };
-use crate::time::{MaybeTime, NoTime};
+use crate::time::{NoTime, Timestamp};
 use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 use thiserror::Error;
 
@@ -112,7 +112,7 @@ where
         let cluster_size = self.flavor.runtime_size();
         let this_worker = self.flavor.this_worker_id();
         let mut communication_backend = self.flavor.establish_communication()?;
-        let operators: Vec<RunnableOperator> = operators
+        let operators: Vec<(RunnableOperator, bool)> = operators
             .into_iter()
             .enumerate()
             .map(|(i, x)| {
@@ -127,6 +127,7 @@ where
                 );
                 x.into_runnable(&mut ctx)
             })
+            .map(|x| (x, false))
             .collect();
         let worker = Worker {
             worker_id: this_worker,
@@ -161,7 +162,7 @@ impl InnerRuntimeBuilder {
     //     JetStreamBuilder::from_operator(new_op).label("jetstream::pass_through")
     // }
 
-    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
         &mut self,
         stream: JetStreamBuilder<K, V, T>,
     ) {
@@ -180,7 +181,7 @@ impl InnerRuntimeBuilder {
 }
 
 /// Unions N streams with identical output types into a single stream
-pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+pub(crate) fn union<K: MaybeKey, V: MaybeData, T: Timestamp>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     streams: impl Iterator<Item = JetStreamBuilder<K, V, T>>,
 ) -> JetStreamBuilder<K, V, T> {
@@ -196,7 +197,7 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     JetStreamBuilder::from_operator(unioned, runtime)
 }
 
-pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
+pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: Timestamp>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     input: JetStreamBuilder<K, V, T>,
     partitioner: impl OperatorPartitioner<K, V, T>,
@@ -232,22 +233,34 @@ pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
 
 pub struct Worker<C> {
     worker_id: WorkerId,
-    operators: Vec<RunnableOperator>,
+    operators: Vec<(RunnableOperator, bool)>,
     communication: C,
 }
 impl<C> Worker<C>
 where
     C: CommunicationBackend,
 {
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> bool {
         let span = tracing::debug_span!("scheduling::run_graph", worker_id = self.worker_id);
         let _span_guard = span.enter();
-        for op in self.operators.iter_mut().rev() {
+        let mut all_done = true;
+        for (op, done) in self.operators.iter_mut().rev() {
+            println!("=====================");
+            println!("OP {} is finished: {}", op.get_label(), op.is_finished());
             op.step(&mut self.communication);
             while op.has_queued_work() {
                 op.step(&mut self.communication);
             }
+            all_done &= op.is_finished();
         }
+        all_done
+    }
+
+    /// Repeatedly schedule all operators until all have reached a finished state
+    /// Note that depending on the specific operator implementations this may never
+    /// be the case
+    pub fn execute(&mut self) {
+        while !self.step() {}
     }
 }
 
@@ -255,7 +268,7 @@ where
 mod tests {
     use crate::snapshot::NoPersistence;
 
-    use super::super::SingleThreadRuntime;
+    use crate::runtime::threaded::SingleThreadRuntime;
     use super::RuntimeBuilder;
 
     /// check we can build the most basic runtime
@@ -276,4 +289,8 @@ mod tests {
 
         todo!()
     }
+
+    /// Execute should run the worker until all operators are done
+    #[test]
+    fn execute_runs_until_done() {}
 }

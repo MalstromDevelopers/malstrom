@@ -8,7 +8,7 @@ use crate::{
     keyed::WorkerPartitioner,
     snapshot::{Barrier, PersistenceClient},
     stream::operator::OperatorContext,
-    time::MaybeTime,
+    time::{NoTime, Timestamp},
     DataMessage, MaybeData, Message, WorkerId,
 };
 
@@ -30,7 +30,7 @@ impl<K, V, T> NormalDistributor<K, V, T>
 where
     K: DistKey,
     V: MaybeData,
-    T: MaybeTime,
+    T: Timestamp,
 {
     pub(super) fn new(worker_id: WorkerId, worker_set: IndexSet<WorkerId>) -> Self {
         Self {

@@ -1,6 +1,6 @@
 use super::stateless_op::StatelessOp;
 use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::MaybeTime;
+use crate::time::Timestamp;
 use crate::{Data, DataMessage, MaybeKey, Message};
 
 pub trait FilterMap<K, VI, T> {
@@ -26,7 +26,7 @@ impl<K, VI, T> FilterMap<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     VI: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn filter_map<VO: Data>(
         self,

@@ -4,7 +4,7 @@ use derive_new::new;
 use indexmap::{IndexMap, IndexSet};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{time::MaybeTime, Key, MaybeData, OperatorId, WorkerId};
+use crate::{time::{NoTime, Timestamp}, Key, MaybeData, OperatorId, WorkerId};
 
 mod collect_dist;
 mod data_exchange;
@@ -30,8 +30,8 @@ impl<T: Key + Distributable> DistKey for T {}
 pub trait DistData: MaybeData + Distributable {}
 impl<T: MaybeData + Distributable> DistData for T {}
 
-pub trait DistTimestamp: MaybeTime + Distributable {}
-impl<T: MaybeTime + Distributable> DistTimestamp for T {}
+pub trait DistTimestamp: Timestamp + Distributable {}
+impl<T: Timestamp + Distributable> DistTimestamp for T {}
 
 type Version = u64;
 

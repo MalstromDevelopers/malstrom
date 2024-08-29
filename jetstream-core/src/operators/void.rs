@@ -2,9 +2,9 @@ use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     stream::{
         jetstream::JetStreamBuilder,
-        operator::{OperatorBuilder, OperatorContext},
+        operator::{AppendableOperator, OperatorBuilder, OperatorContext},
     },
-    time::{MaybeTime, NoTime},
+    time::{NoTime, Timestamp},
     MaybeData, MaybeKey, NoData, NoKey,
 };
 
@@ -20,14 +20,17 @@ impl<K, V, T> Void<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: MaybeData,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn void(self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        self.then(OperatorBuilder::direct(void))
+        let mut op = OperatorBuilder::direct(void);
+        // indicate we will never emit records
+        op.get_output_mut().send(crate::Message::Epoch(NoTime::MAX));
+        self.then(op)
     }
 }
 
-fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+fn void<K: MaybeKey, V: MaybeData, T: Timestamp>(
     input: &mut Receiver<K, V, T>,
     _output: &mut Sender<NoKey, NoData, NoTime>,
     _out: &mut OperatorContext,
@@ -70,5 +73,12 @@ mod test {
             tester.step();
             assert!(tester.receive_on_local().is_none())
         }
+    }
+
+    /// check we indicate to the worker that this operator does not produce outputs
+    #[test]
+    fn indicate_no_output() {
+        let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> = OperatorTester::new_direct(void);
+        assert!(matches!(tester.receive_on_local().unwrap(), Message::Epoch(NoTime::MAX)));
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     keyed::WorkerPartitioner,
     snapshot::Barrier,
     stream::operator::OperatorContext,
-    time::MaybeTime,
+    time::Timestamp,
     DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
 };
 
@@ -39,7 +39,7 @@ impl<K, V, T> InterrogateDistributor<K, V, T>
 where
     K: DistKey,
     V: MaybeData,
-    T: MaybeTime,
+    T: Timestamp,
 {
     pub(super) fn new(
         worker_id: WorkerId,

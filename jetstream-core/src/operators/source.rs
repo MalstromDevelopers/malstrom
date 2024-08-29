@@ -1,6 +1,6 @@
 use crate::{
     stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::{MaybeTime, NoTime},
+    time::{NoTime, Timestamp},
     Data, MaybeKey, NoData, NoKey,
 };
 
@@ -16,7 +16,7 @@ impl<K, V, T> Source<K, V, T> for JetStreamBuilder<NoKey, NoData, NoTime>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn source(self, source: impl IntoSource<K, V, T>) -> JetStreamBuilder<K, V, T> {
         self.then(source.into_source())

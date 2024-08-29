@@ -197,7 +197,7 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 //         keyed::distributed::{Acquire, Collect, Interrogate},
 //         snapshot::{Barrier, NoPersistence},
 //         test::OperatorTester,
-//         time::MaybeTime,
+//         time::NoTime,
 //         DataMessage, MaybeData, MaybeKey, Message, OperatorId, RescaleMessage, ShutdownMarker,
 //         WorkerId,
 //     };
@@ -210,10 +210,10 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 //     where
 //         KI: MaybeKey,
 //         VI: MaybeData,
-//         TI: MaybeTime,
+//         TI: NoTime,
 //         KO: MaybeKey,
 //         VO: MaybeData,
-//         TO: MaybeTime,
+//         TO: NoTime,
 //         R: postbox::Data,
 //     {
 //         loop {
@@ -229,10 +229,10 @@ pub(crate) fn downstream_exchanger<K: DistKey, V: DistData, T: DistTimestamp>(
 //     where
 //         KI: MaybeKey,
 //         VI: MaybeData,
-//         TI: MaybeTime,
+//         TI: NoTime,
 //         KO: MaybeKey,
 //         VO: MaybeData,
-//         TO: MaybeTime,
+//         TO: NoTime,
 //         R: postbox::Data,
 //     {
 //         loop {

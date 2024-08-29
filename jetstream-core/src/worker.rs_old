@@ -10,7 +10,7 @@ use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::{
     pass_through_operator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
-use crate::time::{MaybeTime, NoTime};
+use crate::time::{NoTime, NoTime};
 use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
 use thiserror::Error;
 
@@ -122,7 +122,7 @@ impl InnerRuntimeBuilder {
     //     JetStreamBuilder::from_operator(new_op).label("jetstream::pass_through")
     // }
 
-    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+    pub(crate) fn add_stream<K: MaybeKey, V: MaybeData, T: NoTime>(
         &mut self,
         stream: JetStreamBuilder<K, V, T>,
     ) {
@@ -141,7 +141,7 @@ impl InnerRuntimeBuilder {
 }
 
 /// Unions N streams with identical output types into a single stream
-pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+pub(crate) fn union<K: MaybeKey, V: MaybeData, T: NoTime>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     streams: impl Iterator<Item = JetStreamBuilder<K, V, T>>,
 ) -> JetStreamBuilder<K, V, T> {
@@ -157,7 +157,7 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     JetStreamBuilder::from_operator(unioned, runtime)
 }
 
-pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
+pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: NoTime>(
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     input: JetStreamBuilder<K, V, T>,
     partitioner: impl OperatorPartitioner<K, V, T>,

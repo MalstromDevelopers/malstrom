@@ -13,7 +13,7 @@ use crate::{
         jetstream::JetStreamBuilder,
         operator::{BuildContext, OperatorBuilder, OperatorContext},
     },
-    time::MaybeTime,
+    time::Timestamp,
     Data, DataMessage, Key, Message,
 };
 
@@ -56,7 +56,7 @@ pub trait StatefulTransform<K, VI, T> {
 fn build_stateful_transform<
     K: Key + Serialize + DeserializeOwned,
     VI,
-    T: MaybeTime,
+    T: Timestamp,
     VO: Clone,
     M: SubscribedMessage<K, VI, T>,
     S: Default + Serialize + DeserializeOwned,
@@ -141,7 +141,7 @@ where
     K: Key + Serialize + DeserializeOwned,
     VI: DistData,
 
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn stateful_transform<
         VO: Data,

@@ -9,7 +9,7 @@ use crate::runtime::CommunicationClient;
 use crate::stream::operator::Logic;
 use crate::ShutdownMarker;
 use crate::{
-    stream::operator::BuildContext, time::MaybeTime, MaybeData, MaybeKey, Message, WorkerId,
+    stream::operator::BuildContext, time::Timestamp, MaybeData, MaybeKey, Message, WorkerId,
 };
 
 use super::DistTimestamp;
@@ -113,13 +113,13 @@ pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: MaybeTime>(
+fn merge_timestamps<'a, T: Timestamp>(
     mut timestamps: impl Iterator<Item = &'a Option<T>>,
 ) -> Option<T> {
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.and_then(|a| a.try_merge(y));
+            merged = merged.and_then(|a| Some(a.merge(y)));
         } else {
             return None;
         }
@@ -142,7 +142,7 @@ enum ExchangedMessage<T> {
 //         keyed::distributed::{Acquire, Collect, Interrogate},
 //         snapshot::{Barrier, NoPersistence, PersistenceBackend},
 //         test::{CapturingPersistenceBackend, OperatorTester},
-//         time::MaybeTime,
+//         time::NoTime,
 //         DataMessage, MaybeData, MaybeKey, Message, OperatorId, RescaleMessage, ShutdownMarker,
 //         WorkerId,
 //     };
@@ -155,10 +155,10 @@ enum ExchangedMessage<T> {
 //     where
 //         KI: MaybeKey,
 //         VI: MaybeData,
-//         TI: MaybeTime,
+//         TI: NoTime,
 //         KO: MaybeKey,
 //         VO: MaybeData,
-//         TO: MaybeTime,
+//         TO: NoTime,
 //         R: postbox::Data,
 //     {
 //         loop {
@@ -174,10 +174,10 @@ enum ExchangedMessage<T> {
 //     where
 //         KI: MaybeKey,
 //         VI: MaybeData,
-//         TI: MaybeTime,
+//         TI: NoTime,
 //         KO: MaybeKey,
 //         VO: MaybeData,
-//         TO: MaybeTime,
+//         TO: NoTime,
 //         R: postbox::Data,
 //     {
 //         loop {

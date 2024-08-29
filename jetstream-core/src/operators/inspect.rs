@@ -1,4 +1,4 @@
-use crate::{stream::jetstream::JetStreamBuilder, time::MaybeTime, Data, MaybeKey};
+use crate::{stream::jetstream::JetStreamBuilder, time::Timestamp, Data, MaybeKey};
 
 use super::map::Map;
 
@@ -25,7 +25,7 @@ impl<K, V, T> Inspect<K, V, T> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn inspect(self, mut inspector: impl FnMut(&V) -> () + 'static) -> JetStreamBuilder<K, V, T> {
         self.map(move |x| {

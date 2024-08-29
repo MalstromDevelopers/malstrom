@@ -17,36 +17,39 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
 //     }
 // }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialEq, Eq)]
 pub struct NoTime;
-
-pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
-    /// Try to merge two times, returning Some if the
-    /// specific type implementing this trait implements
-    /// Timestamp and None if it does not
-    fn try_merge(&self, other: &Self) -> Option<Self>;
-}
-impl<T: Timestamp + Clone + 'static> MaybeTime for T {
-    fn try_merge(&self, other: &Self) -> Option<Self> {
-        Some(self.merge(other))
+impl Timestamp for NoTime {
+    const MAX: Self = NoTime;
+    const MIN: Self = NoTime;
+    
+    fn merge(&self, other: &Self) -> Self {
+        NoTime
     }
 }
-impl MaybeTime for NoTime {
-    fn try_merge(&self, _other: &Self) -> Option<Self> {
-        None
-    }
-}
-
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
     }
 }
-impl PartialEq for NoTime {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
+// impl PartialEq for NoTime {
+//     fn eq(&self, _other: &Self) -> bool {
+//         true
+//     }
+// }
+
+// /// Time where the timestamp may not yet have been set
+// pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
+//     /// Try to merge two times, returning Some if the
+//     /// specific type implementing this trait implements
+//     /// Timestamp and None if it does not
+//     fn try_merge(&self, other: &Self) -> Option<Self>;
+// }
+// impl<T: Timestamp + Clone + 'static> MaybeTime for T {
+//     fn try_merge(&self, other: &Self) -> Option<Self> {
+//         Some(self.merge(other))
+//     }
+// }
 
 // TODO: Maybe make it so we always give out two streams: OnTime/Late
 

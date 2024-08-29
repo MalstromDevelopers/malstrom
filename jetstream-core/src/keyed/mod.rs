@@ -7,7 +7,7 @@ use crate::channels::selective_broadcast::{Receiver, Sender};
 
 use crate::stream::jetstream::JetStreamBuilder;
 use crate::stream::operator::OperatorBuilder;
-use crate::time::MaybeTime;
+use crate::time::{NoTime, Timestamp};
 use crate::{Data, DataMessage, Key, MaybeKey, Message, WorkerId};
 
 use self::distributed::{downstream_exchanger, epoch_aligner, upstream_exchanger, versioner};
@@ -59,7 +59,7 @@ where
     X: MaybeKey,
     K: Key,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
 {
     fn key_local(
         self,
