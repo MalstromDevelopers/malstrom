@@ -1,4 +1,4 @@
-use crate::{stream::jetstream::JetStreamBuilder, time::Timestamp, Data, MaybeKey};
+use crate::{stream::JetStreamBuilder, types::{Timestamp, Data, MaybeKey}};
 
 use super::map::Map;
 
@@ -18,7 +18,7 @@ pub trait Inspect<K, V, T> {
     /// stream.inspect(|x| debug!(x));
     ///
     /// ```
-    fn inspect(self, inspector: impl FnMut(&V) -> () + 'static) -> JetStreamBuilder<K, V, T>;
+    fn inspect(self, inspector: impl FnMut(&V) + 'static) -> JetStreamBuilder<K, V, T>;
 }
 
 impl<K, V, T> Inspect<K, V, T> for JetStreamBuilder<K, V, T>
@@ -27,7 +27,7 @@ where
     V: Data,
     T: Timestamp,
 {
-    fn inspect(self, mut inspector: impl FnMut(&V) -> () + 'static) -> JetStreamBuilder<K, V, T> {
+    fn inspect(self, mut inspector: impl FnMut(&V) + 'static) -> JetStreamBuilder<K, V, T> {
         self.map(move |x| {
             inspector(&x);
             x
@@ -37,26 +37,25 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, sync::Mutex};
+    
 
     use itertools::Itertools;
 
     use crate::{
         operators::{
             inspect::Inspect,
-            source::Source,
-            timely::{GenerateEpochs, TimelyStream}, Sink,
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}
+            source::Source, Sink,
+        }, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
     };
 
     #[test]
     fn test_inspect() {
         let (builder, stream) = get_test_stream();
 
-        let inspect_collector = VecCollector::new();
+        let inspect_collector = VecSink::new();
         let inspect_collector_moved = inspect_collector.clone();
 
-        let output_collector = VecCollector::new();
+        let output_collector = VecSink::new();
 
 
         let input = vec!["hello", "world", "foo", "bar"];

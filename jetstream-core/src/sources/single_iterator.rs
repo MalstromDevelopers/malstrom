@@ -1,7 +1,7 @@
 use crate::{
-    operators::source::IntoSource, stream::operator::OperatorBuilder, time::NoTime, Data,
+    operators::IntoSource, stream::OperatorBuilder, types::{NoTime, Data,
     DataMessage, Message, NoData, NoKey,
-};
+}};
 
 /// A datasource which yields values from an iterator
 /// on **one single worker**.
@@ -84,7 +84,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{sink::Sink, source::Source}, sources::SingleIteratorSource, test::{get_test_configs, get_test_stream, VecCollector}
+        operators::{Sink, Source}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
     };
 
     /// The into_iter source should emit the iterator values
@@ -93,14 +93,13 @@ mod tests {
         let (builder, stream) = get_test_stream();
 
         let in_data: Vec<i32> = (0..100).collect();
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
 
         let stream = stream
             .source(SingleIteratorSource::new(in_data))
             .sink(collector.clone());
 
         stream.finish();
-        let [conf] = get_test_configs();
         builder.build().unwrap().execute();
 
         let c = collector

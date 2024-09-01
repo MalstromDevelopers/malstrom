@@ -3,29 +3,17 @@ use std::{collections::VecDeque, rc::Rc};
 use indexmap::{IndexMap, IndexSet};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    keyed::WorkerPartitioner,
-    runtime::{communication::broadcast, CommunicationClient},
-    snapshot::Barrier,
-    stream::operator::OperatorContext,
-    time::Timestamp,
-    DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, WorkerId,
+    channels::selective_broadcast::{Receiver, Sender}, keyed::types::{DistKey, WorkerPartitioner}, runtime::{communication::broadcast, CommunicationClient}, snapshot::Barrier, types::{DataMessage, MaybeData, Message, RescaleMessage, ShutdownMarker, Timestamp, WorkerId}
 };
+use crate::stream::OperatorContext;
 
 use super::{
     icadd_operator::{DirectlyExchangedMessage, DistributorKind, TargetedMessage},
     interrogate_dist::InterrogateDistributor,
     normal_dist::NormalDistributor,
     versioner::VersionedMessage,
-    Collect, DistKey, NetworkAcquire, Version,
+    Collect, NetworkAcquire, Version,
 };
-
-struct RawWhitelist<K>(IndexSet<K>);
-
-enum Whitelist<K> {
-    Raw(RawWhitelist<K>),
-    Pruned,
-}
 
 pub(super) struct CollectDistributor<K, V, T> {
     worker_id: WorkerId,
@@ -196,25 +184,6 @@ where
         };
         inner.map(|x| DataMessage::new(msg.key, x, msg.timestamp))
     }
-
-    /// We return a vec here, since we want to return Acquire, DropKey, Held messages, all at once
-    // pub(super) fn run(
-    //     &mut self,
-    //     partitioner: &dyn WorkerPartitioner<K>,
-    // ) -> Vec<OutgoingMessage<K, V, T>> {
-    //     let mut out = Vec::new();
-    //     out.extend(self.lifecycle_collector(partitioner));
-
-    //     // // if the whitelist is empty and there is no collect currently being held,
-    //     // // we are done
-    //     // if self.whitelist.len() == 0 && self.current_collect.is_none() && !self.is_done {
-    //     //     out.push(OutgoingMessage::Remote(RemoteMessage::Done(
-    //     //         DoneMessage::new(self.worker_id, self.version),
-    //     //     )));
-    //     //     self.is_done = true;
-    //     // };
-    //     out
-    // }
 
     pub(super) fn run(
         mut self,

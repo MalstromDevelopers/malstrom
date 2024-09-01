@@ -1,10 +1,9 @@
-use std::{collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use crate::{
-    keyed::distributed::{DistData, DistTimestamp},
     operators::stateful_transform::StatefulTransform,
-    stream::jetstream::JetStreamBuilder,
-    time::Timestamp, DataMessage, Key, Message,
+    stream::JetStreamBuilder,
+    types::{Data, DataMessage, Key, Message, Timestamp},
 };
 
 use serde::{de::DeserializeOwned, Serialize};
@@ -53,9 +52,9 @@ pub trait FlexibleWindow<K, V, T, A> {
 impl<K, V, T, A> FlexibleWindow<K, V, T, A> for JetStreamBuilder<K, V, T>
 where
     K: Key + Serialize + DeserializeOwned,
-    V: DistData,
-    T: DistTimestamp + Timestamp,
-    A: DistData + Default,
+    V: Data + Serialize + DeserializeOwned,
+    T: Timestamp + Serialize + DeserializeOwned,
+    A: Data + Default + Serialize + DeserializeOwned,
 {
     fn flexible_window(
         self,
@@ -73,16 +72,14 @@ where
 
                 let (closing_time, window_state) = if let Some((k, v)) = window_state {
                     (k.clone(), v)
+                } else if let Some((v, k)) = initializer(&msg) {
+                    let should_not_exist = key_state.insert(k.clone(), v);
+                    debug_assert!(should_not_exist.is_none());
+                    // PANIC: Can unwrap here since we just inserted the key
+                    let window_state = key_state.get_mut(&k).unwrap();
+                    (k, window_state)
                 } else {
-                    if let Some((v, k)) = initializer(&msg) {
-                        let should_not_exist = key_state.insert(k.clone(), v);
-                        debug_assert!(should_not_exist.is_none());
-                        // PANIC: Can unwrap here since we just inserted the key
-                        let window_state = key_state.get_mut(&k).unwrap();
-                        (k, window_state)
-                    } else {
-                        return None;
-                    }
+                    return None;
                 };
                 aggregator(msg, window_state, &closing_time);
                 Some(key_state)

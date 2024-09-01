@@ -1,18 +1,18 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use crate::channels::selective_broadcast::{self, Receiver, Sender};
+use crate::channels::selective_broadcast::{self, Sender};
 use crate::operators::void::Void;
 use crate::snapshot::controller::make_snapshot_controller;
-use crate::snapshot::{NoPersistence, PersistenceBackend, PersistenceClient};
-use crate::stream::jetstream::JetStreamBuilder;
-use crate::stream::operator::{
+use crate::snapshot::{NoPersistence, PersistenceBackend};
+use crate::stream::JetStreamBuilder;
+use crate::stream::{
     pass_through_operator, AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder,
     RunnableOperator,
 };
-use crate::time::{MaybeTime, NoTime, Timestamp};
-use crate::{MaybeData, MaybeKey, NoData, NoKey, OperatorId, OperatorPartitioner, WorkerId};
+use crate::types::{MaybeTime, NoTime};
+use crate::types::{MaybeData, MaybeKey, NoData, NoKey, OperatorPartitioner, WorkerId};
 use thiserror::Error;
 
 use super::runtime_flavor::CommunicationError;
@@ -271,7 +271,7 @@ mod tests {
     /// check we can build the most basic runtime
     #[test]
     fn builds_basic_rt() {
-        RuntimeBuilder::new(SingleThreadRuntime::default())
+        RuntimeBuilder::new(SingleThreadRuntime)
             .build()
             .unwrap();
     }
@@ -279,7 +279,7 @@ mod tests {
     /// check we can build with persistance enabled
     #[test]
     fn builds_with_persistence() {
-        let rt = RuntimeBuilder::new(SingleThreadRuntime::default())
+        let _rt = RuntimeBuilder::new(SingleThreadRuntime)
             .with_persistence_backend(NoPersistence::default())
             .with_snapshot_timer(|| false)
             .build();

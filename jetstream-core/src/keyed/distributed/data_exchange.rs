@@ -1,16 +1,16 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use crate::keyed::types::{DistData, DistKey, DistTimestamp};
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
-use crate::stream::operator::Logic;
-use crate::{stream::operator::BuildContext, Message, WorkerId};
-use crate::{DataMessage, ShutdownMarker};
+use crate::stream::Logic;
+use crate::{stream::BuildContext};
+use crate::types::{DataMessage, Message, ShutdownMarker, WorkerId};
 
 use super::icadd_operator::TargetedMessage;
 use super::versioner::VersionedMessage;
-use super::{DistData, DistKey, DistTimestamp};
 
 #[derive(Serialize, Deserialize, Clone)]
 enum ExchangedMessage<K, V, T> {

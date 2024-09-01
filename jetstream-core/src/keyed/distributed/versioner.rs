@@ -2,11 +2,8 @@ use derive_new::new;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    stream::operator::{BuildContext, Logic},
-    DataMessage, MaybeData, MaybeKey, Message, WorkerId,
+    keyed::types::{DistTimestamp, Version}, stream::{BuildContext, Logic}, types::{DataMessage, MaybeData, MaybeKey, Message, WorkerId}
 };
-
-use super::{DistTimestamp, Version};
 
 #[derive(Debug, Clone, Serialize, Deserialize, new)]
 pub(crate) struct VersionedMessage<V> {

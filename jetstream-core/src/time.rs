@@ -4,39 +4,15 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
 
     fn merge(&self, other: &Self) -> Self;
 }
-/// An Epoch is a special marker message. It indicates that no following message
-/// with this key will have a time <= timestamp.
-// #[derive(Debug, Clone)]
-// pub struct Epoch<T> {
-//     pub timestamp: T,
-// }
-
-// impl<T> Epoch<T> {
-//     pub fn new(timestamp: T) -> Self {
-//         Self { timestamp }
-//     }
-// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Ord, PartialEq, Eq)]
 pub struct NoTime;
-// impl Timestamp for NoTime {
-//     const MAX: Self = NoTime;
-//     const MIN: Self = NoTime;
-    
-//     fn merge(&self, other: &Self) -> Self {
-//         NoTime
-//     }
-// }
+
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
     }
 }
-// impl PartialEq for NoTime {
-//     fn eq(&self, _other: &Self) -> bool {
-//         true
-//     }
-// }
 
 /// Time where the timestamp may not yet have been set
 pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
@@ -58,7 +34,7 @@ impl<T> MaybeTime for T where T: Timestamp + Clone + 'static {
     const CHECK_FINISHED: fn(&Option<Self>) -> bool = |opt_t| opt_t.as_ref().map_or(false, |t| *t == T::MAX);
 }
 impl MaybeTime for NoTime {
-    fn try_merge(&self, other: &Self) -> Option<Self> {
+    fn try_merge(&self, _other: &Self) -> Option<Self> {
         Some(NoTime)
     }
     const CHECK_FINISHED: fn(&Option<Self>) -> bool = |_| true;
@@ -107,26 +83,9 @@ timestamp_impl!(i32);
 timestamp_impl!(i64);
 timestamp_impl!(i128);
 
-// impl Timestamp for f32 {
-//     const MAX: f32 = f32::MAX;
-//     const MIN: f32 = f32::MIN;
-
-//     fn merge(&self, other: &Self) -> Self {
-//         self.min(*other)
-//     }
-// }
-
-// impl Timestamp for f64 {
-//     const MAX: f64 = f64::MAX;
-//     const MIN: f64 = f64::MIN;
-
-//     fn merge(&self, other: &Self) -> Self {
-//         self.min(*other)
-//     }
-// }
 
 use serde::{Deserialize, Serialize};
-use tokio::time::Sleep;
+
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},

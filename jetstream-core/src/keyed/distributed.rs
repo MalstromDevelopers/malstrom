@@ -4,8 +4,6 @@ use derive_new::new;
 use indexmap::{IndexMap, IndexSet};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{time::{NoTime, Timestamp}, Key, MaybeData, OperatorId, WorkerId};
-
 mod collect_dist;
 mod data_exchange;
 mod epoch_align;
@@ -19,21 +17,10 @@ pub(super) use epoch_align::epoch_aligner;
 pub(super) use icadd_operator::icadd;
 pub(super) use versioner::versioner;
 
-// Marker trait for distributable keys, values or time
-pub trait Distributable: Serialize + DeserializeOwned + 'static{}
-impl<T: Serialize + DeserializeOwned + 'static> Distributable for T {}
+use crate::types::{Key, OperatorId, WorkerId};
 
-/// Marker trait for distributable key
-pub trait DistKey: Key + Distributable {}
-impl<T: Key + Distributable> DistKey for T {}
-/// Marker trait for distributable value
-pub trait DistData: MaybeData + Distributable {}
-impl<T: MaybeData + Distributable> DistData for T {}
+use super::types::Version;
 
-pub trait DistTimestamp: Timestamp + Distributable {}
-impl<T: Timestamp + Distributable> DistTimestamp for T {}
-
-type Version = u64;
 
 /// Panicing encode using the default bincode config
 pub(crate) fn encode<S: Serialize>(value: S) -> Vec<u8> {
@@ -72,16 +59,6 @@ where
             }
         }
     }
-
-    pub(crate) fn print_ref_count_and_die(&self) {
-        let rc = Rc::strong_count(&self.shared);
-        println!("Interrogate refcount is {rc}");
-        panic!("OOF")
-    }
-
-    // pub(super) fn ref_count(&self) -> usize {
-    //     Rc::strong_count(&self.shared)
-    // }
 
     /// Try unwrapping the inner Rc and Mutex. This succeeds if there
     /// is exactly one strong count to this Interrogate.

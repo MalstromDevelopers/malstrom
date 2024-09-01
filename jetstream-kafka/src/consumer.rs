@@ -7,6 +7,7 @@ use jetstream::channels::selective_broadcast::{Receiver, Sender};
 use jetstream::keyed::{rendezvous_select, KeyDistribute};
 use jetstream::operators::source::Source;
 
+use jetstream::sources::SingleIteratorSource;
 use jetstream::stream::jetstream::JetStreamBuilder;
 use jetstream::stream::operator::{BuildContext, OperatorBuilder, OperatorContext};
 use jetstream::time::NoTime;
@@ -37,7 +38,7 @@ pub trait KafkaInput {
         topic: String,
         auto_offset_reset: String,
         metadata_timeout: Duration,
-    ) -> JetStreamBuilder<PartitionIndex, Result<OwnedMessage, KafkaError>, NoTime>;
+    ) -> JetStreamBuilder<PartitionIndex, Result<OwnedMessage, KafkaError>, i64>;
 }
 
 impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
@@ -48,7 +49,7 @@ impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
         topic: String,
         auto_offset_reset: String,
         metadata_timeout: Duration,
-    ) -> JetStreamBuilder<PartitionIndex, Result<OwnedMessage, KafkaError>, NoTime> {
+    ) -> JetStreamBuilder<PartitionIndex, Result<OwnedMessage, KafkaError>, i64> {
         let consumer: BaseConsumer = ClientConfig::new()
             .set("group.id", group_id.clone())
             .set("bootstrap.servers", brokers.join(","))
@@ -63,10 +64,9 @@ impl KafkaInput for JetStreamBuilder<NoKey, NoData, NoTime> {
         let partitions = metadata.topics()[0]
             .partitions()
             .iter()
-            .map(|x| x.id())
-            .collect_vec();
+            .map(|x| x.id());
 
-        self.source(partitions)
+        self.source(SingleIteratorSource::new(partitions))
             .key_distribute(
                 |x| x.value.clone(),
                 |k, workers| rendezvous_select(k, workers.iter()).unwrap(),
@@ -90,8 +90,8 @@ fn build_consumer(
     auto_offset_reset: String,
     context: &mut BuildContext,
 ) -> impl FnMut(
-    &mut Receiver<PartitionIndex, PartitionIndex, NoTime>,
-    &mut Sender<PartitionIndex, Result<OwnedMessage, KafkaError>, NoTime>,
+    &mut Receiver<PartitionIndex, PartitionIndex, usize>,
+    &mut Sender<PartitionIndex, Result<OwnedMessage, KafkaError>, i64>,
     &mut OperatorContext,
 ) {
     let mut state: IndexMap<PartitionIndex, ConsumerState> =
@@ -120,7 +120,7 @@ fn build_consumer(
                 output.send(Message::Data(DataMessage::new(
                     *partition_idx,
                     record,
-                    NoTime,
+                    record.offset(),
                 )))
             }
         }

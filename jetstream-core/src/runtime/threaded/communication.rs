@@ -3,10 +3,10 @@ use crate::{
         communication::{CommunicationBackendError, Transport, TransportError},
         CommunicationBackend,
     },
-    OperatorId, WorkerId,
+    types::{OperatorId, WorkerId,}
 };
 use std::sync::{
-    mpsc::{self, channel, Receiver, Sender},
+    mpsc::{self, Receiver, Sender},
     Arc, Mutex,
 };
 
@@ -68,9 +68,9 @@ impl InterThreadCommunication {
 impl CommunicationBackend for InterThreadCommunication {
     fn new_connection(
         &mut self,
-        to_worker: crate::WorkerId,
-        to_operator: crate::OperatorId,
-        from_operator: crate::OperatorId,
+        to_worker: WorkerId,
+        to_operator: OperatorId,
+        from_operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
         let mut shared = self.shared.lock().unwrap();
         let key = ConnectionKey::new(to_worker, to_operator, self.this_worker, from_operator);

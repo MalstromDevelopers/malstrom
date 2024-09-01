@@ -1,9 +1,13 @@
 use std::marker::PhantomData;
 
-use postbox::Postbox;
-use serde::{de::DeserializeOwned, Deserialize};
 
-use crate::{keyed::distributed::Distributable, OperatorId, WorkerId};
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::types::{OperatorId, WorkerId};
+
+/// A type which can be sent (dsitributed) between workers
+pub trait Distributable: Serialize + DeserializeOwned{}
+impl <T> Distributable for T where  T: Serialize + DeserializeOwned{}
 
 /// A backend facilitating inter-worker communication in jetstream
 pub trait CommunicationBackend {
@@ -67,7 +71,7 @@ where
         })
     }
 
-    pub fn send(&self, msg: T) -> () {
+    pub fn send(&self, msg: T) {
         let encoded =
             bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).expect("Serialization Error");
         self.transport.send(encoded).unwrap()
@@ -84,7 +88,7 @@ where
         }
     }
 
-    pub fn recv_all<'a>(&'a self) -> RecvAllIterator<'a, T> {
+    pub fn recv_all(&self) -> RecvAllIterator<'_, T> {
         RecvAllIterator::new(self.transport.recv_all())
     }
 }
@@ -122,11 +126,11 @@ where
 pub fn broadcast<'a, T: Distributable + Clone + 'a>(
     clients: impl Iterator<Item = &'a CommunicationClient<T>>,
     msg: T,
-) -> () {
+) {
     for c in clients {
         c.send(msg.clone());
     }
-    ()
+    
 }
 
 #[derive(thiserror::Error, Debug)]

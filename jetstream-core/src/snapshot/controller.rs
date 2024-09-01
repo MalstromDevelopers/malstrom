@@ -8,11 +8,10 @@ use crate::channels::selective_broadcast::Sender;
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
-use crate::stream::operator::{AppendableOperator, BuildContext, Logic, OperatorContext};
-use crate::time::{MaybeTime, NoTime, Timestamp};
-use crate::{Data, MaybeKey, Message, NoData, NoKey, WorkerId};
+use crate::stream::{BuildContext, Logic, OperatorContext};
+use crate::types::{Data, MaybeKey, Message, WorkerId,MaybeTime};
 
-use crate::{channels::selective_broadcast::Receiver, stream::operator::OperatorBuilder};
+use crate::{channels::selective_broadcast::Receiver, stream::OperatorBuilder};
 
 use super::{PersistenceBackend, SnapshotVersion};
 
@@ -22,14 +21,6 @@ pub enum ComsMessage {
     LoadSnapshot(SnapshotVersion),
     CommitSnapshot(SnapshotVersion),
 }
-
-type BackchannelTx = Sender<NoData, NoKey, NoTime>;
-type BackchannelRx = Receiver<NoData, NoKey, NoTime>;
-
-// #[derive(Clone)]
-// pub struct RegionHandle {
-//     sender: BackchannelTx
-// }
 
 #[derive(Default)]
 struct ControllerState {
@@ -214,7 +205,7 @@ pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
 ) -> OperatorBuilder<K, V, T, K, V,T> {
-    let mut op = OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend_builder, timer));
+    let op = OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend_builder, timer));
     // indicate we will never emit data records
     // op.get_output_mut().send(crate::Message::Epoch(NoTime::MAX));
     op
@@ -236,6 +227,6 @@ pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::NoPersistence;
-    use super::*;
+    
+    
 }

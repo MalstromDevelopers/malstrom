@@ -1,8 +1,7 @@
 use super::stateless_op::StatelessOp;
-use crate::stream::jetstream::JetStreamBuilder;
+use crate::stream::JetStreamBuilder;
 
-use crate::time::Timestamp;
-use crate::{Data, DataMessage, MaybeKey};
+use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
 pub trait Map<K, V, T, VO> {
     /// Map transforms every value in a datastream into a different value
@@ -25,7 +24,7 @@ where
 {
     fn map(self, mut mapper: impl (FnMut(V) -> VO) + 'static) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(move |item, out| {
-            out.send(crate::Message::Data(DataMessage::new(
+            out.send(Message::Data(DataMessage::new(
                 item.key,
                 mapper(item.value),
                 item.timestamp,
@@ -40,9 +39,8 @@ mod tests {
     use crate::{
         operators::{
             map::Map,
-            source::Source,
-            timely::{GenerateEpochs, TimelyStream}, Sink,
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}
+            source::Source, Sink,
+        }, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
     };
 
     #[test]
@@ -50,9 +48,9 @@ mod tests {
         let (builder, stream) = get_test_stream();
         let input = ["hello", "world", "foo", "bar"];
         let expected = input.iter().map(|x| x.len()).collect_vec();
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
 
-        let stream = stream
+        stream
             .source(SingleIteratorSource::new(input))
             .map(|x| x.len())
             .sink(collector.clone())

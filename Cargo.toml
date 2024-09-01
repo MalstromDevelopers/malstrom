@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "jetstream-core",
-    "jetstream-kafka",
-    "jetstream-nexmark",
-    "postbox"
+    # "jetstream-kafka",
+    # "jetstream-nexmark",
+    # "postbox"
 ]

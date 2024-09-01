@@ -1,4 +1,4 @@
-use crate::runtime::{execution_handle::ExecutionHandle, CommunicationBackend, RuntimeFlavor, Worker};
+use crate::runtime::RuntimeFlavor;
 
 use super::{communication::InterThreadCommunication, Shared};
 
@@ -9,7 +9,6 @@ pub struct SingleThreadRuntime;
 
 impl RuntimeFlavor for SingleThreadRuntime {
     type Communication = InterThreadCommunication;
-    type ExecutionHandle = SingleThreadExecution<Self::Communication>;
     
     fn establish_communication(&mut self) -> Result<Self::Communication, crate::runtime::runtime_flavor::CommunicationError> {
         Ok(InterThreadCommunication::new(Shared::default(), 0))
@@ -21,25 +20,5 @@ impl RuntimeFlavor for SingleThreadRuntime {
     
     fn this_worker_id(&self) -> usize {
         0
-    }
-    
-    fn create_handle(self, worker: crate::runtime::Worker<Self::Communication>) -> Self::ExecutionHandle {
-        SingleThreadExecution{worker}
-    }
-}
-
-
-pub struct SingleThreadExecution<C>{
-    worker: Worker<C>
-}
-impl <C> SingleThreadExecution<C> {
-    pub(crate) fn step(&self) {
-        todo!()
-    }
-}
-impl <C> ExecutionHandle for SingleThreadExecution<C> where C: CommunicationBackend{
-    fn execute(mut self) -> Result<(), crate::runtime::execution_handle::ExecutionError> {
-        self.worker.execute();
-        Ok(())
     }
 }

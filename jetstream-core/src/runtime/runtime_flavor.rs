@@ -1,13 +1,10 @@
-use crate::WorkerId;
 
-use super::{communication::CommunicationBackend, execution_handle::ExecutionHandle, Worker};
+
+use super::communication::CommunicationBackend;
 
 pub trait RuntimeFlavor {
     /// The type of backend this runtime uses for inter-worker communication
     type Communication: CommunicationBackend;
-
-    /// the type of ExecutionHandle this Runtime gives to the user
-    type ExecutionHandle: ExecutionHandle;
 
     /// Establish communication between multiple JetStream workers,
     /// possibly on different machines
@@ -21,8 +18,6 @@ pub trait RuntimeFlavor {
 
     /// Return the ID of the worker where this method was called
     fn this_worker_id(&self) -> usize;
-
-    fn create_handle(self, worker: Worker<Self::Communication>) -> Self::ExecutionHandle;
 }
 
 /// Error to be returned if a communication could not be established

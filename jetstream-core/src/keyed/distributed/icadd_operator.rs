@@ -4,17 +4,14 @@ use derive_new::new;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    keyed::WorkerPartitioner,
-    stream::operator::{BuildContext, Logic},
-    MaybeData, WorkerId,
-};
+use crate::{keyed::types::{DistKey, DistTimestamp, WorkerPartitioner}, stream::{BuildContext, Logic}, types::{MaybeData, WorkerId}};
 
 use super::{
     collect_dist::CollectDistributor, interrogate_dist::InterrogateDistributor,
-    normal_dist::NormalDistributor, versioner::VersionedMessage, DistKey, DistTimestamp,
+    normal_dist::NormalDistributor, versioner::VersionedMessage,
     NetworkAcquire,
 };
+use crate::stream::OperatorContext;
 
 /// Control messages which the ICADD controllers exchange
 /// directly between each other

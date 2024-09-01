@@ -1,11 +1,11 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     stream::{
-        jetstream::JetStreamBuilder,
-        operator::{AppendableOperator, OperatorBuilder, OperatorContext},
+        JetStreamBuilder,
+        OperatorBuilder, OperatorContext,
     },
-    time::{MaybeTime, NoTime, Timestamp},
-    MaybeData, MaybeKey, NoData, NoKey,
+    types::{MaybeTime, NoTime,
+    MaybeData, MaybeKey, NoData, NoKey,}
 };
 
 /// The Void operator will drop all (yes ALL) messages it receives
@@ -23,7 +23,7 @@ where
     T: MaybeTime,
 {
     fn void(self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        let mut op = OperatorBuilder::direct(void);
+        let op = OperatorBuilder::direct(void);
         self.then(op)
     }
 }
@@ -46,8 +46,8 @@ mod test {
     use crate::{
         keyed::distributed::{Acquire, Collect, Interrogate},
         snapshot::{Barrier, NoPersistence},
-        test::OperatorTester,
-        DataMessage, Message, RescaleMessage, ShutdownMarker,
+        testing::OperatorTester,
+        types::{DataMessage, Message, RescaleMessage, ShutdownMarker,}
     };
     /// Simple test, the operator must destroy everything 💀
     #[test]

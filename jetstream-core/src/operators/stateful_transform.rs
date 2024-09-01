@@ -1,5 +1,3 @@
-
-
 use indexmap::IndexMap;
 use itertools::Itertools;
 use metrics::gauge;
@@ -8,24 +6,22 @@ use tracing::{event, Level};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    keyed::distributed::DistData,
-    stream::{
-        jetstream::JetStreamBuilder,
-        operator::{BuildContext, OperatorBuilder, OperatorContext},
-    },
-    time::Timestamp,
-    Data, DataMessage, Key, Message,
+    stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
+    types::{Data, DataMessage, Key, Message, Timestamp},
 };
 
 /// This trait allows us to effectively 'subsribe' to message types
 /// of messages
-trait SubscribedMessage<K, V, T>: for<'a> TryFrom<&'a Message<K, V, T>, Error = ()> + 'static {}
+pub(crate) trait SubscribedMessage<K, V, T>:
+    for<'a> TryFrom<&'a Message<K, V, T>, Error = ()> + 'static
+{
+}
 impl<K, V, T, X> SubscribedMessage<K, V, T> for X where
     X: for<'a> TryFrom<&'a Message<K, V, T>, Error = ()> + 'static
 {
 }
 
-pub trait StatefulTransform<K, VI, T> {
+pub(crate) trait StatefulTransform<K, VI, T> {
     /// Transforms message utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.
@@ -49,7 +45,7 @@ pub trait StatefulTransform<K, VI, T> {
     >(
         self,
         mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
-        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
+        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) + 'static,
     ) -> JetStreamBuilder<K, VO, T>;
 }
 
@@ -63,12 +59,12 @@ fn build_stateful_transform<
 >(
     context: &BuildContext,
     mut mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
-    mut handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
+    mut handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) + 'static,
 ) -> impl FnMut(&mut Receiver<K, VI, T>, &mut Sender<K, VO, T>, &mut OperatorContext) {
     let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
     let state_size = gauge!("{}.stateful_map.state_size", "label" => format!("{}", context.label));
 
-    move |input: &mut Receiver<K, VI, T>, mut output: &mut Sender<K, VO, T>, ctx| {
+    move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, ctx| {
         let msg = match input.recv() {
             Some(x) => x,
             None => return,
@@ -77,9 +73,7 @@ fn build_stateful_transform<
         // invoke generic message handler
         match &msg {
             Message::Data(_) => None,
-            x => M::try_from(x)
-                .ok()
-                .map(|x| handler(x, &mut state, &mut output)),
+            x => M::try_from(x).ok().map(|x| handler(x, &mut state, output)),
         };
 
         match msg {
@@ -139,7 +133,7 @@ fn build_stateful_transform<
 impl<K, VI, T> StatefulTransform<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
-    VI: DistData,
+    VI: Data + Serialize + DeserializeOwned,
 
     T: Timestamp,
 {
@@ -150,7 +144,7 @@ where
     >(
         self,
         mapper: impl FnMut(DataMessage<K, VI, T>, S, &mut Sender<K, VO, T>) -> Option<S> + 'static,
-        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) -> () + 'static,
+        handler: impl FnMut(M, &mut IndexMap<K, S>, &mut Sender<K, VO, T>) + 'static,
     ) -> JetStreamBuilder<K, VO, T> {
         let op =
             OperatorBuilder::built_by(move |ctx| build_stateful_transform(ctx, mapper, handler));

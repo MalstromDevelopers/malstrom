@@ -7,13 +7,12 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    keyed::distributed::DistData,
     stream::{
-        jetstream::JetStreamBuilder,
-        operator::{BuildContext, OperatorBuilder, OperatorContext},
+        JetStreamBuilder,
+        BuildContext, OperatorBuilder, OperatorContext,
     },
-    time::{MaybeTime, Timestamp},
-    Data, DataMessage, Key, Message,
+    types::{MaybeTime, Timestamp,
+    Data, DataMessage, Key, Message,}
 };
 
 pub trait StatefulMap<K, VI, T> {
@@ -130,7 +129,7 @@ fn build_stateful_map<
 impl<K, VI, T> StatefulMap<K, VI, T> for JetStreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
-    VI: DistData,
+    VI: Data + Serialize + DeserializeOwned,
     T: Timestamp,
 {
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
@@ -153,17 +152,16 @@ mod test {
     use itertools::Itertools;
 
     use crate::keyed::distributed::{decode, encode, Acquire, Collect, Interrogate};
-    use crate::operators::timely::{GenerateEpochs, TimelyStream};
+    
     use crate::operators::{KeyLocal, Sink};
     use crate::snapshot::{Barrier, PersistenceClient};
     use crate::sources::SingleIteratorSource;
-    use crate::test::{get_test_stream, CapturingPersistenceBackend, OperatorTester, VecCollector};
-    use crate::time::NoTime;
+    use crate::testing::{get_test_stream, CapturingPersistenceBackend, OperatorTester, VecSink};
+    use crate::types::NoTime;
     use crate::{
         operators::{source::Source},
-        stream::jetstream::JetStreamBuilder,
     };
-    use crate::{DataMessage, Message};
+    use crate::types::{DataMessage, Message};
 
     use super::{build_stateful_map, StatefulMap};
 
@@ -172,7 +170,7 @@ mod test {
     fn keeps_state() {
         let (builder, stream) = get_test_stream();
 
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
 
         stream
             .source(SingleIteratorSource::new(0..100))
@@ -187,11 +185,11 @@ mod test {
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
             *s += i;
-            Some(s.clone())
+            Some(*s)
         });
         let odd_sums = (1..100).step_by(2).scan(0, |s, i| {
             *s += i;
-            Some(s.clone())
+            Some(*s)
         });
         let expected: Vec<i32> = even_sums.zip(odd_sums).flat_map(|x| [x.0, x.1]).collect();
         assert_eq!(result, expected)
@@ -201,7 +199,7 @@ mod test {
     #[test]
     fn discards_state() {
         let (builder, stream) = get_test_stream();
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
         
         stream
             .source(SingleIteratorSource::new(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string())))
@@ -233,20 +231,20 @@ mod test {
                 build_stateful_map(ctx, |_, x, _| ((), Some(x)))
             });
 
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             5,
             "bar".to_string(),
             NoTime,
         )));
         tester.step();
         let interrogator = Interrogate::new(Rc::new(|_: &i32| true));
-        tester.send_from_local(crate::Message::Interrogate(interrogator.clone()));
+        tester.send_from_local(Message::Interrogate(interrogator.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
@@ -267,20 +265,20 @@ mod test {
                 })
             });
 
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "hello".to_string(),
             NoTime,
         )));
         tester.step();
         let interrogator = Interrogate::new(Rc::new(|_: &i32| true));
-        tester.send_from_local(crate::Message::Interrogate(interrogator.clone()));
+        tester.send_from_local(Message::Interrogate(interrogator.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
@@ -298,20 +296,20 @@ mod test {
                 build_stateful_map(ctx, |_, x, _| ((), Some(x)))
             });
 
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             5,
             "bar".to_string(),
             NoTime,
         )));
         tester.step();
         let collector = Collect::new(1);
-        tester.send_from_local(crate::Message::Collect(collector.clone()));
+        tester.send_from_local(Message::Collect(collector.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
@@ -334,20 +332,20 @@ mod test {
                 })
             });
 
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(crate::Message::Data(DataMessage::new(
+        tester.send_from_local(Message::Data(DataMessage::new(
             1,
             "hello".to_string(),
             NoTime,
         )));
         tester.step();
         let collector = Collect::new(1);
-        tester.send_from_local(crate::Message::Collect(collector.clone()));
+        tester.send_from_local(Message::Collect(collector.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
@@ -451,6 +449,6 @@ mod test {
                 })
             });
 
-        crate::test::test_forward_system_messages(&mut tester);
+        crate::testing::test_forward_system_messages(&mut tester);
     }
 }

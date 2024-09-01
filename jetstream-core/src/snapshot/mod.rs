@@ -3,7 +3,7 @@ use std::{fmt::Debug, rc::Rc, sync::Mutex};
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{OperatorId, WorkerId};
+use crate::types::{OperatorId, WorkerId};
 
 pub type SnapshotVersion = usize;
 
@@ -70,32 +70,6 @@ impl Barrier {
         self.backend.lock().unwrap().get_version()
     }
 }
-#[derive(Debug)]
-pub struct Load {
-    backend: Rc<Mutex<Box<dyn PersistenceClient>>>,
-}
-impl Clone for Load {
-    fn clone(&self) -> Self {
-        Self {
-            backend: self.backend.clone(),
-        }
-    }
-}
-
-impl Load {
-    pub(super) fn new(backend: Box<dyn PersistenceClient>) -> Self {
-        Self {
-            backend: Rc::new(Mutex::new(backend)),
-        }
-    }
-    pub fn load<S: Serialize + DeserializeOwned>(&self, operator_id: OperatorId) -> Option<S> {
-        self.backend
-            .lock()
-            .unwrap()
-            .load(&operator_id)
-            .map(deserialize_state)
-    }
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct NoPersistence {
@@ -144,7 +118,7 @@ mod test {
     /// This test won't compile if PersistenceBackend is not object safe
     #[test]
     fn is_object_safe() {
-        struct Foo {
+        struct _Foo {
             _bar: Box<dyn PersistenceClient>,
         }
     }

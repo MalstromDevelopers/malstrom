@@ -1,7 +1,6 @@
 use super::stateless_op::StatelessOp;
-use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::Timestamp;
-use crate::{Data, DataMessage, MaybeKey, Message};
+use crate::stream::JetStreamBuilder;
+use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
 pub trait FilterMap<K, VI, T> {
     /// Applies a function to every element of the stream.
@@ -45,14 +44,14 @@ mod tests {
     use crate::{
         operators::{sink::Sink, source::Source},
         sources::SingleIteratorSource,
-        test::{get_test_stream, VecCollector},
+        testing::{get_test_stream, VecSink},
     };
 
     use super::*;
     #[test]
     fn test_filter_map() {
         let (builder, stream) = get_test_stream();
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
 
         let stream = stream
             .source(SingleIteratorSource::new(0..100))

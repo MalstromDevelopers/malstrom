@@ -1,5 +1,5 @@
 use crate::{
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder}, time::{MaybeTime, NoTime, Timestamp}, Data, MaybeData, MaybeKey, NoData, NoKey
+    stream::{JetStreamBuilder, OperatorBuilder}, types::{MaybeTime, NoTime, Data, MaybeData, MaybeKey, NoData, NoKey}
 };
 
 pub trait IntoSink<K, V, T> {

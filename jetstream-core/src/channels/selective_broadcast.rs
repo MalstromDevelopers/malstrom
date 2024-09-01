@@ -1,24 +1,20 @@
+//! Selective Broadcast:
+//!
+//! Selective Broadcast channels are MPMC channels, where a partitioning function is used
+//! to determine which receivers shall receive a value.
+//! The value is copied as often as necessary, to ensure multiple receivers can receive it.
+//! NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
+//! big queues with this channel.
 use std::{
     collections::VecDeque,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-/// Selective Broadcast:
-///
-/// Selective Broadcast channels are MPMC channels, where a partitioning function is used
-/// to determine which receivers shall receive a value.
-/// The value is copied as often as necessary, to ensure multiple receivers can receive it.
-/// NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
-/// big queues with this channel.
 use crossbeam;
 use indexmap::IndexMap;
-use itertools::{self};
 
-use crate::{
-    snapshot::Barrier, time::{MaybeTime, NoTime, Timestamp}, Message, OperatorId, OperatorPartitioner, Scale,
-    ShutdownMarker,
-};
+use crate::{snapshot::Barrier, types::{MaybeTime, Message, OperatorId, OperatorPartitioner, ShutdownMarker}};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// This is a somewhat hacky we to get a unique id for each sender, which we
@@ -37,7 +33,7 @@ enum MessageWrapper<K, V, T> {
 }
 
 // /// A simple partitioner, which will broadcast a value to all receivers
-pub fn full_broadcast<T>(_: &T, scale: Scale) -> Vec<OperatorId> {
+pub fn full_broadcast<T>(_: &T, scale: usize) -> Vec<OperatorId> {
     (0..scale).collect()
 }
 
@@ -67,6 +63,8 @@ where
     V: Clone,
     T: Clone + MaybeTime,
 {
+    /// Create a new Sender with **no** associated Receiver
+    /// Link a receiver with [link].
     pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {
             senders: Vec::new(),
@@ -136,13 +134,6 @@ impl<K, V, T> Clone for Sender<K, V, T>  where T: Clone{
             frontier: self.frontier.clone()
         }
     }
-
-    // fn subscribe_inner(&mut self) -> crossbeam::channel::Receiver<Message<K, V, T>> {
-    //     let (tx, rx) = crossbeam::channel::unbounded();
-    //     tx.send(MessageWrapper::Register(self.id));
-    //     self.senders.push(tx);
-    //     rx
-    // }
 }
 
 impl<K, V, T> Drop for Sender<K, V, T> {
@@ -182,29 +173,7 @@ pub struct Receiver<K, V, T> {
     // from upstream to issue them
     buffered: VecDeque<Message<K, V, T>>,
 }
-// impl<K, V, T> Receiver<K, V, T> where T: NoTime  {
-//     /// update the internally stored epoch and emit a copy
-//     /// if it increased or None if it did not increase
-//     fn has(&self) -> Option<T> {
-//         self.inner_receivers.iter().map(|x|)
-//         match self.merged_epoch.take() {
-//             Some(e) => {
-//                 let merged = e.try_merge(&new)?;
-//                 if merged > e {
-//                     self.merged_epoch = Some(merged.clone());
-//                     Some(merged)
-//                 } else {
-//                     self.merged_epoch = Some(e);
-//                     None
-//                 }
-//             },
-//             None => {
-//                 self.merged_epoch = Some(new.clone());
-//                 Some(new)
-//             },
-//         }
-//     }
-// }
+
 impl<K, V, T> Receiver<K, V, T> {
     pub fn new_unlinked() -> Self {
         let (sender, receiver) = crossbeam::channel::unbounded();
@@ -330,7 +299,7 @@ where
 mod test {
     use std::i32;
 
-    use crate::{snapshot::NoPersistence, time::NoTime, DataMessage, NoData, NoKey};
+    use crate::{snapshot::NoPersistence, types::{NoTime, DataMessage, NoData, NoKey}};
 
     use super::*;
 
@@ -342,7 +311,7 @@ mod test {
         link(&mut sender, &mut receiver);
 
         let mut cloned = sender.clone();
-        let msg = Message::Data(crate::DataMessage {
+        let msg = Message::Data(DataMessage {
             key: NoKey,
             value: "Hello",
             timestamp: NoTime,
@@ -351,7 +320,7 @@ mod test {
 
         assert!(matches!(
             receiver.recv(),
-            Some(Message::Data(crate::DataMessage {
+            Some(Message::Data(DataMessage {
                 key: NoKey,
                 value: "Hello",
                 timestamp: NoTime
@@ -361,7 +330,7 @@ mod test {
         sender.send(msg);
         assert!(matches!(
             receiver.recv(),
-            Some(Message::Data(crate::DataMessage {
+            Some(Message::Data(DataMessage {
                 key: NoKey,
                 value: "Hello",
                 timestamp: NoTime
@@ -385,7 +354,7 @@ mod test {
         assert!(matches!(receiver.recv(), Some(Message::Epoch(15))));
     }
 
-    /// only issue a barried once it is aligned
+    /// only issue a barrier once it is aligned
     #[test]
     fn aligns_barriers() {
         let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);

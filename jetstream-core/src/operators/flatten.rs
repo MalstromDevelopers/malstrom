@@ -1,7 +1,6 @@
 use super::stateless_op::StatelessOp;
-use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::Timestamp;
-use crate::{Data, DataMessage, MaybeKey};
+use crate::stream::JetStreamBuilder;
+use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
 pub trait Flatten<K, VI, T, VO, I> {
     /// Flatten a datastream. Given a stream of some iterables, this function consumes
@@ -35,7 +34,7 @@ where
             let key = item.key;
             let timestamp = item.timestamp;
             for x in item.value {
-                out.send(crate::Message::Data(DataMessage::new(
+                out.send(Message::Data(DataMessage::new(
                     key.clone(),
                     x,
                     timestamp.clone(),
@@ -51,8 +50,8 @@ mod tests {
 
     use crate::{
         operators::{
-             source::Source, timely::{GenerateEpochs, TimelyStream}, KeyLocal, Sink
-        }, sources::SingleIteratorSource, stream::jetstream::JetStreamBuilder, test::{get_test_stream, VecCollector}, DataMessage, Message
+             source::Source, time::{GenerateEpochs, TimelyStream}, KeyLocal, Sink
+        }, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
     };
 
     use super::Flatten;
@@ -60,7 +59,7 @@ mod tests {
     fn test_flatten() {
         let (builder, stream) = get_test_stream();
 
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
         stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
             .flatten()
@@ -77,8 +76,8 @@ mod tests {
     #[test]
     fn test_preserves_time() {
         let (builder, stream) = get_test_stream();
-        let collector = VecCollector::new();
-        let stream = stream
+        let collector = VecSink::new();
+        let _stream = stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {
@@ -101,9 +100,9 @@ mod tests {
     // check we preserve the key
     #[test]
     fn test_preserves_key() {
-        let (builder, stream) = get_test_stream();
-        let collector = VecCollector::new();
-        let stream = stream
+        let (_builder, stream) = get_test_stream();
+        let collector = VecSink::new();
+        let _stream = stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4, 5], vec![6]]))
             .assign_timestamps(|_| 0)
             .generate_epochs(|x, _| {

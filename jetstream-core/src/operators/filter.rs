@@ -1,7 +1,7 @@
 use super::stateless_op::StatelessOp;
-use crate::stream::jetstream::JetStreamBuilder;
-use crate::time::Timestamp;
-use crate::{Data, MaybeKey};
+use crate::stream::JetStreamBuilder;
+use crate::types::{Message, Timestamp};
+use crate::types::{Data, MaybeKey};
 
 pub trait Filter<K, V, T> {
     /// Filters the datastream based on a given predicate.
@@ -31,7 +31,7 @@ where
     fn filter(self, mut filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T> {
         self.stateless_op(move |item, out| {
             if filter(&item.value) {
-                out.send(crate::Message::Data(item))
+                out.send(Message::Data(item))
             }
         })
     }
@@ -42,7 +42,7 @@ mod tests {
     use crate::{
         operators::{sink::Sink, source::Source},
         sources::SingleIteratorSource,
-        test::{get_test_stream, VecCollector},
+        testing::{get_test_stream, VecSink},
     };
 
     use super::*;
@@ -50,7 +50,7 @@ mod tests {
     fn test_filter() {
         let (builder, stream) = get_test_stream();
 
-        let collector = VecCollector::new();
+        let collector = VecSink::new();
 
         let stream = stream
             .source(SingleIteratorSource::new(0..100))

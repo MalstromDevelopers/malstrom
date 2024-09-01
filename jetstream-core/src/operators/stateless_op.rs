@@ -1,8 +1,8 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::Timestamp,
-    Data, DataMessage, MaybeKey, Message,
+    stream::{JetStreamBuilder, OperatorBuilder},
+    types::{Timestamp,
+    Data, DataMessage, MaybeKey, Message,}
 };
 
 pub trait StatelessOp<K, VI, T> {

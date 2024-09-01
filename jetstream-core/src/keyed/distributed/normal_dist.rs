@@ -4,19 +4,14 @@ use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    keyed::WorkerPartitioner,
-    snapshot::{Barrier, PersistenceClient},
-    stream::operator::OperatorContext,
-    time::{NoTime, Timestamp},
-    DataMessage, MaybeData, Message, WorkerId,
+    channels::selective_broadcast::{Receiver, Sender}, keyed::types::{DistKey, WorkerPartitioner}, snapshot::Barrier, stream::OperatorContext, types::{DataMessage, MaybeData, Message, Timestamp, WorkerId}
 };
 
 use super::{
     icadd_operator::{DistributorKind, TargetedMessage},
     interrogate_dist::InterrogateDistributor,
     versioner::VersionedMessage,
-    DistKey, Version,
+    Version,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

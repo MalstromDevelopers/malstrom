@@ -1,18 +1,18 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
-use postbox::Client;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::keyed::types::DistTimestamp;
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
-use crate::stream::operator::Logic;
-use crate::ShutdownMarker;
+use crate::stream::Logic;
+use crate::types::{ShutdownMarker, Timestamp};
 use crate::{
-    stream::operator::BuildContext, time::Timestamp, MaybeData, MaybeKey, Message, WorkerId,
+    stream::BuildContext, types::{MaybeData, MaybeKey, Message, WorkerId,}
 };
 
-use super::DistTimestamp;
 /// Builds an operator that aligns epochs with its remote counterparts
 pub(crate) fn epoch_aligner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
     ctx: &mut BuildContext,
@@ -119,7 +119,7 @@ fn merge_timestamps<'a, T: Timestamp>(
     let mut merged = timestamps.next()?.clone();
     for x in timestamps {
         if let Some(y) = x {
-            merged = merged.and_then(|a| Some(a.merge(y)));
+            merged = merged.map(|a| a.merge(y));
         } else {
             return None;
         }

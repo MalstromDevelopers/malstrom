@@ -1,7 +1,7 @@
 use crate::{
-    stream::{jetstream::JetStreamBuilder, operator::OperatorBuilder},
-    time::{NoTime, Timestamp},
-    Data, MaybeKey, NoData, NoKey,
+    stream::{JetStreamBuilder, OperatorBuilder},
+    types::{NoTime, Timestamp,
+    Data, MaybeKey, NoData, NoKey,}
 };
 
 pub trait IntoSource<K, V, T> {
