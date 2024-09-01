@@ -20,7 +20,8 @@ where
     T: Timestamp,
 {
     fn inspect_frontier(self, mut inspector: impl FnMut(&T) + 'static) -> JetStreamBuilder<K, V, T> {
-        let stream = self.then(OperatorBuilder::direct(
+        
+        self.then(OperatorBuilder::direct(
             move |input: &mut Receiver<K, V, T>, output, _| {
                 if let Some(msg) = input.recv() {
                     match msg {
@@ -32,7 +33,6 @@ where
                     }
                 };
             },
-        ));
-        stream
+        ))
     }
 }

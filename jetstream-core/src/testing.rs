@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, ops::RangeBounds, rc::Rc, sync::Mutex};
+use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
@@ -7,7 +7,7 @@ use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::{InterThreadCommunication, Shared};
 use crate::snapshot::Barrier;
 use crate::stream::BuildableOperator;
-use crate::runtime::{CommunicationBackend, CommunicationClient, RuntimeBuilder};
+use crate::runtime::{CommunicationClient, RuntimeBuilder};
 use crate::runtime::threaded::SingleThreadRuntime;
 use crate::types::MaybeTime;
 use crate::{
@@ -22,7 +22,6 @@ use crate::{
 use crate::types::{Key, RescaleMessage, ShutdownMarker};
 use indexmap::{IndexMap, IndexSet};
 
-use thiserror::Error;
 mod communication;
 mod vec_sink;
 mod iterator_source;

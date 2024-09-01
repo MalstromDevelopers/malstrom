@@ -11,7 +11,6 @@ use super::{
     normal_dist::NormalDistributor, versioner::VersionedMessage,
     NetworkAcquire,
 };
-use crate::stream::OperatorContext;
 
 /// Control messages which the ICADD controllers exchange
 /// directly between each other
