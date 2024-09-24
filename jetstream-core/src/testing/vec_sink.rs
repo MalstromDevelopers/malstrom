@@ -1,5 +1,5 @@
-use std::{ops::RangeBounds, rc::Rc, sync::Mutex};
-
+use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
+use std::fmt::Debug;
 use crate::{
     operators::{IntoSink, IntoSinkFull},
     stream::OperatorBuilder,
@@ -9,11 +9,11 @@ use crate::{
 /// A Helper to write values into a shared vector and take them out
 /// again.
 /// This is mainly useful to extract values from a stream in unit tests.
-/// This struct uses an Rc<Mutex<Vec<T>> internally, so it can be freely
+/// This struct uses an Arc<Mutex<Vec<T>> internally, so it can be freely
 /// cloned
 #[derive(Clone)]
 pub struct VecSink<T> {
-    inner: Rc<Mutex<Vec<T>>>,
+    inner: Arc<Mutex<Vec<T>>>,
 }
 impl<T> Default for VecSink<T> {
     fn default() -> Self {
@@ -24,7 +24,7 @@ impl<T> Default for VecSink<T> {
 impl<T> VecSink<T> {
     pub fn new() -> Self {
         VecSink {
-            inner: Rc::new(Mutex::new(Vec::new())),
+            inner: Arc::new(Mutex::new(Vec::new())),
         }
     }
 

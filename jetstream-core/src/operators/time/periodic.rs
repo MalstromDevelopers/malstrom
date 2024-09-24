@@ -22,7 +22,7 @@ pub trait PeriodicEpochs<K, V, T> {
         self,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>);
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>);
 }
 
 impl<K, V, T> PeriodicEpochs<K, V, T> for NeedsEpochs<K, V, T>
@@ -35,7 +35,7 @@ where
         self,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
         self.0.generate_periodic_epochs(gen)
     }
 }
@@ -50,7 +50,7 @@ where
         self,
         // previously issued epoch and sys time elapsed since last epoch
         mut gen: impl FnMut(&Option<(&T, Duration)>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
         let operator = OperatorBuilder::built_by(move |build_context| {
             let mut state: Option<(T, SystemTime)> = build_context.load_state().unwrap_or_default();
             move |input, output, ctx| {

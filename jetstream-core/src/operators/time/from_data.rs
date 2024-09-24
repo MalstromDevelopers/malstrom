@@ -16,18 +16,17 @@ pub trait GenerateEpochs<K, V, T> {
     /// DataMessage arriving at this Operator. To not create a new Epoch, the function must return `None`.
     ///
     /// This operator returns two streams, a stream with all on-time message, i.e. message which are not later
-    /// *than the previously issued epoch* and an untimed stream with all late message, i.e. messages with a timestamp
+    /// *than the previously issued epoch* and a stream with all late message, i.e. messages with a timestamp
     /// lower than the previously issued Epoch.
     ///
     /// **NOTES:**
     /// - The Epoch generated is always issued *after* the given message.
-    /// - This Operator removes any incoming epochs
     /// - If the returned epoch is smaller than the previous epoch, it is ignored
     fn generate_epochs(
         self,
         // previously issued epoch and sys time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>);
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>);
 }
 
 impl<K, V, T> GenerateEpochs<K, V, T> for NeedsEpochs<K, V, T>
@@ -39,7 +38,7 @@ where
     fn generate_epochs(
         self,
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
         self.0.generate_epochs(gen)
     }
 }
@@ -53,7 +52,7 @@ where
     fn generate_epochs(
         self,
         mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, NoTime>) {
+    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
         let operator = OperatorBuilder::built_by(|build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
 

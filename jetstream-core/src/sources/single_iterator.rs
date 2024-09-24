@@ -1,6 +1,7 @@
+use std::iter;
+
 use crate::{
-    operators::IntoSource, stream::OperatorBuilder, types::{NoTime, Data,
-    DataMessage, Message, NoData, NoKey,
+    channels::selective_broadcast::{Receiver, Sender}, operators::IntoSource, stream::{Logic, OperatorBuilder}, types::{Data, DataMessage, Message, NoData, NoKey, NoTime
 }};
 
 /// A datasource which yields values from an iterator
@@ -49,32 +50,44 @@ where
     V: Data,
 {
     fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
-        let mut inner = self.iterator.enumerate();
-        let mut final_emitted = false;
-        OperatorBuilder::direct(move |input, output, _ctx| {
-            if !final_emitted {
-                if let Some(x) = inner.next() {
-                    output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
-                } else {
-                    output.send(Message::Epoch(usize::MAX));
-                    final_emitted = true;
+
+
+        OperatorBuilder::built_by(|build_context| {
+            let mut inner = if build_context.worker_id == 0 {
+                self.iterator.enumerate()
+            } else {
+                // do not emit on non-0 worker
+                (Box::new(iter::empty::<V>()) as Box<dyn Iterator<Item = V>>).enumerate()
+            };
+            let mut final_emitted = false;
+    
+            move |input: &mut Receiver<NoKey, NoData, NoTime>, output: &mut Sender<NoKey, V, usize>, _ctx| {
+                if !final_emitted {
+                    if let Some(x) = inner.next() {
+                        output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
+                    } else {
+                        output.send(Message::Epoch(usize::MAX));
+                        final_emitted = true;
+                    }
+                }
+                if let Some(msg) = input.recv() {
+                    match msg {
+                        Message::Data(_) => (),
+                        Message::Epoch(_) => (),
+                        Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
+                        // Message::Load(x) => output.send(Message::Load(x)),
+                        Message::Rescale(x) => output.send(Message::Rescale(x)),
+                        Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                        Message::Interrogate(x) => output.send(Message::Interrogate(x)),
+                        Message::Collect(x) => output.send(Message::Collect(x)),
+                        Message::Acquire(x) => output.send(Message::Acquire(x)),
+                        Message::DropKey(x) => output.send(Message::DropKey(x)),
+                    }
                 }
             }
-            if let Some(msg) = input.recv() {
-                match msg {
-                    Message::Data(_) => (),
-                    Message::Epoch(_) => (),
-                    Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
-                    // Message::Load(x) => output.send(Message::Load(x)),
-                    Message::Rescale(x) => output.send(Message::Rescale(x)),
-                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
-                    Message::Interrogate(x) => output.send(Message::Interrogate(x)),
-                    Message::Collect(x) => output.send(Message::Collect(x)),
-                    Message::Acquire(x) => output.send(Message::Acquire(x)),
-                    Message::DropKey(x) => output.send(Message::DropKey(x)),
-                }
-            }
-        })
+        }
+        
+        )
     }
 }
 
@@ -84,7 +97,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{Sink, Source}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
+        operators::{IntoSource, Sink, Source}, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder, Worker}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
     };
 
     /// The into_iter source should emit the iterator values
@@ -112,7 +125,19 @@ mod tests {
     /// It should only emit records on worker 0 to avoid duplicates
     #[test]
     fn emits_only_on_worker_0() {
-        todo!()
+        let sink = VecSink::new();
+        
+        let args = [sink.clone(), sink.clone()];
+
+        let rt = MultiThreadRuntime::new_with_args(|flavor, this_sink| {
+            let mut builder = RuntimeBuilder::new(flavor);
+            builder.new_stream().source(SingleIteratorSource::new(0..10)).sink(this_sink).finish();
+            builder
+        }, args);
+        
+        rt.execute();
+        // if both threads emitted values, we would expect this to contain 20 values, not 10
+        assert_eq!(sink.len(), 10);
     }
 
     /// values should be timestamped with their iterator index

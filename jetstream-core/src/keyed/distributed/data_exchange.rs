@@ -6,7 +6,7 @@ use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::Logic;
-use crate::{stream::BuildContext};
+use crate::stream::BuildContext;
 use crate::types::{DataMessage, Message, ShutdownMarker, WorkerId};
 
 use super::icadd_operator::TargetedMessage;

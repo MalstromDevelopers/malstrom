@@ -50,8 +50,11 @@ mod tests {
 
     use crate::{
         operators::{
-             source::Source, time::{GenerateEpochs, TimelyStream}, KeyLocal, Sink
-        }, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
+            source::Source,
+            KeyLocal, Sink,
+        },
+        sources::SingleIteratorSource,
+        testing::{get_test_stream, VecSink},
     };
 
     use super::Flatten;
@@ -66,7 +69,7 @@ mod tests {
             .sink(collector.clone())
             .finish();
         builder.build().unwrap().execute();
-        
+
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![1, 2, 3, 4, 5];
         assert_eq!(result, expected);
@@ -77,48 +80,42 @@ mod tests {
     fn test_preserves_time() {
         let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        let _stream = stream
+        stream
             .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]]))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value[0] == 5 {
-                    Some(i32::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
             .flatten()
-            .sink(collector.clone());
+            .sink(collector.clone())
+            .finish();
 
         builder.build().unwrap().execute();
         let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
-        let result = collector.into_iter().map(|x| (x.value, x.timestamp)).collect_vec();
+        let result = collector
+            .into_iter()
+            .map(|x| (x.value, x.timestamp))
+            .collect_vec();
         assert_eq!(result, expected);
     }
 
     // check we preserve the key
     #[test]
     fn test_preserves_key() {
-        let (_builder, stream) = get_test_stream();
+        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        let _stream = stream
-            .source(SingleIteratorSource::new([vec![1, 2], vec![3, 4, 5], vec![6]]))
-            .assign_timestamps(|_| 0)
-            .generate_epochs(|x, _| {
-                if x.value[0] == 6 {
-                    Some(i32::MAX)
-                } else {
-                    None
-                }
-            })
-            .0
+        stream
+            .source(SingleIteratorSource::new([
+                vec![1, 2],
+                vec![3, 4, 5],
+                vec![6],
+            ]))
             .key_local(|x| x.value.len())
             .flatten()
             .sink(collector.clone())
-            ;
+            .finish();
+        builder.build().unwrap().execute();
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
-        let result = collector.into_iter().map(|d| (d.value, d.key)).collect_vec();
+        let result = collector
+            .into_iter()
+            .map(|d| (d.value, d.key))
+            .collect_vec();
         assert_eq!(result, expected);
     }
 }

@@ -2,15 +2,15 @@
 
 use std::{iter, rc::Rc, sync::Mutex};
 
-use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
+use super::{operator::{AppendableOperator, BuildableOperator, OperatorBuilder}, pass_through_operator};
 use crate::{
     channels::selective_broadcast::{self, Sender},
     runtime::{split_n, union, InnerRuntimeBuilder},
-    types::{Data, MaybeKey, MaybeTime, OperatorPartitioner},
+    types::{Data, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner},
 };
 
 #[must_use = "Call .finish() on a stream to finalize it"]
-pub struct JetStreamBuilder<K, V: ?Sized, T> {
+pub struct JetStreamBuilder<K, V, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
     tail: Box<dyn AppendableOperator<K, V, T>>,
     // the runtime this stream is registered to
@@ -97,6 +97,3 @@ where
         split_n(runtime, self, partitioner)
     }
 }
-
-#[cfg(test)]
-mod tests {}

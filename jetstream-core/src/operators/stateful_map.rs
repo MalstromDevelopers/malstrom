@@ -23,7 +23,7 @@ pub trait StatefulMap<K, VI, T> {
     /// key and can either return a new state or `None` to indicate, that
     /// the state for this key need not be retained.
     ///
-    /// Any state can be used as long as it implements the `Default`, `Serialize``
+    /// Any state can be used as long as it implements the `Default`, `Serialize`
     /// and `DeserializeOwned` traits.
     /// A default is required, to create the inital state, when the state for a key
     /// does not yet exist (or has been dropped).
@@ -32,15 +32,18 @@ pub trait StatefulMap<K, VI, T> {
     ///
     /// # Examples
     ///
-    /// This dataflow creates batches of 5 messages each
+    /// This dataflow creates batches of 3 messages each
     ///
     /// ```
-    /// stream: JetStreamBuilder<usize, String, NoTime, NoPersistence>
+    /// # use jetstream::testing::{get_test_stream, VecSink};
+    /// (builder, stream) = get_test_stream();
     ///
+    /// let out = VecSink::new()
     /// stream
+    ///     .source(SingleIteratorSource(0..7))
     ///     .stateful_map(
-    ///         |value, mut state: Vec<String>| {
-    ///             if state.len() == 5 {
+    ///         |value, mut state: Vec<i32>| {
+    ///             if state.len() == 3 {
     ///                 (Some(state), None)
     ///             } else {
     ///                 state.push(value);
@@ -48,7 +51,10 @@ pub trait StatefulMap<K, VI, T> {
     ///             }
     ///         }
     ///     )
-    ///    .filter_map(|value| value)
+    ///    .sink(out.clone())
+    ///    .finish()
+    /// builder.build().unwrap().execute()
+    /// assert_eq!(out.drain(..), vec![vec![0, 1, 2], vec![0, 1, 2]])
     /// ```
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
@@ -111,11 +117,7 @@ fn build_stateful_map<
             Message::AbsBarrier(mut b) => {
                 b.persist(&state, &ctx.operator_id);
                 Message::AbsBarrier(b)
-            }
-            // Message::Load(l) => {
-            //     state = l.load(ctx.operator_id).unwrap_or_default();
-            //     Message::Load(l)
-            // }
+            },
             Message::Rescale(x) => Message::Rescale(x),
             Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
             Message::Epoch(x) => Message::Epoch(x),
@@ -158,9 +160,7 @@ mod test {
     use crate::sources::SingleIteratorSource;
     use crate::testing::{get_test_stream, CapturingPersistenceBackend, OperatorTester, VecSink};
     use crate::types::NoTime;
-    use crate::{
-        operators::{source::Source},
-    };
+    use crate::operators::source::Source;
     use crate::types::{DataMessage, Message};
 
     use super::{build_stateful_map, StatefulMap};

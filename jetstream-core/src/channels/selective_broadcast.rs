@@ -116,6 +116,7 @@ where
     /// Get the frontier on this Sender, i.e the timestamp of the largest
     /// Epoch sent with this sender or `None` if no Epoch has been sent with
     /// this sender yet
+    #[inline]
     pub fn get_frontier(&self) -> &Option<T> {
         &self.frontier
     }
@@ -150,6 +151,7 @@ struct UpstreamState<T> {
     shutdown_marker: Option<ShutdownMarker>,
 }
 impl<T> UpstreamState<T> {
+    /// Upstreams need alignment if the they hav a barrier or shutdownmarker pending
     fn needs_alignement(&self) -> bool {
         self.barrier.is_some() || self.shutdown_marker.is_some()
     }
@@ -172,6 +174,8 @@ pub struct Receiver<K, V, T> {
     // messages we are buffering, because we need alignement
     // from upstream to issue them
     buffered: VecDeque<Message<K, V, T>>,
+    // largest observed Epoch
+    frontier: Option<T>
 }
 
 impl<K, V, T> Receiver<K, V, T> {
@@ -182,6 +186,7 @@ impl<K, V, T> Receiver<K, V, T> {
             receiver,
             states: IndexMap::new(),
             buffered: VecDeque::new(),
+            frontier: None
         }
     }
 
@@ -191,6 +196,11 @@ impl<K, V, T> Receiver<K, V, T> {
 
     fn get_sender(&self) -> crossbeam::channel::Sender<MessageWrapper<K, V, T>> {
         self.sender.clone()
+    }
+
+    #[inline]
+    pub(crate) fn get_frontier(&self) -> &Option<T> {
+        &self.frontier
     }
 }
 
@@ -207,54 +217,6 @@ fn merge_timestamps<'a, T: MaybeTime>(
         }
     }
     merged
-}
-
-fn handle_received<K, V, T: MaybeTime>(
-    states: &mut IndexMap<usize, UpstreamState<T>>,
-    buffer: &mut VecDeque<Message<K, V, T>>,
-    sender: usize,
-    msg: Message<K, V, T>,
-) -> Option<Message<K, V, T>> {
-    // PANIC: Caller guarantees valid index
-    let state = states.get_mut(&sender).unwrap();
-    if state.needs_alignement() {
-        buffer.push_back(msg);
-        return None;
-    }
-    match msg {
-        Message::Epoch(e) => {
-            state.epoch = Some(e);
-            let merged = merge_timestamps(states.values().map(|x| &x.epoch));
-            merged.map(|x| Message::Epoch(x.clone()))
-        }
-        Message::AbsBarrier(b) => {
-            state.barrier = Some(b);
-            if states.values().all(|x| x.barrier.is_some()) {
-                states
-                    .values_mut()
-                    .map(|x| x.barrier.take())
-                    .last()
-                    .flatten()
-                    .map(|x| Message::AbsBarrier(x))
-            } else {
-                None
-            }
-        }
-        Message::ShutdownMarker(s) => {
-            state.shutdown_marker = Some(s);
-            if states.values().all(|x| x.shutdown_marker.is_some()) {
-                states
-                    .values_mut()
-                    .map(|x| x.shutdown_marker.take())
-                    .last()
-                    .flatten()
-                    .map(|x| Message::ShutdownMarker(x))
-            } else {
-                None
-            }
-        }
-        x => Some(x),
-    }
 }
 
 impl<K, V, T> Receiver<K, V, T>
@@ -276,7 +238,7 @@ where
         while let Ok(msg_wrapper) = self.receiver.try_recv() {
             let out = match msg_wrapper {
                 MessageWrapper::Message(i, msg) => {
-                    handle_received(&mut self.states, &mut self.buffered, i, msg)
+                    self.handle_received(i, msg)
                 }
                 MessageWrapper::Register(i) => {
                     self.states.insert(i, UpstreamState::default());
@@ -293,6 +255,60 @@ where
         }
         None
     }
+
+fn handle_received(
+    &mut self,
+    sender: usize,
+    msg: Message<K, V, T>,
+) -> Option<Message<K, V, T>> {
+    // PANIC: Caller guarantees valid index
+    let state = self.states.get_mut(&sender).unwrap();
+    if state.needs_alignement() {
+        self.buffered.push_back(msg);
+        return None;
+    }
+    match msg {
+        Message::Epoch(e) => {
+            state.epoch = Some(e);
+            let merged = merge_timestamps(self.states.values().map(|x| &x.epoch));
+            if let Some(m) = merged.as_ref() {
+                if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
+                    self.frontier = Some(m.clone());
+                }
+            }
+            let merged_epoch = merged.map(|x| Message::Epoch(x.clone()));
+            merged_epoch
+        }
+        Message::AbsBarrier(b) => {
+            state.barrier = Some(b);
+            if self.states.values().all(|x| x.barrier.is_some()) {
+                self.states
+                    .values_mut()
+                    .map(|x| x.barrier.take())
+                    .last()
+                    .flatten()
+                    .map(|x| Message::AbsBarrier(x))
+            } else {
+                None
+            }
+        }
+        Message::ShutdownMarker(s) => {
+            state.shutdown_marker = Some(s);
+            if self.states.values().all(|x| x.shutdown_marker.is_some()) {
+                self.states
+                    .values_mut()
+                    .map(|x| x.shutdown_marker.take())
+                    .last()
+                    .flatten()
+                    .map(|x| Message::ShutdownMarker(x))
+            } else {
+                None
+            }
+        }
+        x => Some(x),
+    }
+}
+
 }
 
 #[cfg(test)]
@@ -477,6 +493,48 @@ mod test {
         assert_eq!(*sender.get_frontier(), Some(42));
         sender.send(Message::Epoch(i32::MAX));
         assert_eq!(*sender.get_frontier(), Some(i32::MAX));
+    }
 
+    #[test]
+    fn receiver_observe_frontier(){
+        let mut sender1: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut receiver = Receiver::new_unlinked();
+        link(&mut sender1, &mut receiver);
+        link(&mut sender2, &mut receiver);
+
+        sender1.send(Message::Epoch(42));
+        // not yet aligned
+        receiver.recv();
+        assert_eq!(*receiver.get_frontier(), None);
+
+        sender2.send(Message::Epoch(78));
+        receiver.recv();
+        assert_eq!(*receiver.get_frontier(), Some(42));
+
+        sender1.send(Message::Epoch(1337));
+        sender2.send(Message::Epoch(1337));
+        receiver.recv();
+        receiver.recv();
+        assert_eq!(*receiver.get_frontier(), Some(1337));
+    }
+
+    #[test]
+    fn merges_timestamps() {
+        assert_eq!(merge_timestamps(vec![None, Some(43)].iter()), None);
+        assert_eq!(merge_timestamps(vec![Some(42), Some(43)].iter()), Some(42));
+        assert_eq!(merge_timestamps(vec![Some(1337), Some(1337)].iter()), Some(1337));
+        assert_eq!(merge_timestamps::<i32>(vec![None, None].iter()), None);
+    }
+
+    /// Should just discard messages
+    #[test]
+    fn sender_without_sink_discards() {
+        let mut sender = Sender::new_unlinked(full_broadcast);
+        let elem = Rc::new("brox");
+        // this should not panic
+        sender.send(Message::Data(DataMessage::new("Beeble", elem.clone(), 42)));
+        // if the sender had kept or sent the message somewhere this should panic
+        Rc::try_unwrap(elem).unwrap();
     }
 }

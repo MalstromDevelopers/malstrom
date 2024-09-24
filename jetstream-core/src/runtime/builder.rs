@@ -97,18 +97,6 @@ where
         let mut operators = inner.into_inner().unwrap().finish();
         operators.insert(0, Box::new(snapshot_op).into_buildable());
 
-        // TODO: make all of this configurable
-        // let listen_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), config.port));
-        // let peers = config.get_cluster_uris();
-        // let peer_len = peers.len();
-        // let _operator_ids: Vec<OperatorId> =
-        //     (0..(operators.len())).collect();
-
-        // let mut communication_backend = postbox::PostboxBuilder::new()
-        //     .build(listen_addr, move |addr: &(WorkerId, OperatorId)| {
-        //         peers.get(&addr.0).cloned()
-        //     })
-        //     .unwrap();
         let cluster_size = self.flavor.runtime_size();
         let this_worker = self.flavor.this_worker_id();
         let mut communication_backend = self.flavor.establish_communication()?;
@@ -166,6 +154,8 @@ impl InnerRuntimeBuilder {
         stream: JetStreamBuilder<K, V, T>,
     ) {
         // call void to destroy all remaining messages
+        // TODO: With the current implementaion of inter-operator channels this is unnecessary
+        // as they will drop messages if there are no receivers
         self.operators.extend(
             stream
                 .void()
@@ -279,15 +269,10 @@ mod tests {
     /// check we can build with persistance enabled
     #[test]
     fn builds_with_persistence() {
-        let _rt = RuntimeBuilder::new(SingleThreadRuntime)
+        let rt = RuntimeBuilder::new(SingleThreadRuntime)
             .with_persistence_backend(NoPersistence::default())
             .with_snapshot_timer(|| false)
-            .build();
-
-        todo!()
+            .build()
+            .unwrap();
     }
-
-    /// Execute should run the worker until all operators are done
-    #[test]
-    fn execute_runs_until_done() {}
 }
