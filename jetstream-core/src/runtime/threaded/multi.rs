@@ -12,6 +12,28 @@ use crate::{
 use super::{communication::InterThreadCommunication, Shared};
 
 /// Runs all dataflows on multiple threads within one machine
+/// 
+/// # Example
+/// ```
+/// let ranges = [(0..10), (10..20)];
+/// let rt = MultiThreadRuntime::new_with_args(
+///     |flavor, range| {
+///     // create the stream builder
+///     let mut builder = RuntimeBuilder::new(flavor);
+///     // create the stream
+///     builder
+///     .new_stream()
+///     .source(MultiIteratorSource::new(range))
+///     .inspect(|x| println!("{x}"))    
+///     .finish();
+///     // return the builder with its streams
+///     builder
+///     },
+///     args
+/// );
+/// // execute on all threads
+/// rt.execute();
+/// ```
 pub struct MultiThreadRuntime {
     /// we need to wait on this for the threads to start executing
     execution_barrier: Arc<Barrier>,
