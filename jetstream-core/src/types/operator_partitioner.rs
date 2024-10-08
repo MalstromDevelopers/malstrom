@@ -9,6 +9,7 @@ pub type OperatorId = usize;
 /// The OperatorPartitioner is a function which receives as arguments:
 /// - a reference to every message to be partitioned
 /// - the count of available receivers
+/// 
 /// And should emit the **indices** of the receivers, which should receive this message
 pub trait OperatorPartitioner<K, V, T>:
     Fn(&DataMessage<K, V, T>, usize) -> Vec<OperatorId> + 'static

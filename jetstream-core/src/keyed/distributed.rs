@@ -1,14 +1,6 @@
-use std::{
-    collections::VecDeque,
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-    sync::Mutex,
-};
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 mod message_router;
 pub mod types;
@@ -20,11 +12,11 @@ pub use types::*;
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    runtime::{communication::Distributable, CommunicationClient},
+    runtime::CommunicationClient,
     snapshot::Barrier,
-    stream::{BuildContext, Logic, OperatorContext},
+    stream::{BuildContext, OperatorContext},
     types::{
-        DataMessage, Key, MaybeData, MaybeTime, Message, RescaleMessage, ShutdownMarker, Timestamp,
+        DataMessage, Message, RescaleMessage, ShutdownMarker, Timestamp,
         WorkerId,
     },
 };
@@ -68,7 +60,7 @@ where
             None => {
                 let remotes = create_remotes(&other_workers, ctx);
                 let state = MessageRouter::new(
-                    ctx.get_worker_ids().into_iter().collect(),
+                    ctx.get_worker_ids().collect(),
                     Version::default(),
                 );
                 (state, remotes)
@@ -84,70 +76,77 @@ where
         }
     }
 
-/// Schedule this as an operator in the dataflow
-pub(super) fn run(
-    &mut self,
-    input: &mut Receiver<K, V, T>,
-    output: &mut Sender<K, V, T>,
-    ctx: &mut OperatorContext,
-) {
+    /// Schedule this as an operator in the dataflow
+    pub(super) fn run(
+        &mut self,
+        input: &mut Receiver<K, V, T>,
+        output: &mut Sender<K, V, T>,
+        ctx: &mut OperatorContext,
+    ) {
+        // HACK we collect messages into the vec because
+        // we can't hold onto a &self when invoking the handlers
+        let remote_message: Vec<(WorkerId, NetworkMessage<K, V, T>)> = self
+            .remotes
+            .iter()
+            .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_shutdown)
+            .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
+            .collect();
 
-    // HACK we collect messages into the vec because
-    // we can't hold onto a &self when invoking the handlers
-    let remote_message: Vec<(WorkerId, NetworkMessage<K, V, T>)> = self.remotes.iter()
-    .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_shutdown)
-    .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
-    .collect();
-
-    for (wid, msg) in remote_message.into_iter() {
-        match msg {
-            NetworkMessage::Data(data_message) => {
-                self.handle_remote_data_message(data_message, &wid, output, &ctx)
-            }
-            NetworkMessage::Epoch(epoch) => {
-                self.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
-                self.handle_local_epoch(epoch, output)
-            },
-            NetworkMessage::BarrierMarker => self.remotes.get_mut(&wid).unwrap().1.is_barred = true,
-            NetworkMessage::ShutdownMarker => self.remotes.get_mut(&wid).unwrap().1.sent_shutdown = true,
-            NetworkMessage::Acquire(network_acquire) => {
-                output.send(Message::Acquire(network_acquire.into()))
-            }
-            NetworkMessage::Upgrade(version) => self.remotes.get_mut(&wid).unwrap().1.last_version = version,
-        }
-    }
-
-    // not allowed to receive local if barrier is not resolved
-    if self.local_barrier.is_none() {
-        if let Some(msg) = input.recv() {
+        for (wid, msg) in remote_message.into_iter() {
             match msg {
-                Message::Data(msg) => self.handle_local_data_message(msg, output, ctx),
-                Message::Epoch(epoch) => self.handle_local_epoch(epoch, output),
-                Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
-                Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
-                Message::ShutdownMarker(shutdown_marker) => {
-                    self.local_shutdown = Some(shutdown_marker)
+                NetworkMessage::Data(data_message) => {
+                    self.handle_remote_data_message(data_message, &wid, output, ctx)
                 }
-
-                // these ones we can just ignore
-                Message::Interrogate(_) => (),
-                Message::Collect(_) => (),
-                Message::Acquire(_) => (),
-                Message::DropKey(_) => (),
+                NetworkMessage::Epoch(epoch) => {
+                    self.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
+                    self.handle_local_epoch(epoch, output)
+                }
+                NetworkMessage::BarrierMarker => {
+                    self.remotes.get_mut(&wid).unwrap().1.is_barred = true
+                }
+                NetworkMessage::ShutdownMarker => {
+                    self.remotes.get_mut(&wid).unwrap().1.sent_shutdown = true
+                }
+                NetworkMessage::Acquire(network_acquire) => {
+                    output.send(Message::Acquire(network_acquire.into()))
+                }
+                NetworkMessage::Upgrade(version) => {
+                    self.remotes.get_mut(&wid).unwrap().1.last_version = version
+                }
             }
         }
-    }
 
-    // try to clear these
-    // Now you might be tempted to do this in an event driven way
-    // where we only call these functions if we get shutdown or barrier
-    // messages, but that does not handle the case where the removal
-    // of another worker allows them to be emitted
-    self.try_emit_barrier(output);
-    self.try_emit_shutdown(output);
-    self.router
-        .apply(|x| x.lifecycle(self.partitioner, output, &self.remotes, &ctx));
-}
+        // not allowed to receive local if barrier is not resolved
+        if self.local_barrier.is_none() {
+            if let Some(msg) = input.recv() {
+                match msg {
+                    Message::Data(msg) => self.handle_local_data_message(msg, output, ctx),
+                    Message::Epoch(epoch) => self.handle_local_epoch(epoch, output),
+                    Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
+                    Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
+                    Message::ShutdownMarker(shutdown_marker) => {
+                        self.local_shutdown = Some(shutdown_marker)
+                    }
+
+                    // these ones we can just ignore
+                    Message::Interrogate(_) => (),
+                    Message::Collect(_) => (),
+                    Message::Acquire(_) => (),
+                    Message::DropKey(_) => (),
+                }
+            }
+        }
+
+        // try to clear these
+        // Now you might be tempted to do this in an event driven way
+        // where we only call these functions if we get shutdown or barrier
+        // messages, but that does not handle the case where the removal
+        // of another worker allows them to be emitted
+        self.try_emit_barrier(output);
+        self.try_emit_shutdown(output);
+        self.router
+            .apply(|x| x.lifecycle(self.partitioner, output, &self.remotes));
+    }
 
     /// Handle a data message we received from our local upstream
     fn handle_local_data_message(
@@ -230,15 +229,6 @@ pub(super) fn run(
         }
     }
 
-    fn handle_remote_epoch(&mut self, epoch: T, sent_by: &WorkerId, output: &mut Sender<K, V, T>) {
-        self.remotes
-            .get_mut(sent_by)
-            .expect("Epoch sender is known")
-            .1
-            .frontier = Some(epoch.clone());
-        self.handle_local_epoch(epoch, output);
-    }
-
     /// Handle a barrier we receive
     fn handle_local_barrier(&mut self, barrier: Barrier) {
         self.local_barrier = Some(barrier);
@@ -248,22 +238,6 @@ pub(super) fn run(
         );
     }
 
-    fn handle_remote_barrier(&mut self, sent_by: &WorkerId) {
-        self.remotes
-            .get_mut(sent_by)
-            .expect("Barrier sender is known")
-            .1
-            .is_barred = true;
-    }
-
-    fn handle_remote_shutdown(&mut self, sent_by: &WorkerId) {
-        self.remotes
-            .get_mut(sent_by)
-            .expect("Shutdown sender is known")
-            .1
-            .sent_shutdown = true;
-    }
-
     fn handle_rescale_message(
         &mut self,
         message: RescaleMessage,
@@ -271,7 +245,8 @@ pub(super) fn run(
         ctx: &mut OperatorContext,
     ) {
         match &message {
-            RescaleMessage::ScaleRemoveWorker(index_set) => (),
+            // we can not remove these yet because they may still have messages for us
+            RescaleMessage::ScaleRemoveWorker(_index_set) => (),
             RescaleMessage::ScaleAddWorker(to_add) => {
                 for wid in to_add {
                     let comm_client = ctx.create_communication_client(*wid, ctx.worker_id);
@@ -313,9 +288,9 @@ pub(super) fn run(
 }
 
 fn create_remotes<K, V, T>(
-    other_workers: &Vec<WorkerId>,
+    other_workers: &[WorkerId],
     ctx: &mut BuildContext,
-) -> IndexMap<usize, (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>
+) -> Remotes<K, V, T>
 where
     K: DistKey,
     V: DistData,

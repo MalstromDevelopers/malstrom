@@ -2,11 +2,11 @@
 
 use std::{iter, rc::Rc, sync::Mutex};
 
-use super::{operator::{AppendableOperator, BuildableOperator, OperatorBuilder}, pass_through_operator};
+use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
     channels::selective_broadcast::{self, Sender},
     runtime::{split_n, union, InnerRuntimeBuilder},
-    types::{Data, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner},
+    types::{Data, MaybeKey, MaybeTime, OperatorPartitioner},
 };
 
 #[must_use = "Call .finish() on a stream to finalize it"]

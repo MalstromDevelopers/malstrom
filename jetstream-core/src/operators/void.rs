@@ -39,7 +39,7 @@ fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::{rc::Rc, sync::Mutex};
+    use std::rc::Rc;
 
     use indexmap::{IndexMap, IndexSet};
 

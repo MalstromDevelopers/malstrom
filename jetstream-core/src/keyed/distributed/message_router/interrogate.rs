@@ -4,10 +4,10 @@ use indexmap::IndexSet;
 
 use crate::{types::{Key, RescaleMessage, WorkerId}};
 use super::super::types::*;
-use super::{collect::CollectRouter, normal::NormalRouter, MessageRouter};
+use super::{collect::CollectRouter, MessageRouter};
 
 
-pub(super) struct InterrogateRouter<K> {
+pub(crate) struct InterrogateRouter<K> {
     pub(super) version: Version,
     // keys we will always pass on (for the moment)
     // pub(super) whitelist: IndexSet<K>,
@@ -31,10 +31,10 @@ impl<K> InterrogateRouter<K> where K: Key {
     {
         let new_worker_set: IndexSet<WorkerId> = match trigger {
             RescaleMessage::ScaleRemoveWorker(to_remove) => {
-                old_worker_set.difference(&to_remove).map(|x| *x).collect()
+                old_worker_set.difference(&to_remove).copied().collect()
             }
             RescaleMessage::ScaleAddWorker(to_add) => {
-                old_worker_set.union(&to_add).map(|x| *x).collect()
+                old_worker_set.union(&to_add).copied().collect()
             }
         };
 

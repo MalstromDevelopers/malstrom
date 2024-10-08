@@ -5,11 +5,13 @@ use crate::{channels::selective_broadcast::{full_broadcast, Receiver, Sender}, t
 use super::{standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, OperatorContext, RunnableOperator};
 
 
+type LogicBuilder<KI, VI, TI, KO, VO, TO> = dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>;
+
 /// A builder type to build generic operators
 pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     input: Receiver<KI, VI, TI>,
     // TODO: get rid of the dynamic dispatch here
-    logic_builder: Box<dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>>,
+    logic_builder: Box<LogicBuilder<KI, VI, TI, KO, VO, TO>>,
     output: Sender<KO, VO, TO>,
     label: Option<String>,
 }

@@ -141,24 +141,20 @@ where
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
-    use std::i32;
     use std::rc::Rc;
-    use std::sync::Mutex;
 
     use indexmap::{IndexMap, IndexSet};
     use itertools::Itertools;
 
-    use crate::channels::selective_broadcast::{full_broadcast, link, Receiver, Sender};
     use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
     use crate::operators::source::Source;
     use crate::operators::{KeyLocal, Sink};
     use crate::runtime::CommunicationClient;
-    use crate::snapshot::{Barrier, NoPersistence, PersistenceClient};
+    use crate::snapshot::{Barrier, PersistenceClient};
     use crate::sources::SingleIteratorSource;
-    use crate::stream::{BuildContext, OperatorContext};
     use crate::testing::{
-        get_test_stream, CapturingPersistenceBackend, NoCommunication, OperatorTester, VecSink
+        get_test_stream, CapturingPersistenceBackend, OperatorTester, VecSink
     };
     use crate::types::NoTime;
     use crate::types::{DataMessage, Message};
@@ -243,7 +239,7 @@ mod test {
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.recv_local() {}
+        while tester.recv_local().is_some() {}
 
         let result = interrogator.try_unwrap().unwrap();
         assert_eq!(IndexSet::from([1, 5]), result)
@@ -277,7 +273,7 @@ mod test {
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.recv_local() {}
+        while tester.recv_local().is_some() {}
 
         let result = interrogator.try_unwrap().unwrap();
         assert!(result.is_empty());
@@ -308,7 +304,7 @@ mod test {
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.recv_local() {}
+        while tester.recv_local().is_some() {}
 
         let foo_enc = bincode::serde::encode_to_vec("foo", bincode::config::standard()).unwrap();
         let (_key, result) = collector.try_unwrap().unwrap();
@@ -344,7 +340,7 @@ mod test {
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.recv_local() {}
+        while tester.recv_local().is_some() {}
 
         let (_key, result) = collector.try_unwrap().unwrap();
         assert!(result.is_empty());

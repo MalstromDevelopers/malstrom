@@ -1,22 +1,19 @@
-use std::collections::VecDeque;
 
-use indexmap::{IndexMap, IndexSet};
-use proptest::collection;
+use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
-    keyed::{distributed::NetworkDataMessage, types::*},
-    runtime::{communication::broadcast, CommunicationClient},
-    stream::OperatorContext,
+    channels::selective_broadcast::Sender,
+    keyed::distributed::{NetworkDataMessage, Remotes},
+    runtime::communication::broadcast,
     types::*,
 };
 
 use super::{
-    finished::FinishedRouter, interrogate::InterrogateRouter, normal::NormalRouter, MessageRouter, NetworkMessage, RemoteState
+    finished::FinishedRouter, MessageRouter, NetworkMessage
 };
 use super::super::types::*;
 
-pub(super) struct CollectRouter<K, V, T> {
+pub(crate) struct CollectRouter<K, V, T> {
     pub(super) version: Version,
 
     whitelist: IndexSet<K>,
@@ -26,23 +23,12 @@ pub(super) struct CollectRouter<K, V, T> {
     buffered: Vec<DataMessage<K, V, T>>,
 
     current_collect: Option<Collect<K>>,
-    done_workers: IndexSet<WorkerId>,
 
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
     pub(super) queued_rescales: Vec<RescaleMessage>,
 }
 
-struct AcquireWithBufferd<K, V, T> {
-    acquire: NetworkAcquire<K>,
-    buffered: VecDeque<DataMessage<K, V, T>>,
-}
-
-pub(super) enum NextCollect<K> {
-    Collect(Collect<K>),
-    Done,
-    None,
-}
 
 impl<K, V, T> CollectRouter<K, V, T> where K: Key {
     pub(super) fn new(
@@ -59,7 +45,6 @@ impl<K, V, T> CollectRouter<K, V, T> where K: Key {
             new_worker_set,
             buffered: Vec::new(),
             current_collect: None,
-            done_workers: IndexSet::new(),
             queued_rescales,
         }
     }
@@ -114,11 +99,7 @@ where
         mut self,
         partitioner: WorkerPartitioner<K>,
         output: &mut Sender<K, V, T>,
-        remotes: &IndexMap<
-            WorkerId,
-            (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>),
-        >,
-        ctx: &OperatorContext,
+        remotes: &Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
 
         // try finishing the state collection

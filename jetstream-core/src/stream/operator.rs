@@ -28,8 +28,6 @@ pub(crate) fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
 
 #[cfg(test)]
 mod test {
-    use std::i32;
-
     use super::{pass_through_operator, AppendableOperator, OperatorBuilder};
     use crate::{
         channels::selective_broadcast::{full_broadcast, link, Sender}, snapshot::NoPersistence, stream::operator::BuildContext, testing::NoCommunication, types::{Message, NoData, NoKey}

@@ -1,10 +1,10 @@
 use collect::CollectRouter;
 use finished::FinishedRouter;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 use interrogate::InterrogateRouter;
 
-use crate::{channels::selective_broadcast::Sender, runtime::CommunicationClient, stream::OperatorContext, types::*};
-use super::types::*;
+use crate::{channels::selective_broadcast::Sender, types::*};
+use super::{types::*, Remotes};
 
 mod collect;
 mod finished;
@@ -30,8 +30,8 @@ where
         Self::Normal(normal)
     }
 
-    pub(super) fn route_message<'a>(
-        &'a mut self,
+    pub(super) fn route_message(
+        &mut self,
         msg: DataMessage<K, V, T>,
         msg_version: Option<Version>,
         partitioner: WorkerPartitioner<K>,
@@ -54,7 +54,7 @@ where
                 collect_state.route_message(msg, partitioner, this_worker, sender)
             }
             MessageRouter::Finished(finished_state) => {
-                let target = finished_state.route_message::<K, V, T>(&msg.key, partitioner, this_worker, sender);
+                let target = finished_state.route_message(&msg.key, partitioner, this_worker, sender);
                 Some((msg, target))
             }
         }
@@ -98,17 +98,13 @@ impl <K, V, T> MessageRouter<K, V, T> where K: DistKey, V: DistData, T: DistTime
         self: MessageRouter<K, V, T>,
         partitioner: WorkerPartitioner<K>,
         output: &mut Sender<K, V, T>,
-        remotes: &IndexMap<
-            WorkerId,
-            (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>),
-        >,
-        ctx: &OperatorContext,
+        remotes: &Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         match self {
             MessageRouter::Normal(normal_router) => MessageRouter::Normal(normal_router),
             MessageRouter::Interrogate(interrogate_router) => interrogate_router.lifecycle(),
             MessageRouter::Collect(collect_router) => {
-                collect_router.lifecycle(partitioner, output, remotes, ctx)
+                collect_router.lifecycle(partitioner, output, remotes)
             }
             MessageRouter::Finished(finished_router) => {
                 finished_router.lifecycle(partitioner, output, remotes)

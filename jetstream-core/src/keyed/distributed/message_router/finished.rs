@@ -1,10 +1,10 @@
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 
 use super::{super::types::*, interrogate::InterrogateRouter, MessageRouter, NormalRouter};
-use crate::{channels::selective_broadcast::Sender, runtime::CommunicationClient, types::*};
+use crate::{channels::selective_broadcast::Sender, keyed::distributed::Remotes, types::*};
 /// A collect route which has finished its local collection cycles
 /// and is now just waiting for all remotes to finish
-pub(super) struct FinishedRouter {
+pub(crate) struct FinishedRouter {
     pub(super) version: Version,
 
     old_worker_set: IndexSet<WorkerId>,
@@ -21,7 +21,7 @@ impl FinishedRouter {
     }
     
 
-    pub(super) fn route_message<K, V, T>(
+    pub(super) fn route_message<K>(
         &mut self,
         key: &K,
         partitioner: WorkerPartitioner<K>,
@@ -47,12 +47,9 @@ impl FinishedRouter {
         mut self,
         partitioner: WorkerPartitioner<K>,
         output: &mut Sender<K, V, T>,
-        remotes: &IndexMap<
-            WorkerId,
-            (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>),
-        >,
+        remotes: &Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> where K: Key, V: MaybeData, T: MaybeTime {
-
+        // TODO: Remove removed remotes
         if remotes.values().all(|(_, state)| state.last_version >= self.version) {
             match self.queued_rescales.pop() {
                 Some(rescale) => {

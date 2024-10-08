@@ -1,7 +1,7 @@
 use std::iter;
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, operators::IntoSource, stream::{Logic, OperatorBuilder}, types::{Data, DataMessage, Message, NoData, NoKey, NoTime
+    channels::selective_broadcast::{Receiver, Sender}, operators::IntoSource, stream::OperatorBuilder, types::{Data, DataMessage, Message, NoData, NoKey, NoTime
 }};
 
 /// A datasource which yields values from an iterator
@@ -98,7 +98,7 @@ mod tests {
     use proptest::bits::usize;
 
     use crate::{
-        operators::*, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder, Worker}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::{DataMessage, Message, NoKey}
+        operators::*, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::Message
     };
 
     /// The into_iter source should emit the iterator values

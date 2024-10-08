@@ -1,5 +1,4 @@
 use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
-use std::fmt::Debug;
 use crate::{
     operators::{IntoSink, IntoSinkFull},
     stream::OperatorBuilder,

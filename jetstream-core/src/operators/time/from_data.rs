@@ -2,7 +2,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{NoTime, Timestamp,
+    types::{Timestamp,
     DataMessage, MaybeData, MaybeKey, Message,}
 };
 

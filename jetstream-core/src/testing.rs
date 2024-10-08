@@ -1,22 +1,17 @@
-use std::time::{Duration, Instant};
 use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntime;
-use crate::runtime::threaded::{InterThreadCommunication, Shared};
-use crate::runtime::{CommunicationClient, RuntimeBuilder};
+use crate::runtime::RuntimeBuilder;
 use crate::snapshot::Barrier;
-use crate::stream::BuildableOperator;
 use crate::types::MaybeTime;
 use crate::types::{Key, RescaleMessage, ShutdownMarker};
 use crate::{
-    channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     stream::{
         JetStreamBuilder,
-        {AppendableOperator, BuildContext, Logic, OperatorBuilder, RunnableOperator},
     },
     types::{MaybeData, MaybeKey, Message, NoData, NoKey, NoTime, OperatorId, WorkerId},
 };
@@ -168,11 +163,7 @@ mod tests {
 
     use itertools::Itertools;
 
-    use crate::{
-        snapshot::{deserialize_state, serialize_state},
-        stream::OperatorContext,
-        types::DataMessage,
-    };
+    use crate::snapshot::{deserialize_state, serialize_state};
 
     use super::*;
 

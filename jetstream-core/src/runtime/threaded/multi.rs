@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    runtime::{RuntimeBuilder, RuntimeFlavor, Worker},
+    runtime::{RuntimeBuilder, RuntimeFlavor},
     snapshot::PersistenceBackend,
     types::WorkerId,
 };
@@ -69,7 +69,7 @@ impl MultiThreadRuntime {
         }
     }
 
-    pub fn execute(self) -> () {
+    pub fn execute(self) {
         // start execution on all threads
         self.execution_barrier.wait();
         for t in self.threads {

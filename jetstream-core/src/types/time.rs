@@ -20,7 +20,7 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
 /// Operators emittng `NoTime` are seen as not able to advance the computation.
 /// This means if all operators emitting timestamps in a stream are finished, a `NoTime`
 /// emitting operator will not keep the stream running.
-#[derive(Clone, Debug, Ord, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NoTime;
 
 impl PartialOrd for NoTime {

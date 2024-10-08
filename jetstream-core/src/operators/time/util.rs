@@ -2,11 +2,11 @@ use crate::{
     channels::selective_broadcast::Sender,
     operators::map::Map,
     stream::JetStreamBuilder,
-    types::{NoTime, Timestamp,
+    types::{Timestamp,
     DataMessage, MaybeData, MaybeKey, Message,}
 };
 
-use super::{timed_stream::OnTimeLate, TimelyStream};
+use super::timed_stream::OnTimeLate;
 
 
 #[inline(always)]

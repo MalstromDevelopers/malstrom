@@ -276,8 +276,7 @@ fn handle_received(
                     self.frontier = Some(m.clone());
                 }
             }
-            let merged_epoch = merged.map(|x| Message::Epoch(x.clone()));
-            merged_epoch
+            merged.map(|x| Message::Epoch(x.clone()))
         }
         Message::AbsBarrier(b) => {
             state.barrier = Some(b);
@@ -313,8 +312,6 @@ fn handle_received(
 
 #[cfg(test)]
 mod test {
-    use std::i32;
-
     use crate::{snapshot::NoPersistence, types::{NoTime, DataMessage, NoData, NoKey}};
 
     use super::*;
@@ -521,10 +518,10 @@ mod test {
 
     #[test]
     fn merges_timestamps() {
-        assert_eq!(merge_timestamps(vec![None, Some(43)].iter()), None);
-        assert_eq!(merge_timestamps(vec![Some(42), Some(43)].iter()), Some(42));
-        assert_eq!(merge_timestamps(vec![Some(1337), Some(1337)].iter()), Some(1337));
-        assert_eq!(merge_timestamps::<i32>(vec![None, None].iter()), None);
+        assert_eq!(merge_timestamps([None, Some(43)].iter()), None);
+        assert_eq!(merge_timestamps([Some(42), Some(43)].iter()), Some(42));
+        assert_eq!(merge_timestamps([Some(1337), Some(1337)].iter()), Some(1337));
+        assert_eq!(merge_timestamps::<i32>([None, None].iter()), None);
     }
 
     /// Should just discard messages
