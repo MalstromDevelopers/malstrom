@@ -4,7 +4,7 @@ use derive_new::new;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
-use crate::{keyed::types::{DistKey, DistTimestamp, WorkerPartitioner}, stream::{BuildContext, Logic}, types::{MaybeData, WorkerId}};
+use crate::{channels::selective_broadcast::{Receiver, Sender}, keyed::types::{DistKey, DistTimestamp, WorkerPartitioner}, stream::{BuildContext, Logic, OperatorContext}, types::{MaybeData, WorkerId}};
 
 use super::{
     collect_dist::CollectDistributor, interrogate_dist::InterrogateDistributor,
@@ -14,7 +14,7 @@ use super::{
 
 /// Control messages which the ICADD controllers exchange
 /// directly between each other
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(super) enum DirectlyExchangedMessage<K> {
     Done,
     Acquire(NetworkAcquire<K>),
@@ -41,15 +41,23 @@ pub(crate) fn icadd<K: DistKey, V: MaybeData, T: DistTimestamp>(
     let normal_dist: NormalDistributor<K, V, T> = ctx
         .load_state()
         .unwrap_or_else(|| NormalDistributor::new(ctx.worker_id, worker_set));
-    let mut dist = Some(DistributorKind::Normal(normal_dist));
+
+    make_icadd_with_dist(partitioner, DistributorKind::Normal(normal_dist))
+}
+
+/// this exists mainly to make testing easier
+/// for real usage see [icadd]
+#[inline]
+pub(super) fn make_icadd_with_dist<K: DistKey, V: MaybeData, T: DistTimestamp>(partitioner: Rc<dyn WorkerPartitioner<K>>, kind: DistributorKind<K, V, T>) -> impl Logic<K, VersionedMessage<V>, T, K, TargetedMessage<V>, T> {
+    let mut dist_container = Some(kind);
 
     move |input, output, op_ctx| {
-        let d = dist.take().unwrap();
+        let d = dist_container.take().unwrap();
         let new = match d {
             DistributorKind::Normal(x) => x.run(input, output, op_ctx, partitioner.clone()),
             DistributorKind::Interrogate(x) => x.run(input, output, op_ctx, partitioner.clone()),
             DistributorKind::Collect(x) => x.run(input, output, op_ctx, partitioner.clone()),
         };
-        dist.replace(new);
+        dist_container.replace(new);
     }
 }

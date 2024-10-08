@@ -2,7 +2,9 @@ use derive_new::new;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    keyed::types::{DistTimestamp, Version}, stream::{BuildContext, Logic}, types::{DataMessage, MaybeData, MaybeKey, Message, WorkerId}
+    keyed::types::{DistTimestamp, Version},
+    stream::{BuildContext, Logic},
+    types::{DataMessage, MaybeData, MaybeKey, Message, WorkerId},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, new)]
@@ -39,5 +41,45 @@ pub(crate) fn versioner<K: MaybeKey, V: MaybeData, T: DistTimestamp>(
                 Message::DropKey(d) => output.send(Message::DropKey(d)),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::test_forward_system_messages;
+    use crate::types::*;
+    use crate::{testing::OperatorTester, types::NoData};
+    /// Should attache version 0 to all data messages
+    #[test]
+    fn attaches_version_0() {
+        let mut tester: OperatorTester<i32, NoData, i32, i32, VersionedMessage<NoData>, i32, ()> =
+            OperatorTester::built_by(versioner, 0, 0, 0..1);
+        tester.send_local(Message::Data(DataMessage::new(1, NoData, 2)));
+        tester.step();
+        let out = tester.recv_local().unwrap();
+        assert!(
+            matches!(
+                out,
+                Message::Data(DataMessage {
+                    key: 1,
+                    value: VersionedMessage {
+                        inner: NoData,
+                        version: 0,
+                        sender: 0
+                    },
+                    timestamp: 2
+                })
+            ),
+            "{out:?}"
+        )
+    }
+
+    /// All system messages should be forwared as-is
+    #[test]
+    fn forwards_sys_messages() {
+        let mut tester: OperatorTester<i32, NoData, i32, i32, VersionedMessage<NoData>, i32, ()> =
+            OperatorTester::built_by(versioner, 0, 0, 0..1);
+        test_forward_system_messages(&mut tester);
     }
 }

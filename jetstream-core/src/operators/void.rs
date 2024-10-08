@@ -44,20 +44,17 @@ mod test {
     use indexmap::{IndexMap, IndexSet};
 
     use crate::{
-        keyed::distributed::{Acquire, Collect, Interrogate},
-        snapshot::{Barrier, NoPersistence},
-        testing::OperatorTester,
-        types::{DataMessage, Message, RescaleMessage, ShutdownMarker,}
+        keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, testing::OperatorTester, types::{DataMessage, Message, RescaleMessage, ShutdownMarker,}
     };
     /// Simple test, the operator must destroy everything 💀
     #[test]
     fn nothing_comes_out() {
         let mut tester: OperatorTester<i32, i32, i32, NoKey, NoData, NoTime, ()> =
-            OperatorTester::new_direct(void);
+            OperatorTester::built_by(|_| void, 0, 0, 0..1);
 
         let messages = [
             Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default())),
-            Message::Acquire(Acquire::new(1, Rc::new(Mutex::new(IndexMap::new())))),
+            Message::Acquire(Acquire::new(1, IndexMap::new())),
             Message::Collect(Collect::new(1)),
             Message::Data(DataMessage::new(1, 2, 3)),
             Message::DropKey(1),
@@ -67,9 +64,9 @@ mod test {
             Message::ShutdownMarker(ShutdownMarker::default()),
         ];
         for m in messages.into_iter() {
-            tester.send_from_local(m);
+            tester.send_local(m);
             tester.step();
-            assert!(tester.receive_on_local().is_none())
+            assert!(tester.recv_local().is_none())
         }
     }
 

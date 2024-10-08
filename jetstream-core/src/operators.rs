@@ -18,7 +18,7 @@ pub use filter_map::FilterMap;
 pub use flatten::Flatten;
 pub use inspect::Inspect;
 pub use map::Map;
-pub use sink::{Sink, IntoSink, IntoSinkFull};
+pub use sink::{Sink, SinkFull, IntoSink, IntoSinkFull};
 pub use source::{Source, IntoSource};
 pub use stateful_map::StatefulMap;
 pub use window::*;

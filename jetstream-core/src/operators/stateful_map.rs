@@ -4,15 +4,10 @@ use itertools::Itertools;
 use metrics::gauge;
 use serde::{de::DeserializeOwned, Serialize};
 
-
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    stream::{
-        JetStreamBuilder,
-        BuildContext, OperatorBuilder, OperatorContext,
-    },
-    types::{MaybeTime, Timestamp,
-    Data, DataMessage, Key, Message,}
+    stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
+    types::{Data, DataMessage, Key, MaybeTime, Message, Timestamp},
 };
 
 pub trait StatefulMap<K, VI, T> {
@@ -98,7 +93,7 @@ fn build_stateful_map<
                 Message::Interrogate(x)
             }
             Message::Collect(mut c) => {
-                if let Some(x) = state.get(&c.key) {
+                if let Some(x) = state.remove(&c.key) {
                     c.add_state(ctx.operator_id, x);
                 }
                 Message::Collect(c)
@@ -117,7 +112,7 @@ fn build_stateful_map<
             Message::AbsBarrier(mut b) => {
                 b.persist(&state, &ctx.operator_id);
                 Message::AbsBarrier(b)
-            },
+            }
             Message::Rescale(x) => Message::Rescale(x),
             Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
             Message::Epoch(x) => Message::Epoch(x),
@@ -153,14 +148,19 @@ mod test {
     use indexmap::{IndexMap, IndexSet};
     use itertools::Itertools;
 
-    use crate::keyed::distributed::{decode, encode, Acquire, Collect, Interrogate};
-    
-    use crate::operators::{KeyLocal, Sink};
-    use crate::snapshot::{Barrier, PersistenceClient};
-    use crate::sources::SingleIteratorSource;
-    use crate::testing::{get_test_stream, CapturingPersistenceBackend, OperatorTester, VecSink};
-    use crate::types::NoTime;
+    use crate::channels::selective_broadcast::{full_broadcast, link, Receiver, Sender};
+    use crate::keyed::distributed::{Acquire, Collect, Interrogate};
+
     use crate::operators::source::Source;
+    use crate::operators::{KeyLocal, Sink};
+    use crate::runtime::CommunicationClient;
+    use crate::snapshot::{Barrier, NoPersistence, PersistenceClient};
+    use crate::sources::SingleIteratorSource;
+    use crate::stream::{BuildContext, OperatorContext};
+    use crate::testing::{
+        get_test_stream, CapturingPersistenceBackend, NoCommunication, OperatorTester, VecSink
+    };
+    use crate::types::NoTime;
     use crate::types::{DataMessage, Message};
 
     use super::{build_stateful_map, StatefulMap};
@@ -200,10 +200,11 @@ mod test {
     fn discards_state() {
         let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        
-        stream
-            .source(SingleIteratorSource::new(["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string())))
 
+        stream
+            .source(SingleIteratorSource::new(
+                ["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()),
+            ))
             // concat the words
             .key_local(|x| x.value.len())
             .stateful_map(|_, x, mut s: String| {
@@ -215,8 +216,7 @@ mod test {
                 }
             })
             .sink(collector.clone())
-            .finish()
-            ;
+            .finish();
         builder.build().unwrap().execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
@@ -226,30 +226,24 @@ mod test {
 
     #[test]
     fn test_interrogate() {
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
-                build_stateful_map(ctx, |_, x, _| ((), Some(x)))
-            });
+        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> = OperatorTester::built_by(move |ctx| build_stateful_map(ctx, |_, x, _| ((), Some(x))), 0, 0, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(
-            1,
-            "foo".to_string(),
-            NoTime,
-        )));
+        tester.send_local(Message::Data(DataMessage::new(1, "foo".to_string(), NoTime)));
         tester.step();
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             5,
             "bar".to_string(),
             NoTime,
         )));
         tester.step();
+
         let interrogator = Interrogate::new(Rc::new(|_: &i32| true));
-        tester.send_from_local(Message::Interrogate(interrogator.clone()));
+        tester.send_local(Message::Interrogate(interrogator.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.receive_on_local() {}
+        while let Some(_) = tester.recv_local() {}
 
         let result = interrogator.try_unwrap().unwrap();
         assert_eq!(IndexSet::from([1, 5]), result)
@@ -259,31 +253,31 @@ mod test {
     #[test]
     fn test_interrogate_discarded() {
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_, x: String, _| {
                     ((), if x.len() > 3 { None } else { Some(x) })
                 })
-            });
+            }, 0, 0, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             1,
             "hello".to_string(),
             NoTime,
         )));
         tester.step();
         let interrogator = Interrogate::new(Rc::new(|_: &i32| true));
-        tester.send_from_local(Message::Interrogate(interrogator.clone()));
+        tester.send_local(Message::Interrogate(interrogator.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.receive_on_local() {}
+        while let Some(_) = tester.recv_local() {}
 
         let result = interrogator.try_unwrap().unwrap();
         assert!(result.is_empty());
@@ -292,29 +286,29 @@ mod test {
     #[test]
     fn test_collect() {
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_, x, _| ((), Some(x)))
-            });
+            }, 0, 42, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             5,
             "bar".to_string(),
             NoTime,
         )));
         tester.step();
         let collector = Collect::new(1);
-        tester.send_from_local(Message::Collect(collector.clone()));
+        tester.send_local(Message::Collect(collector.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.receive_on_local() {}
+        while let Some(_) = tester.recv_local() {}
 
         let foo_enc = bincode::serde::encode_to_vec("foo", bincode::config::standard()).unwrap();
         let (_key, result) = collector.try_unwrap().unwrap();
@@ -326,31 +320,31 @@ mod test {
     #[test]
     fn test_collect_discarded() {
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_, x: String, _| {
                     ((), if x.len() > 3 { None } else { Some(x) })
                 })
-            });
+            }, 0, 42, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             1,
             "foo".to_string(),
             NoTime,
         )));
         tester.step();
-        tester.send_from_local(Message::Data(DataMessage::new(
+        tester.send_local(Message::Data(DataMessage::new(
             1,
             "hello".to_string(),
             NoTime,
         )));
         tester.step();
         let collector = Collect::new(1);
-        tester.send_from_local(Message::Collect(collector.clone()));
+        tester.send_local(Message::Collect(collector.clone()));
         tester.step();
 
         // receive and drop all messages. We need to drop the interrogator copy
         // so we can unwrap it
-        while let Some(_) = tester.receive_on_local() {}
+        while let Some(_) = tester.recv_local() {}
 
         let (_key, result) = collector.try_unwrap().unwrap();
         assert!(result.is_empty());
@@ -361,24 +355,24 @@ mod test {
     fn test_acquire_state() {
         // just return the state for the key
         let mut tester: OperatorTester<i32, &str, NoTime, i32, String, NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_k, _v, s: String| (s.clone(), Some(s)))
-            });
+            }, 0, 42, 0..1);
 
-        let state = IndexMap::from([(tester.operator_id(), encode("HelloWorld".to_owned()))]);
+        let state = IndexMap::from([(42, CommunicationClient::encode("HelloWorld".to_owned()))]);
 
-        tester.send_from_local(Message::Acquire(Acquire::new(
+        tester.send_local(Message::Acquire(Acquire::new(
             1337,
-            Rc::new(Mutex::new(state)),
+            state,
         )));
         tester.step();
-        tester.send_from_local(Message::Data(DataMessage::new(1337, "", NoTime)));
+        tester.send_local(Message::Data(DataMessage::new(1337, "", NoTime)));
         tester.step();
         assert!(matches!(
-            tester.receive_on_local().unwrap(),
+            tester.recv_local().unwrap(),
             Message::Acquire(_)
         ));
-        match tester.receive_on_local().unwrap() {
+        match tester.recv_local().unwrap() {
             Message::Data(DataMessage {
                 key: 1337,
                 value: x,
@@ -393,28 +387,28 @@ mod test {
     fn test_drop_key_state() {
         // keep a total per key
         let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
-            });
+            }, 0, 42, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(false, 1, NoTime)));
+        tester.send_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
-        tester.receive_on_local().unwrap();
-        tester.send_from_local(Message::Data(DataMessage::new(false, 2, NoTime)));
+        tester.recv_local().unwrap();
+        tester.send_local(Message::Data(DataMessage::new(false, 2, NoTime)));
         tester.step();
-        match tester.receive_on_local().unwrap() {
+        match tester.recv_local().unwrap() {
             Message::Data(d) => assert_eq!(d.value, 3),
             _ => panic!(),
         };
 
-        tester.send_from_local(Message::DropKey(false));
+        tester.send_local(Message::DropKey(false));
         tester.step();
-        tester.receive_on_local().unwrap();
+        tester.recv_local().unwrap();
 
-        tester.send_from_local(Message::Data(DataMessage::new(false, 1, NoTime)));
+        tester.send_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
         // sum should be back to 1 since we dropped the state
-        match tester.receive_on_local().unwrap() {
+        match tester.recv_local().unwrap() {
             Message::Data(d) => assert_eq!(d.value, 1),
             _ => panic!(),
         };
@@ -425,29 +419,29 @@ mod test {
     fn test_snapshot_state() {
         // keep a total per key
         let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_k, v, s: i32| ((s + v), Some(s + v)))
-            });
+            },0, 42, 0..1);
 
-        tester.send_from_local(Message::Data(DataMessage::new(false, 1, NoTime)));
+        tester.send_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
 
         let backend = CapturingPersistenceBackend::default();
-        tester.send_from_local(Message::AbsBarrier(Barrier::new(Box::new(backend.clone()))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(backend.clone()))));
         tester.step();
 
-        let state: HashMap<bool, i32> = decode(backend.load(&tester.operator_id()).unwrap());
+        let state: HashMap<bool, i32> = CommunicationClient::decode(&backend.load(&42).unwrap());
         assert_eq!(*state.get(&false).unwrap(), 1);
     }
 
     #[test]
     fn test_forward_system_messages() {
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::new_built_by(move |ctx| {
+            OperatorTester::built_by(move |ctx| {
                 build_stateful_map(ctx, |_, x: String, _| {
                     ((), if x.len() > 3 { None } else { Some(x) })
                 })
-            });
+            },0 ,0 ,0..1);
 
         crate::testing::test_forward_system_messages(&mut tester);
     }

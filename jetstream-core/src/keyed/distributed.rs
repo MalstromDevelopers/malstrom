@@ -1,172 +1,364 @@
-use std::{fmt::Debug, rc::Rc, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::Mutex,
+};
 
-use derive_new::new;
 use indexmap::{IndexMap, IndexSet};
+use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-mod collect_dist;
-mod data_exchange;
-mod epoch_align;
-mod icadd_operator;
-mod interrogate_dist;
-mod normal_dist;
-mod versioner;
+mod message_router;
+pub mod types;
 
-pub(super) use data_exchange::{downstream_exchanger, upstream_exchanger};
-pub(super) use epoch_align::epoch_aligner;
-pub(super) use icadd_operator::icadd;
-pub(super) use versioner::versioner;
+use std::iter::once;
 
-use crate::types::{Key, OperatorId, WorkerId};
+use message_router::{MessageRouter, NormalRouter};
+pub use types::*;
 
-use super::types::Version;
+use crate::{
+    channels::selective_broadcast::{Receiver, Sender},
+    runtime::{communication::Distributable, CommunicationClient},
+    snapshot::Barrier,
+    stream::{BuildContext, Logic, OperatorContext},
+    types::{
+        DataMessage, Key, MaybeData, MaybeTime, Message, RescaleMessage, ShutdownMarker, Timestamp,
+        WorkerId,
+    },
+};
 
+use crate::runtime::communication::broadcast;
 
-/// Panicing encode using the default bincode config
-pub(crate) fn encode<S: Serialize>(value: S) -> Vec<u8> {
-    bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .expect("State serialization error")
+type Remotes<K, V, T> =
+    IndexMap<WorkerId, (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>;
+
+pub(super) struct Distributor<K, V, T> {
+    router: Container<MessageRouter<K, V, T>>,
+    remotes: Remotes<K, V, T>,
+    partitioner: WorkerPartitioner<K>,
+    local_barrier: Option<Barrier>,
+    local_shutdown: Option<ShutdownMarker>,
 }
-/// Panicing decode using the default bincode config
-pub(crate) fn decode<S: DeserializeOwned>(raw: Vec<u8>) -> S {
-    bincode::serde::decode_from_slice(&raw, bincode::config::standard())
-        .expect("State deserialization error")
-        .0
-}
 
-#[derive(Clone)]
-pub struct Interrogate<K> {
-    shared: Rc<Mutex<IndexSet<K>>>,
-    tester: Rc<dyn Fn(&K) -> bool>,
-}
-impl<K> Interrogate<K>
+impl<K, V, T> Distributor<K, V, T>
 where
-    K: Key,
+    K: DistKey,
+    V: DistData,
+    T: DistTimestamp,
 {
-    /// Creates a new interrogator.
-    /// Tester is a function which checks if the supplied keys should be added to
-    /// the interrogation set, i.e. if these are keys, that need to be relocated
-    pub(crate) fn new(tester: Rc<dyn Fn(&K) -> bool>) -> Self {
-        let shared = Rc::new(Mutex::new(IndexSet::new()));
-        Self { shared, tester }
+    pub(super) fn new(paritioner: WorkerPartitioner<K>, ctx: &mut BuildContext) -> Self {
+        let snapshot: Option<(NormalRouter, IndexMap<WorkerId, RemoteState<T>>)> = ctx.load_state();
+        let other_workers = ctx
+            .get_worker_ids()
+            .filter(|x| *x != ctx.worker_id)
+            .collect_vec();
+
+        let (state, remotes) = match snapshot {
+            Some((local_state, remote_states)) => {
+                // restoring from a differently sized snapshot is not supported
+                if remote_states.len() != other_workers.len() {
+                    // +1 to include this worker
+                    panic_wrong_scale(ctx.get_worker_ids().len(), remote_states.len() + 1);
+                }
+                let remotes = create_remotes(&other_workers, ctx);
+                (MessageRouter::Normal(local_state), remotes)
+            }
+            None => {
+                let remotes = create_remotes(&other_workers, ctx);
+                let state = MessageRouter::new(
+                    ctx.get_worker_ids().into_iter().collect(),
+                    Version::default(),
+                );
+                (state, remotes)
+            }
+        };
+
+        Self {
+            router: Container::new(state),
+            remotes,
+            partitioner: paritioner,
+            local_barrier: None,
+            local_shutdown: None,
+        }
     }
 
-    pub fn add_keys(&mut self, keys: &[K]) {
-        let mut guard = self.shared.lock().unwrap();
-        for key in keys.iter().cloned() {
-            if (self.tester)(&key) {
-                guard.insert(key);
+/// Schedule this as an operator in the dataflow
+pub(super) fn run(
+    &mut self,
+    input: &mut Receiver<K, V, T>,
+    output: &mut Sender<K, V, T>,
+    ctx: &mut OperatorContext,
+) {
+
+    // HACK we collect messages into the vec because
+    // we can't hold onto a &self when invoking the handlers
+    let remote_message: Vec<(WorkerId, NetworkMessage<K, V, T>)> = self.remotes.iter()
+    .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_shutdown)
+    .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
+    .collect();
+
+    for (wid, msg) in remote_message.into_iter() {
+        match msg {
+            NetworkMessage::Data(data_message) => {
+                self.handle_remote_data_message(data_message, &wid, output, &ctx)
+            }
+            NetworkMessage::Epoch(epoch) => {
+                self.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
+                self.handle_local_epoch(epoch, output)
+            },
+            NetworkMessage::BarrierMarker => self.remotes.get_mut(&wid).unwrap().1.is_barred = true,
+            NetworkMessage::ShutdownMarker => self.remotes.get_mut(&wid).unwrap().1.sent_shutdown = true,
+            NetworkMessage::Acquire(network_acquire) => {
+                output.send(Message::Acquire(network_acquire.into()))
+            }
+            NetworkMessage::Upgrade(version) => self.remotes.get_mut(&wid).unwrap().1.last_version = version,
+        }
+    }
+
+    // not allowed to receive local if barrier is not resolved
+    if self.local_barrier.is_none() {
+        if let Some(msg) = input.recv() {
+            match msg {
+                Message::Data(msg) => self.handle_local_data_message(msg, output, ctx),
+                Message::Epoch(epoch) => self.handle_local_epoch(epoch, output),
+                Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
+                Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
+                Message::ShutdownMarker(shutdown_marker) => {
+                    self.local_shutdown = Some(shutdown_marker)
+                }
+
+                // these ones we can just ignore
+                Message::Interrogate(_) => (),
+                Message::Collect(_) => (),
+                Message::Acquire(_) => (),
+                Message::DropKey(_) => (),
             }
         }
     }
 
-    /// Try unwrapping the inner Rc and Mutex. This succeeds if there
-    /// is exactly one strong count to this Interrogate.
-    ///
-    /// PANICS: If the Mutex is poisened
-    pub(crate) fn try_unwrap(self) -> Result<IndexSet<K>, Self> {
-        Rc::try_unwrap(self.shared)
-            .map(|x| Mutex::into_inner(x).unwrap())
-            .map_err(|x| Self {
-                shared: x,
-                tester: self.tester,
-            })
-    }
+    // try to clear these
+    // Now you might be tempted to do this in an event driven way
+    // where we only call these functions if we get shutdown or barrier
+    // messages, but that does not handle the case where the removal
+    // of another worker allows them to be emitted
+    self.try_emit_barrier(output);
+    self.try_emit_shutdown(output);
+    self.router
+        .apply(|x| x.lifecycle(self.partitioner, output, &self.remotes, &ctx));
 }
 
-#[derive(Clone, Debug)]
-pub struct Collect<K> {
-    pub key: K,
-    collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
-}
-impl<K> Collect<K>
-where
-    K: Key,
-{
-    pub(crate) fn new(key: K) -> Self {
-        Self {
-            key,
-            collection: Rc::new(Mutex::new(IndexMap::new())),
+    /// Handle a data message we received from our local upstream
+    fn handle_local_data_message(
+        &mut self,
+        message: DataMessage<K, V, T>,
+        output: &mut Sender<K, V, T>,
+        ctx: &OperatorContext,
+    ) {
+        let routing = {
+            self.router.route_message(
+                message,
+                None,
+                self.partitioner,
+                ctx.worker_id,
+                ctx.worker_id,
+            )
+        };
+        if let Some((msg, target)) = routing {
+            self.send_data_message(msg, target, output, ctx);
         }
     }
-    pub fn add_state<S: Serialize>(&mut self, operator_id: OperatorId, state: &S) {
-        self.collection
-            .lock()
-            .unwrap()
-            .insert(operator_id, encode(state));
+
+    fn handle_remote_data_message(
+        &mut self,
+        message: NetworkDataMessage<K, V, T>,
+        sent_by: &WorkerId,
+        output: &mut Sender<K, V, T>,
+        ctx: &OperatorContext,
+    ) {
+        let routing = {
+            self.router.route_message(
+                message.content,
+                Some(message.version),
+                self.partitioner,
+                ctx.worker_id,
+                *sent_by,
+            )
+        };
+        if let Some((msg, target)) = routing {
+            self.send_data_message(msg, target, output, ctx);
+        }
     }
 
-    /// Try unwrapping the inner Rc and Mutex. This succeeds if there
-    /// is exactly one strong count to this Collect.
-    ///
-    /// PANICS: If the Mutex is poisoned
-    pub(crate) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
-        match Rc::try_unwrap(self.collection).map(|mutex| mutex.into_inner().unwrap()) {
-            Ok(collection) => Ok((self.key, collection)),
-            Err(collection) => Err(Self {
-                key: self.key,
-                collection,
-            }),
+    fn send_data_message(
+        &self,
+        message: DataMessage<K, V, T>,
+        target: WorkerId,
+        output: &mut Sender<K, V, T>,
+
+        ctx: &OperatorContext,
+    ) {
+        match target == ctx.worker_id {
+            true => output.send(Message::Data(message)),
+            false => {
+                let client = &self
+                    .remotes
+                    .get(&target)
+                    .expect("Message routing returns valid WorkerId")
+                    .0;
+                let wrapped_msg = NetworkDataMessage {
+                    content: message,
+                    version: self.router.get_version(),
+                };
+                client.send(NetworkMessage::Data(wrapped_msg));
+            }
+        }
+    }
+
+    /// Handle an epoch we received from our local upstrea
+    fn handle_local_epoch(&self, epoch: T, output: &mut Sender<K, V, T>) {
+        let wrapped_epoch = Some(epoch);
+        let all_timestamps = self
+            .remotes
+            .values()
+            .map(|x| &x.1.frontier)
+            .chain(once(&wrapped_epoch));
+        let merged = merge_timestamps(all_timestamps);
+        if let Some(to_emit) = merged {
+            output.send(Message::Epoch(to_emit));
+        }
+    }
+
+    fn handle_remote_epoch(&mut self, epoch: T, sent_by: &WorkerId, output: &mut Sender<K, V, T>) {
+        self.remotes
+            .get_mut(sent_by)
+            .expect("Epoch sender is known")
+            .1
+            .frontier = Some(epoch.clone());
+        self.handle_local_epoch(epoch, output);
+    }
+
+    /// Handle a barrier we receive
+    fn handle_local_barrier(&mut self, barrier: Barrier) {
+        self.local_barrier = Some(barrier);
+        broadcast(
+            self.remotes.values().map(|x| &x.0),
+            NetworkMessage::BarrierMarker,
+        );
+    }
+
+    fn handle_remote_barrier(&mut self, sent_by: &WorkerId) {
+        self.remotes
+            .get_mut(sent_by)
+            .expect("Barrier sender is known")
+            .1
+            .is_barred = true;
+    }
+
+    fn handle_remote_shutdown(&mut self, sent_by: &WorkerId) {
+        self.remotes
+            .get_mut(sent_by)
+            .expect("Shutdown sender is known")
+            .1
+            .sent_shutdown = true;
+    }
+
+    fn handle_rescale_message(
+        &mut self,
+        message: RescaleMessage,
+        output: &mut Sender<K, V, T>,
+        ctx: &mut OperatorContext,
+    ) {
+        match &message {
+            RescaleMessage::ScaleRemoveWorker(index_set) => (),
+            RescaleMessage::ScaleAddWorker(to_add) => {
+                for wid in to_add {
+                    let comm_client = ctx.create_communication_client(*wid, ctx.worker_id);
+                    let remote_state = RemoteState::default();
+                    self.remotes.insert(*wid, (comm_client, remote_state));
+                }
+            }
+        }
+
+        self.router
+            .apply(|router| router.handle_rescale(message, self.partitioner, output))
+    }
+
+    /// Emits a barrier to the output only and only if
+    /// - we have one from our local upstream
+    /// - we have one from every connected client
+    #[inline]
+    fn try_emit_barrier(&mut self, output: &mut Sender<K, V, T>) {
+        if self.local_barrier.is_some() && self.remotes.values().all(|x| x.1.is_barred) {
+            let msg = Message::AbsBarrier(self.local_barrier.take().unwrap());
+            output.send(msg);
+
+            for (_, remote_state) in self.remotes.iter_mut().map(|x| x.1) {
+                remote_state.is_barred = false;
+            }
+        }
+    }
+
+    /// Emits a shutdown to the output only and only if
+    /// - we have one from our local upstream
+    /// - we have one from every connected client
+    #[inline]
+    fn try_emit_shutdown(&mut self, output: &mut Sender<K, V, T>) {
+        if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_shutdown) {
+            let msg = Message::ShutdownMarker(self.local_shutdown.take().unwrap());
+            output.send(msg);
         }
     }
 }
 
-impl<K> Debug for Interrogate<K>
+fn create_remotes<K, V, T>(
+    other_workers: &Vec<WorkerId>,
+    ctx: &mut BuildContext,
+) -> IndexMap<usize, (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>
 where
-    K: Debug,
+    K: DistKey,
+    V: DistData,
+    T: DistTimestamp,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Interrogate")
-            .field("shared", &self.shared)
-            .field("tester", &"Fn(&K) -> bool")
-            .finish()
-    }
+    let remotes = other_workers
+        .iter()
+        .map(|worker_id| {
+            (
+                *worker_id,
+                (
+                    ctx.create_communication_client(*worker_id, ctx.operator_id),
+                    RemoteState::default(),
+                ),
+            )
+        })
+        .collect();
+    remotes
 }
 
-#[derive(Debug, Clone, new)]
-pub struct Acquire<K> {
-    key: K,
-    collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
-}
-impl<K> Acquire<K>
-where
-    K: Key,
-{
-    pub fn take_state<S: DeserializeOwned>(&self, operator_id: &OperatorId) -> Option<(K, S)> {
-        self.collection
-            .lock()
-            .unwrap()
-            .swap_remove(operator_id)
-            .map(decode)
-            .map(|s| (self.key.clone(), s))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, new)]
-pub(super) struct NetworkAcquire<K> {
-    pub(super) key: K,
-    collection: IndexMap<OperatorId, Vec<u8>>,
-}
-
-// impl<K> From<Acquire<K>> for NetworkAcquire<K> {
-//     fn from(value: Acquire<K>) -> Self {
-//         Self {
-//             key: value.key,
-//             collection: value.collection.into_inner().unwrap(),
-//         }
-//     }
-// }
-impl<K> From<NetworkAcquire<K>> for Acquire<K> {
-    fn from(value: NetworkAcquire<K>) -> Self {
-        Self {
-            key: value.key,
-            collection: Rc::new(Mutex::new(value.collection)),
+/// Small reducer hack, as we can't use iter::reduce because of ownership
+fn merge_timestamps<'a, T: Timestamp>(
+    mut timestamps: impl Iterator<Item = &'a Option<T>>,
+) -> Option<T> {
+    let mut merged = timestamps.next()?.clone();
+    for x in timestamps {
+        if let Some(y) = x {
+            merged = merged.map(|a| a.merge(y));
+        } else {
+            return None;
         }
     }
+    merged
 }
 
-#[derive(Serialize, Deserialize, new, Clone)]
-pub(super) struct DoneMessage {
-    pub(super) worker_id: WorkerId,
-    pub(super) version: Version,
+/// Panic if we are starting at a scale different from the snapshot
+fn panic_wrong_scale(build_scale: usize, snapshot_scale: usize) {
+    panic!(
+        "Attempted to build a Cluster of scale '{build_scale}' from a snapshot
+        of scale '{snapshot_scale}'. Restoring snapshots to a differently sized
+        cluster is not possible, you can either
+        - Restart at the original scale and re-scale at runtime
+        - Restart without loading this snapshot
+    "
+    )
 }

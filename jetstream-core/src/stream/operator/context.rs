@@ -34,6 +34,10 @@ impl<'a> OperatorContext<'a> {
         )
         .unwrap()
     }
+
+    pub fn new(worker_id: WorkerId, operator_id: OperatorId, communication: &'a mut dyn CommunicationBackend) -> Self {
+        OperatorContext { worker_id, operator_id, communication }
+    }
 }
 
 pub struct BuildContext<'a> {
@@ -41,7 +45,8 @@ pub struct BuildContext<'a> {
     pub operator_id: OperatorId,
     pub label: String,
     persistence_backend: Box<dyn PersistenceClient>, // TODO: use a mutable ref here
-    communication: &'a mut dyn CommunicationBackend,
+    // HACK: We need this in the icadd tests
+    pub(crate) communication: &'a mut dyn CommunicationBackend,
     worker_ids: Range<usize>,
 }
 impl<'a> BuildContext<'a> {
@@ -64,6 +69,7 @@ impl<'a> BuildContext<'a> {
     }
 
     pub fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
+        println!("Loading state for {}", self.operator_id); // TODO remove
         self.persistence_backend
             .load(&self.operator_id)
             .map(deserialize_state)
@@ -90,5 +96,10 @@ impl<'a> BuildContext<'a> {
             self.communication,
         )
         .unwrap()
+    }
+
+    /// Create an operator context (runtime context) for this operator
+    pub fn get_operator_context(&mut self) -> OperatorContext {
+        OperatorContext { worker_id: self.worker_id, operator_id: self.operator_id, communication: self.communication }
     }
 }

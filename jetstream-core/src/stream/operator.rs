@@ -51,7 +51,7 @@ mod test {
             "".to_owned(),
             Box::<NoPersistence>::default(),
             &mut comm,
-            0..0,
+            0..1,
         );
         let mut op = Box::new(buildable).into_runnable(&mut ctx);
 

@@ -1,6 +1,6 @@
 use crate::channels::selective_broadcast::{Receiver, Sender};
 
-use crate::stream::{JetStreamBuilder, OperatorBuilder};
+use crate::stream::{JetStreamBuilder, OperatorBuilder, OperatorContext};
 use crate::types::{Data, DataMessage, Key, MaybeKey, Message, Timestamp};
 
 

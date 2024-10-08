@@ -95,9 +95,10 @@ where
 mod tests {
 
     use itertools::Itertools;
+    use proptest::bits::usize;
 
     use crate::{
-        operators::{IntoSource, Sink, Source}, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder, Worker}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
+        operators::*, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder, Worker}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::{DataMessage, Message, NoKey}
     };
 
     /// The into_iter source should emit the iterator values
@@ -143,14 +144,31 @@ mod tests {
     /// values should be timestamped with their iterator index
     #[test]
     fn emits_timestamped_messages() {
-        todo!()
+        let (builder, stream) = get_test_stream();
+        let sink = VecSink::new();
+        stream.source(SingleIteratorSource::new(42..52)).sink(sink.clone()).finish();
+        builder.build().unwrap().execute();
+
+        let timestamps = sink.into_iter().map(|x| x.timestamp).collect_vec();
+        let expected = (0..10).collect_vec();
+        assert_eq!(expected, timestamps);
     }
 
     /// after the final value a single usize::MAX epoch should
     /// be emitted
     #[test]
     fn emits_max_epoch() {
-        todo!()
+        let (builder, stream) = get_test_stream();
+        let sink = VecSink::new();
+        stream.source(SingleIteratorSource::new(0..10)).sink_full(sink.clone()).finish();
+        builder.build().unwrap().execute();
+
+        let messages = sink.drain_vec(..);
+        let last = messages.last().unwrap();
+        match last {
+            Message::Epoch(usize::MAX) => (),
+            _ => panic!()
+        }
     }
 
 }

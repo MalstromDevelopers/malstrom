@@ -45,7 +45,6 @@ where
     T: Timestamp,
 {
     pub(super) fn new(
-        worker_id: WorkerId,
         whitelist: IndexSet<K>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
@@ -55,11 +54,15 @@ where
         let workers: IndexMap<WorkerId, CommunicationClient<DirectlyExchangedMessage<K>>> =
             old_worker_set
                 .union(&new_worker_set)
-                .map(|w| (*w, ctx.create_communication_client(*w, ctx.operator_id)))
+                .filter_map(|w| 
+                    (*w != ctx.worker_id).then_some(
+                        (*w, ctx.create_communication_client(*w, ctx.operator_id))
+                    )
+                    )
                 .collect();
 
         Self {
-            worker_id,
+            worker_id: ctx.worker_id,
             whitelist,
             hold: IndexMap::new(),
             old_worker_set,
@@ -89,13 +92,11 @@ where
         }
 
         // will be false for empty diff
-        let _any_outstanding = self.done_workers.symmetric_difference(&self.old_worker_set);
         let any_outstanding = self
             .done_workers
             .symmetric_difference(&self.old_worker_set)
             .any(|_| true);
         if self.whitelist.is_empty() && self.current_collect.is_none() && !any_outstanding {
-            println!("Closing collector");
             if let Some(trigger) = self.queued_rescales.pop_front() {
                 Ok(DistributorKind::Interrogate(
                     InterrogateDistributor::new_from_collect(
@@ -292,6 +293,7 @@ where
     /// return None if all keys have been collected
     fn create_next_collector(&mut self) -> Option<Collect<K>> {
         if let Some(k) = self.whitelist.pop() {
+            self.hold.insert(k.clone(), Vec::new());
             let collector = Collect::new(k);
             Some(collector)
         } else {
@@ -300,296 +302,252 @@ where
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use indexmap::{IndexMap, IndexSet};
-//     use itertools::Itertools;
+#[cfg(test)]
+mod test {
+    use indexmap::{IndexSet};
+    use crate::{keyed::distributed::icadd_operator::make_icadd_with_dist, runtime::CommunicationBackend, testing::{NoCommunication, OperatorTester, SentMessage}, types::*};
 
-//     use crate::{
-//         keyed::distributed::messages::{
-//             DoneMessage, LocalOutgoingMessage, RemoteMessage, TargetedMessage,
-//         },
-//         time::NoTime,
-//         NoData,
-//     };
+    use super::*;
+    // a partitioner that just uses the key as a wrapping index
+    fn partiton_index<'a>(i: &usize, s: &'a IndexSet<WorkerId>) -> &'a WorkerId {
+        s.get_index(i % s.len()).unwrap()
+    }
 
-//     use super::*;
-//     // a partitioner that just uses the key as a wrapping index
-//     fn partiton_index<'a>(i: &usize, s: &'a IndexSet<WorkerId>) -> &'a WorkerId {
-//         s.get_index(i % s.len()).unwrap()
-//     }
+    fn make_op_ctx(communication_backend: &mut dyn CommunicationBackend) -> OperatorContext {
+        OperatorContext::new(0, 5, communication_backend)
+    }
 
-//     fn make_upscale_distributor() -> CollectDistributor<usize, NoData, NoTime> {
-//         CollectDistributor::new(
-//             0,
-//             IndexSet::from([1]),
-//             IndexSet::from([0]),
-//             IndexSet::from([0, 1]),
-//             0,
-//         )
-//     }
+    /// Get a tester for a transition from workerset {0} to  {0, 1}
+    /// with whitelisted keys {1, 3}
+    fn get_upscale_tester(
+    ) -> OperatorTester<usize, VersionedMessage<i32>, i32, usize, TargetedMessage<i32>, i32, DirectlyExchangedMessage<usize>>
+    {
+        OperatorTester::built_by(
+            |ctx| {
+                let mut op_ctx = make_op_ctx(ctx.communication);
+                make_icadd_with_dist(
+                    Rc::new(partiton_index),
+                    DistributorKind::Collect(CollectDistributor::new(IndexSet::from([1, 3]), IndexSet::from([0]), IndexSet::from([0, 1]), 0, &mut op_ctx)),
+                )
+            },
+            0,
+            5,
+            0..2,
+        )
+    }
+    /// Get a tester for a transition from workerset {0, 1} to  {0}
+    /// with whitelisted keys {1, 3}
+    fn get_downscale_tester(
+    ) -> OperatorTester<usize, VersionedMessage<i32>, i32, usize, TargetedMessage<i32>, i32, DirectlyExchangedMessage<usize>>
+    {
+        OperatorTester::built_by(
+            |_ctx| {
+                let mut comm = NoCommunication::default();
+                let mut op_ctx = make_op_ctx(&mut comm);
+                make_icadd_with_dist(
+                    Rc::new(partiton_index),
+                    DistributorKind::Collect(CollectDistributor::new(IndexSet::from([1, 3]), IndexSet::from([0, 1]), IndexSet::from([0]), 0, &mut op_ctx)),
+                )
+            },
+            0,
+            5,
+            0..2,
+        )
+    }
+    /// Check the stored version gets incremented by one
+    #[test]
+    fn increases_version_on_new() {
+        let mut comm = NoCommunication::default();
+        let dist: CollectDistributor<i32, NoData, i32> = CollectDistributor::new(
+            IndexSet::from([]),
+            IndexSet::from([0, 1, 2, 3]),
+            IndexSet::from([0]),
+            0,
+            &mut make_op_ctx(&mut comm)
+        );
+        assert_eq!(dist.version, 1)
+    }
 
-//     /// Check the stored version gets incremented by one
-//     #[test]
-//     fn increases_version_on_new() {
-//         let dist = make_upscale_distributor();
-//         assert_eq!(dist.version, 1)
-//     }
+    /// Should respect Rule 1.1
+    /// • Rule 1.1: If (F'(K) != Local) && K ∈ whitelist
+    /// • We will not have the state under the new configuration, but currently it is still located
+    /// here  -> pass downstream
+    #[test]
+    fn handle_data_rule_1_1() {
+        let mut dist = get_upscale_tester();
+        let msg = DataMessage {
+            key: 3,
+            value: VersionedMessage{inner: 42, version: 0, sender: 0},
+            timestamp: 512,
+        };
+        dist.send_local(Message::Data(msg));
+        dist.step();
+        // this is the collector
+        let _  = dist.recv_local().unwrap();
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::Data(DataMessage { key: 3, value: _, timestamp: _ })));
+    }
 
-//     // /// It must create a complete version map on creation so we can know,
-//     // /// when we are done
-//     // #[test]
-//     // fn creates_version_set_on_new() {
-//     //     let dist: CollectDistributor<usize, NoData, NoTime> = CollectDistributor::new(
-//     //         0,
-//     //         IndexSet::from([]),
-//     //         IndexSet::from([0, 1, 2, 3]),
-//     //         IndexSet::from([0]),
-//     //         0,
-//     //         IndexMap::from([(2, 1)]),
-//     //         Vec::new(),
-//     //     );
-//     //     assert_eq!(
-//     //         dist.remote_versions,
-//     //         IndexMap::from([(1, 0), (2, 1), (3, 0)])
-//     //     );
-//     // }
+    /// Should respect Rule 1.2
+    /// Rule 1.2: (F'(K) != Local) && K ∈ hold
+    /// • We will not have the state under the new configuration, but currently it is being collected
+    /// here
+    /// • -> buffer the message
+    #[test]
+    fn handle_data_rule_1_2() {
+        let mut dist = get_upscale_tester();
+        let msg = DataMessage {
+            key: 3,
+            value: VersionedMessage{inner: 42, version: 0, sender: 0},
+            timestamp: 512,
+        };
+        dist.step();
+        // hold onto this, so we are collecting the key 3 right now
+        let collector  = dist.recv_local().unwrap();
+        match &collector {
+            Message::Collect(c) => assert_eq!(c.key, 3),
+            _ => panic!()
+        }
+        dist.send_local(Message::Data(msg));
+        dist.step();
+        // should buffer and not emit data
+        let out = dist.recv_local();
+        assert!(out.is_none(), "{out:?}");
+    }
 
-//     /// Should respect Rule 1.1
-//     /// • Rule 1.1: If (F'(K) != Local) && K ∈ whitelist
-//     /// • We will not have the state under the new configuration, but currently it is still located
-//     /// here  -> pass downstream
-//     #[test]
-//     fn handle_data_rule_1_1() {
-//         let mut dist = make_upscale_distributor();
-//         dist.whitelist.insert(1);
-//         let msg = DataMessage {
-//             key: 1,
-//             value: NoData,
-//             timestamp: NoTime,
-//         };
-//         let msg = dist.handle_msg(msg, None, 0, &partiton_index);
-//         assert!(matches!(msg, OutgoingMessage::Local(_)));
-//     }
+    /// Rule 2: (F'(K) != Local) && K ∉ whitelist && K ∉ hold
+    /// • We do not have state for this key and we will not have
+    ///   it under the new configuration • -> distribute via F'
+    #[test]
+    fn handle_data_rule_2() {
+        let mut dist = get_upscale_tester();
+        let msg = DataMessage {
+            key: 7,
+            value: VersionedMessage{inner: 42, version: 0, sender: 0},
+            timestamp: 512,
+        };
+        dist.send_local(Message::Data(msg));
+        dist.step();
+        // this is the collector
+        let _  = dist.recv_local().unwrap();
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::Data(DataMessage { key: 7, value: TargetedMessage { inner: _, target: Some(1) }, timestamp: _ })));
+    }
 
-//     /// Should respect Rule 1.2
-//     /// Rule 1.2: (F'(K) != Local) && K ∈ hold
-//     /// • We will not have the state under the new configuration, but currently it is being collected
-//     /// here
-//     /// • -> buffer the message
-//     #[test]
-//     fn handle_data_rule_1_2() {
-//         let mut dist = make_upscale_distributor();
-//         dist.hold.insert(1, Vec::new());
-//         let msg = DataMessage {
-//             key: 1,
-//             value: NoData,
-//             timestamp: NoTime,
-//         };
-//         let msg = dist.handle_msg(msg, None, 0, &partiton_index);
-//         assert!(matches!(msg, OutgoingMessage::None));
-//         assert_eq!(dist.hold.get(&1).unwrap().len(), 1);
-//     }
+    /// Rule 3
+    /// Rule 3: (F'(K) == Local)
+    /// • if F(K) == Sender: -> pass downstream • else: distribute the message via F
+    #[test]
+    fn handle_data_rule_3() {
+        let mut dist = get_downscale_tester();
+        let msg = DataMessage {
+            key: 7, // F(3) == Remote && F'(3) == Local
+            // since sender == 1 == F(3) this should just pass downstream
+            value: VersionedMessage{inner: 42, version: 0, sender: 1},
+            timestamp: 512,
+        };
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
 
-//     ///Rule 2: (F'(K) != Local) && K ∉ whitelist && K ∉ hold
-//     /// • We do not have state for this key and we will not have
-//     ///   it under the new configuration • -> distribute via F'
-//     #[test]
-//     fn handle_data_rule_2() {
-//         let mut dist = make_upscale_distributor();
-//         let msg = DataMessage {
-//             key: 1,
-//             value: NoData,
-//             timestamp: NoTime,
-//         };
-//         let msg = dist.handle_msg(msg, None, 0, &partiton_index);
-//         assert!(matches!(
-//             msg,
-//             OutgoingMessage::Remote(RemoteMessage::Data(TargetedMessage {
-//                 target: 1,
-//                 version: 1,
-//                 message: _
-//             }))
-//         ))
-//     }
+        dist.send_local(Message::Data(msg));
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::Data(DataMessage { key: 3, value: TargetedMessage { inner: _, target: None }, timestamp: _ })));
+        
+        // next collector
+        drop(collector);
+        dist.step();
+        let collector = dist.recv_local();
 
-//     /// Rule 3
-//     /// Rule 3: (F'(K) == Local)
-//     /// • if F(K) == Sender: -> pass downstream • else: distribute the message via F
-//     #[test]
-//     fn handle_data_rule_3() {
-//         let mut dist = make_upscale_distributor();
-//         let msg = DataMessage {
-//             key: 0,
-//             value: NoData,
-//             timestamp: NoTime,
-//         };
-//         // should pass downstream since F'(0) == 0 and F(0) == 0 (sender)
-//         let msg = dist.handle_msg(msg, None, 0, &partiton_index);
-//         assert!(matches!(
-//             msg,
-//             OutgoingMessage::Local(LocalOutgoingMessage::Data(_))
-//         ));
-//         let msg = DataMessage {
-//             key: 0,
-//             value: NoData,
-//             timestamp: NoTime,
-//         };
-//         // should send to 1 since F'(0) == 0 but F(1) == 1
-//         let msg = dist.handle_msg(msg, None, 0, &partiton_index);
-//         assert!(matches!(
-//             msg,
-//             OutgoingMessage::Remote(RemoteMessage::Data(TargetedMessage {
-//                 target: 1,
-//                 version: _,
-//                 message: _,
-//             }))
-//         ));
-//     }
+        let msg = DataMessage {
+            key: 7, // F(3) == Remote && F'(3) == Local
+            // since sender == 0 != F(3) this should go to remote
+            value: VersionedMessage{inner: 42, version: 0, sender: 0},
+            timestamp: 512,
+        };
+        dist.send_local(Message::Data(msg));
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::Data(DataMessage { key: 3, value: TargetedMessage { inner: _, target: Some(1) }, timestamp: _ })));
+    }
 
-//     /// Should create a Collector message and send it downstream locally
-//     #[test]
-//     fn sends_initial_collector() {
-//         let mut dist: CollectDistributor<usize, NoData, NoTime> = CollectDistributor::new(
-//             0,
-//             IndexSet::from([1, 3]),
-//             IndexSet::from([0]),
-//             IndexSet::from([0, 1]),
-//             0,
-//         );
-//         let mut msg = dist.run(&partiton_index);
+    /// Should create a Collector message and send it downstream locally
+    #[test]
+    fn sends_initial_collector() {
+        let mut dist = get_upscale_tester();
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
+        match collector {
+            Message::Collect(c) => assert_eq!(c.key, 1),
+            _ => panic!()
+        }
+    }
 
-//         assert_eq!(msg.len(), 1);
-//         let key = match msg.pop().unwrap() {
-//             OutgoingMessage::Local(LocalOutgoingMessage::Collect(c)) => c.key,
-//             _ => panic!(),
-//         };
-//         assert_eq!(key, 3)
-//     }
+    /// should send another collector message once the initial one is done
+    #[test]
+    fn sends_next_collector() {
+        let mut dist = get_upscale_tester();
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
+        match collector {
+            Message::Collect(c) => assert_eq!(c.key, 1),
+            _ => panic!()
+        }
+        // collector gets dropped here
 
-//     /// should send another collector message once the initial one is done
-//     #[test]
-//     fn sends_next_collector() {
-//         let mut dist: CollectDistributor<usize, NoData, NoTime> = CollectDistributor::new(
-//             0,
-//             IndexSet::from([1, 3]),
-//             IndexSet::from([0]),
-//             IndexSet::from([0, 1]),
-//             0,
-//         );
-//         let mut msg = dist.run(&partiton_index);
-//         let key = match msg.pop().unwrap() {
-//             OutgoingMessage::Local(LocalOutgoingMessage::Collect(c)) => c.key,
-//             _ => panic!(),
-//         };
-//         assert_eq!(key, 3);
-//         // droping the collector should prompt it to send another one downstream
-//         drop(msg);
-//         let mut msg = dist.run(&partiton_index);
-//         let key = match msg.pop().unwrap() {
-//             OutgoingMessage::Local(LocalOutgoingMessage::Collect(c)) => c.key,
-//             _ => panic!(),
-//         };
-//         assert_eq!(key, 1)
-//     }
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
+        match collector {
+            Message::Collect(c) => assert_eq!(c.key, 3),
+            _ => panic!()
+        }
+    }
 
-//     /// Should create an Acquire, Drop_key message once the collector is done
-//     /// and also send out queued message
-//     #[test]
-//     fn creates_acquire_and_dropkey_message() {
-//         let mut dist: CollectDistributor<usize, NoData, NoTime> = CollectDistributor::new(
-//             0,
-//             IndexSet::from([1, 3]),
-//             IndexSet::from([0]),
-//             IndexSet::from([0, 1]),
-//             0,
-//         );
-//         let mut msg = dist.run(&partiton_index);
+    /// Should create an Acquire, Drop_key message once the collector is done
+    /// and also send out queued message
+    #[test]
+    fn creates_acquire_and_dropkey_message() {
+        let mut dist = get_upscale_tester();
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
+        drop(collector);
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::DropKey(1)));
+        match dist.remote().recv_from_operator().unwrap(){
+            SentMessage{worker_id: 1, operator_id: 5, msg: DirectlyExchangedMessage::Acquire(x)} => assert_eq!(x.key, 1),
+            _ => panic!()
+        }
 
-//         assert_eq!(msg.len(), 1);
-//         let collector = match msg.pop().unwrap() {
-//             OutgoingMessage::Local(LocalOutgoingMessage::Collect(c)) => c,
-//             _ => panic!(),
-//         };
-//         assert_eq!(collector.key, 3);
-//         // we now hold a collector with key, one, so all messages with that key should be held up
-//         let msg = dist.handle_msg(
-//             DataMessage {
-//                 key: 1,
-//                 value: NoData,
-//                 timestamp: NoTime,
-//             },
-//             None,
-//             0,
-//             &partiton_index,
-//         );
-//         assert!(matches!(msg, OutgoingMessage::None));
-//         // now we drop the collector
-//         drop(collector);
-//         // so running should now give us
-//         // - An Acquire(key: 1)
-//         // - All held messages for key: 1
-//         // - A DropKey(key: 1)
+        let collector  = dist.recv_local().unwrap();
+        drop(collector);
+        dist.step();
+        assert!(matches!(dist.recv_local().unwrap(), Message::DropKey(3)));
+        match dist.remote().recv_from_operator().unwrap(){
+            SentMessage{worker_id: 1, operator_id: 5, msg: DirectlyExchangedMessage::Acquire(x)} => assert_eq!(x.key, 3),
+            _ => panic!()
+        }
+    }
 
-//         let mut messages = dist.run(&partiton_index);
-//         assert_eq!(messages.len(), 3);
-//         let acquire = messages.remove(0);
-//         let held = messages.remove(1);
-//         let dropkey = messages.remove(2);
+    /// Should send a done message once all state is collected
+    #[test]
+    fn sends_done_message() {
+        let mut dist = get_upscale_tester();
+        dist.step();
+        // this is the collector
+        let collector  = dist.recv_local().unwrap();
+        drop(collector);
+        dist.step();
 
-//         match acquire {
-//             OutgoingMessage::Remote(RemoteMessage::Acquire(a)) => assert_eq!(a.key, 1),
-//             _ => panic!(),
-//         }
+        let collector  = dist.recv_local().unwrap();
+        drop(collector);
+        dist.step();
 
-//         assert!(matches!(
-//             held,
-//             OutgoingMessage::Remote(RemoteMessage::Data(_))
-//         ));
-//         assert!(matches!(
-//             dropkey,
-//             OutgoingMessage::Local(LocalOutgoingMessage::DropKey(1))
-//         ));
-//     }
-
-//     /// Should send a done message once all state is collected
-//     #[test]
-//     fn sends_done_message() {
-//         let mut dist: CollectDistributor<usize, NoData, NoTime> = CollectDistributor::new(
-//             0,
-//             IndexSet::from([1]),
-//             IndexSet::from([0]),
-//             IndexSet::from([0, 1]),
-//             0,
-//         );
-//         let mut msg = dist.run(&partiton_index);
-
-//         assert_eq!(msg.len(), 1);
-//         let collector = match msg.pop().unwrap() {
-//             OutgoingMessage::Local(LocalOutgoingMessage::Collect(c)) => c,
-//             _ => panic!(),
-//         };
-//         // now we drop the collector
-//         drop(collector);
-//         // so running should now give us
-//         // - An Acquire(key: 1)
-//         // - All held messages for key: 1
-//         // - A DropKey(key: 1)
-//         // - A DoneMessage
-//         let mut messages = dist.run(&partiton_index);
-//         assert_eq!(messages.len(), 4);
-//         let done = messages.remove(3);
-
-//         assert!(matches!(
-//             done,
-//             OutgoingMessage::Remote(RemoteMessage::Done(DoneMessage {
-//                 worker_id: 0,
-//                 version: 1,
-//             }))
-//         ));
-
-//         // it should send the done message only onve
-//         let out = dist.run(&partiton_index);
-//         assert!(out.len() == 0);
-//     }
-// }
+        let _ = dist.remote().recv_from_operator(); // Acquire for first key
+        let _ = dist.remote().recv_from_operator(); // Acquire for next key
+        let done = dist.remote().recv_from_operator().unwrap();
+        assert!(matches!(done, SentMessage{worker_id: 1, operator_id: 5, msg: DirectlyExchangedMessage::Done }), "{done:?}")
+    }
+}

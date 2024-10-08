@@ -1,9 +1,11 @@
 use std::rc::Rc;
 
-use crate::{stream::{JetStreamBuilder, OperatorBuilder}, types::{DataMessage, Key, MaybeKey}};
+use crate::{
+    stream::{JetStreamBuilder, OperatorBuilder},
+    types::{DataMessage, Key, MaybeKey},
+};
 
-use super::{distributed::{downstream_exchanger, epoch_aligner, icadd, upstream_exchanger, versioner}, types::{DistData, DistKey, DistTimestamp, WorkerPartitioner}, KeyLocal};
-
+use super::{distributed::{types::{DistData, DistKey, DistTimestamp, WorkerPartitioner}, Distributor}, KeyLocal};
 
 pub trait KeyDistribute<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and distribute
@@ -14,7 +16,7 @@ pub trait KeyDistribute<X, K: Key, V, T> {
     fn key_distribute(
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-        partitioner: impl WorkerPartitioner<K>,
+        partitioner: WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T>;
 }
 
@@ -28,26 +30,18 @@ where
     fn key_distribute(
         self,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-        partitioner: impl WorkerPartitioner<K>,
+        partitioner: WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T> {
-        // let mut distributor = Distributor::new(partitioner);
+        // TODO: The communication between upstream and downstream exchanger effectively
+        // creates a loop in th dataflow graph. This is not good, because potentially the
+        // cluster could deadlock in (most likely rare) edge cases
         let keyed = self
             .key_local(key_func)
             .label("jetstream::key_distribute::key_local");
         keyed
-            .then(OperatorBuilder::built_by(versioner))
-            .label("jetstream::key_distribute::versioner")
-            .then(OperatorBuilder::built_by(epoch_aligner))
-            .label("jetstream::key_distribute::epoch_aligner")
-            .then(OperatorBuilder::built_by(|ctx| upstream_exchanger(2, ctx)))
-            .label("jetstream::key_distribute::upstream_exchanger")
             .then(OperatorBuilder::built_by(move |ctx| {
-                icadd(Rc::new(partitioner), ctx)
-            }))
-            .label("jetstream::key_distribute::icadd")
-            .then(OperatorBuilder::built_by(|ctx| {
-                downstream_exchanger(2, ctx)
-            }))
-            .label("jetstream::key_distribute::downstream_exchanger")
+                let mut dist = Distributor::new(partitioner, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+    }))
     }
 }

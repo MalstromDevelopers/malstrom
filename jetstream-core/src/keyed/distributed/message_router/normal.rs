@@ -1,0 +1,29 @@
+use indexmap::IndexSet;
+use serde::{Deserialize, Serialize};
+
+use crate::types::*;
+use super::super::types::*;
+
+
+/// The "normal" message router, i.e. the one used while there is no rescaling
+/// configuration under way
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NormalRouter {
+    // the set of all workers in the cluster, excluding this one
+    pub(super) worker_set: IndexSet<WorkerId>,
+    pub(super) version: Version,
+}
+
+impl NormalRouter {
+    /// Create a new router for the given worker set (including the local worker)
+    /// and for the given version
+    pub(super) fn new(worker_set: IndexSet<WorkerId>, version: Version) -> Self {
+        Self {
+            worker_set,
+            version,
+        }
+    }
+    pub(super) fn route_message<K>(&self, key: &K, partitioner: WorkerPartitioner<K>) -> WorkerId {
+        partitioner(key, &self.worker_set)
+    }
+}

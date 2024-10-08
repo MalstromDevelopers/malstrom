@@ -97,7 +97,7 @@ fn build_stateful_transform<
                 output.send(Message::Interrogate(x))
             }
             Message::Collect(mut c) => {
-                if let Some(x) = state.get(&c.key) {
+                if let Some(x) = state.swap_remove(&c.key) {
                     c.add_state(ctx.operator_id, x);
                 }
                 output.send(Message::Collect(c))

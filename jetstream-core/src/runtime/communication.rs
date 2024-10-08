@@ -46,7 +46,7 @@ pub trait Transport {
     }
 }
 
-const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// A Client for point to point communication between operators
 /// on different workers and possibly different machines
@@ -72,24 +72,27 @@ where
     }
 
     pub fn send(&self, msg: T) {
-        let encoded =
-            bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).expect("Serialization Error");
-        self.transport.send(encoded).unwrap()
+        self.transport.send(Self::encode(msg)).unwrap()
     }
 
     pub fn recv(&self) -> Option<T> {
-        let encoded = self.transport.recv();
-        if let Some(e) = encoded.unwrap() {
-            bincode::serde::decode_from_slice(&e, BINCODE_CONFIG)
-                .unwrap()
-                .0
-        } else {
-            None
-        }
+        let encoded = self.transport.recv().unwrap()?;
+        let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
+        .expect("Received message is deserializable");
+        Some(decoded)
     }
 
     pub fn recv_all(&self) -> RecvAllIterator<'_, T> {
         RecvAllIterator::new(self.transport.recv_all())
+    }
+
+    pub(crate) fn encode(msg: T) -> Vec<u8> {
+        bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).expect("Serialization successfull")
+    }
+    pub(crate) fn decode(msg: &[u8]) -> T {
+        bincode::serde::decode_from_slice(msg, BINCODE_CONFIG)
+        .expect("Deserialization successfull")
+        .0
     }
 }
 
@@ -137,7 +140,7 @@ pub fn broadcast<'a, T: Distributable + Clone + 'a>(
 pub enum CommunicationBackendError {
     /// Error to be returned if a communication client for a specific connection
     /// could not be built
-    #[error("Error building Client: {0}")]
+    #[error("Error building Client: {0:?}")]
     ClientBuildError(Box<dyn std::error::Error>),
 }
 

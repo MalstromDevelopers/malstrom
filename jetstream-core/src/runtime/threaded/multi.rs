@@ -17,19 +17,19 @@ use super::{communication::InterThreadCommunication, Shared};
 /// ```
 /// let ranges = [(0..10), (10..20)];
 /// let rt = MultiThreadRuntime::new_with_args(
+///     args,
 ///     |flavor, range| {
-///     // create the stream builder
-///     let mut builder = RuntimeBuilder::new(flavor);
-///     // create the stream
-///     builder
-///     .new_stream()
-///     .source(MultiIteratorSource::new(range))
-///     .inspect(|x| println!("{x}"))    
-///     .finish();
-///     // return the builder with its streams
-///     builder
+///         // create the stream builder
+///         let mut builder = RuntimeBuilder::new(flavor);
+///         // create the stream
+///         builder
+///         .new_stream()
+///         .source(MultiIteratorSource::new(range))
+///         .inspect(|x| println!("{x}"))    
+///         .finish();
+///         // return the builder with its streams
+///         builder
 ///     },
-///     args
 /// );
 /// // execute on all threads
 /// rt.execute();
