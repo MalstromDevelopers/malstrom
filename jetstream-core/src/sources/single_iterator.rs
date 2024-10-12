@@ -77,11 +77,10 @@ where
                         Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
                         // Message::Load(x) => output.send(Message::Load(x)),
                         Message::Rescale(x) => output.send(Message::Rescale(x)),
-                        Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                        Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
                         Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                         Message::Collect(x) => output.send(Message::Collect(x)),
                         Message::Acquire(x) => output.send(Message::Acquire(x)),
-                        Message::DropKey(x) => output.send(Message::DropKey(x)),
                     }
                 }
             }

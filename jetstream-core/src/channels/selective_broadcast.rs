@@ -14,7 +14,7 @@ use std::{
 use crossbeam;
 use indexmap::IndexMap;
 
-use crate::{snapshot::Barrier, types::{MaybeTime, Message, OperatorId, OperatorPartitioner, ShutdownMarker}};
+use crate::{snapshot::Barrier, types::{MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker}};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// This is a somewhat hacky we to get a unique id for each sender, which we
@@ -148,7 +148,7 @@ impl<K, V, T> Drop for Sender<K, V, T> {
 struct UpstreamState<T> {
     barrier: Option<Barrier>,
     epoch: Option<T>,
-    shutdown_marker: Option<ShutdownMarker>,
+    shutdown_marker: Option<SuspendMarker>,
 }
 impl<T> UpstreamState<T> {
     /// Upstreams need alignment if the they hav a barrier or shutdownmarker pending
@@ -291,7 +291,7 @@ fn handle_received(
                 None
             }
         }
-        Message::ShutdownMarker(s) => {
+        Message::SuspendMarker(s) => {
             state.shutdown_marker = Some(s);
             if self.states.values().all(|x| x.shutdown_marker.is_some()) {
                 self.states
@@ -299,7 +299,7 @@ fn handle_received(
                     .map(|x| x.shutdown_marker.take())
                     .last()
                     .flatten()
-                    .map(|x| Message::ShutdownMarker(x))
+                    .map(|x| Message::SuspendMarker(x))
             } else {
                 None
             }
@@ -433,13 +433,13 @@ mod test {
         link(&mut sender, &mut receiver);
         let mut sender2 = sender.clone();
 
-        sender.send(Message::ShutdownMarker(ShutdownMarker::default()));
+        sender.send(Message::SuspendMarker(SuspendMarker::default()));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::ShutdownMarker(ShutdownMarker::default()));
+        sender2.send(Message::SuspendMarker(SuspendMarker::default()));
 
-        assert!(matches!(receiver.recv(), Some(Message::ShutdownMarker(_))));
+        assert!(matches!(receiver.recv(), Some(Message::SuspendMarker(_))));
     }
 
     /// Dropping a sender should remove its state from the receiver

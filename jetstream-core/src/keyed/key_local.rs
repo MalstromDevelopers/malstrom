@@ -46,12 +46,11 @@ where
                     Some(Message::Interrogate(_)) => (),
                     Some(Message::Collect(_)) => (),
                     Some(Message::Acquire(_)) => (),
-                    Some(Message::DropKey(_)) => (),
                     // necessary to convince Rust it is a different generic type now
                     Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
                     // Some(Message::Load(l)) => output.send(Message::Load(l)),
                     Some(Message::Rescale(x)) => output.send(Message::Rescale(x)),
-                    Some(Message::ShutdownMarker(x)) => output.send(Message::ShutdownMarker(x)),
+                    Some(Message::SuspendMarker(x)) => output.send(Message::SuspendMarker(x)),
                     Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),
                     None => (),
                 }

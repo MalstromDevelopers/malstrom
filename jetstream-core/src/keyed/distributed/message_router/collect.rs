@@ -150,12 +150,11 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::iter;
 
     use crate::{
         channels::selective_broadcast::{full_broadcast, link, Receiver},
-        runtime::{CommunicationBackend, CommunicationClient},
-        testing::{FakeCommunication, NoCommunication, SentMessage},
+        runtime::CommunicationClient,
+        testing::{FakeCommunication, SentMessage},
     };
 
     use super::*;

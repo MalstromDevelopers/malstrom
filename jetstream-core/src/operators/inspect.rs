@@ -1,6 +1,5 @@
 use crate::{stream::{JetStreamBuilder, OperatorBuilder, OperatorContext}, types::{Data, DataMessage, MaybeKey, Message, Timestamp}};
 
-use super::map::Map;
 
 pub trait Inspect<K, V, T> {
     /// Observe values in a stream without modifying them.

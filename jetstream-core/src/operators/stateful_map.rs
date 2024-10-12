@@ -104,17 +104,13 @@ fn build_stateful_map<
                 }
                 Message::Acquire(a)
             }
-            Message::DropKey(k) => {
-                state.remove(&k);
-                Message::DropKey(k)
-            }
             // necessary to convince Rust it is a different generic type now
             Message::AbsBarrier(mut b) => {
                 b.persist(&state, &ctx.operator_id);
                 Message::AbsBarrier(b)
             }
             Message::Rescale(x) => Message::Rescale(x),
-            Message::ShutdownMarker(x) => Message::ShutdownMarker(x),
+            Message::SuspendMarker(x) => Message::SuspendMarker(x),
             Message::Epoch(x) => Message::Epoch(x),
         };
 
@@ -397,7 +393,7 @@ mod test {
             _ => panic!(),
         };
 
-        tester.send_local(Message::DropKey(false));
+        tester.send_local(Message::Collect(Collect::new(false)));
         tester.step();
         tester.recv_local().unwrap();
 

@@ -12,7 +12,6 @@ use std::sync::{
 
 use indexmap::{map::Entry, IndexMap, IndexSet};
 use thiserror::Error;
-use tracing::debug;
 
 /// uniquely identifies a connection
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -73,7 +72,6 @@ impl CommunicationBackend for InterThreadCommunication {
         to_operator: OperatorId,
         from_operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
-        let wid = self.this_worker;
         let mut shared = self.shared.lock().unwrap();
         let key = ConnectionKey::new(to_worker, to_operator, self.this_worker, from_operator);
         

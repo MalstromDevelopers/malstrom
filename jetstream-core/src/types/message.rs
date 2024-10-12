@@ -39,15 +39,14 @@ pub enum Message<K, V, T> {
     /// Barrier used for asynchronous snapshotting
     AbsBarrier(Barrier),
     Rescale(RescaleMessage),
-    /// Information that this worker plans on shutting down
+    /// Information that this worker plans on shutting down (temporatily)
     /// See struct docstring for more information
-    ShutdownMarker(ShutdownMarker),
+    SuspendMarker(SuspendMarker),
 
     /// Rescaling state movement messages
     Interrogate(Interrogate<K>),
     Collect(Collect<K>),
     Acquire(Acquire<K>),
-    DropKey(K),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -68,28 +67,24 @@ where
             Self::Data(x) => Self::Data(x.clone()),
             Self::Epoch(x) => Self::Epoch(x.clone()),
             Self::AbsBarrier(x) => Self::AbsBarrier(x.clone()),
-            // Self::Load(x) => Self::Load(x.clone()),
             Self::Rescale(x) => Self::Rescale(x.clone()),
-            Self::ShutdownMarker(x) => Self::ShutdownMarker(x.clone()),
+            Self::SuspendMarker(x) => Self::SuspendMarker(x.clone()),
             Self::Interrogate(x) => Self::Interrogate(x.clone()),
             Self::Collect(x) => Self::Collect(x.clone()),
             Self::Acquire(x) => Self::Acquire(x.clone()),
-            Self::DropKey(x) => Self::DropKey(x.clone()),
         }
     }
 }
 
 /// This marker will be sent by the cluster lifecycle controller
 /// when the worker is planning to shut down.
-/// The Marker is internally reference counted. When the count of strong references
-/// to this marker goes to 0, the worker will shut down. Operators wishing
-/// to delay shut down, must therefore hold onto a clone of this marker as long
+// Operators wishing to delay shut down, must hold onto this marker as long
 /// as necessary
 #[derive(Debug, Clone, Default)]
-pub struct ShutdownMarker {
+pub struct SuspendMarker {
     rc: Rc<()>,
 }
-impl ShutdownMarker {
+impl SuspendMarker {
     /// Get the count of strong reference to the inner Rc
     /// Note that this includes the instance you are calling
     /// this method on.
@@ -97,3 +92,4 @@ impl ShutdownMarker {
         Rc::strong_count(&self.rc)
     }
 }
+

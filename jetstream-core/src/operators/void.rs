@@ -44,7 +44,7 @@ mod test {
     use indexmap::{IndexMap, IndexSet};
 
     use crate::{
-        keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, testing::OperatorTester, types::{DataMessage, Message, RescaleMessage, ShutdownMarker,}
+        keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, testing::OperatorTester, types::{DataMessage, Message, RescaleMessage, SuspendMarker,}
     };
     /// Simple test, the operator must destroy everything 💀
     #[test]
@@ -57,11 +57,10 @@ mod test {
             Message::Acquire(Acquire::new(1, IndexMap::new())),
             Message::Collect(Collect::new(1)),
             Message::Data(DataMessage::new(1, 2, 3)),
-            Message::DropKey(1),
             Message::Epoch(1),
             Message::Interrogate(Interrogate::new(Rc::new(|_| false))),
             Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new())),
-            Message::ShutdownMarker(ShutdownMarker::default()),
+            Message::SuspendMarker(SuspendMarker::default()),
         ];
         for m in messages.into_iter() {
             tester.send_local(m);

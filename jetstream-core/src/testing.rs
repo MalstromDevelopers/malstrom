@@ -7,7 +7,7 @@ use crate::runtime::threaded::SingleThreadRuntime;
 use crate::runtime::WorkerBuilder;
 use crate::snapshot::Barrier;
 use crate::types::MaybeTime;
-use crate::types::{Key, RescaleMessage, ShutdownMarker};
+use crate::types::{Key, RescaleMessage, SuspendMarker};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     stream::{
@@ -117,14 +117,6 @@ pub fn test_forward_system_messages<
         Message::Collect(_)
     ));
 
-    let msg = Message::DropKey(KI::default());
-    tester.send_local(msg);
-    tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::DropKey(_)
-    ));
-
     let msg = Message::Interrogate(Interrogate::new(Rc::new(|_| false)));
     tester.send_local(msg);
     tester.step();
@@ -149,12 +141,12 @@ pub fn test_forward_system_messages<
         Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))
     ));
 
-    let msg = Message::ShutdownMarker(ShutdownMarker::default());
+    let msg = Message::SuspendMarker(SuspendMarker::default());
     tester.send_local(msg);
     tester.step();
     assert!(matches!(
         tester.recv_local().unwrap(),
-        Message::ShutdownMarker(_)
+        Message::SuspendMarker(_)
     ));
 }
 

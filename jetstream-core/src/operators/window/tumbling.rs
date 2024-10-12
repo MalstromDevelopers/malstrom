@@ -1,12 +1,11 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     marker::PhantomData,
 };
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    operators::stateful_transform::StatefulTransform,
-    stream::{BuildContext, JetStreamBuilder, Logic, OperatorBuilder, OperatorContext},
+    stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
     types::{Data, DataMessage, Key, Message, Timestamp},
 };
 
@@ -155,7 +154,7 @@ where
                 output.send(Message::AbsBarrier(barrier));
             },
             Message::Rescale(rescale_message) => output.send(Message::Rescale(rescale_message)),
-            Message::ShutdownMarker(shutdown_marker) => output.send(Message::ShutdownMarker(shutdown_marker)),
+            Message::SuspendMarker(shutdown_marker) => output.send(Message::SuspendMarker(shutdown_marker)),
             Message::Interrogate(mut interrogate) => {
                 interrogate.add_keys(self.keyed_state.keys());
                 output.send(Message::Interrogate(interrogate));
@@ -172,7 +171,6 @@ where
                 }
                 output.send(Message::Acquire(acquire));
             },
-            Message::DropKey(_) => unimplemented!(),
         }
     }
 
@@ -215,39 +213,6 @@ where
             // remove any empty key states
             windows.len() != 0
         });
-    }
-}
-
-fn build_flexible_window_op<K, V, T, S>(
-    ctx: &BuildContext,
-    initializer: impl Fn(&DataMessage<K, V, T>) -> Option<(S, T)> + 'static,
-    aggregator: impl Fn(DataMessage<K, V, T>, &mut S, &T) + 'static,
-) -> impl Logic<K, V, T, K, S, T>
-where
-    K: Key,
-    V: Data,
-    T: Timestamp,
-    S: Serialize + DeserializeOwned,
-{
-    // key = window end time, val = states
-    let keyed_state: BTreeMap<T, Vec<S>> = BTreeMap::new();
-
-    |input, output, _ctx| {
-        let msg = match input.recv() {
-            Some(x) => x,
-            None => return,
-        };
-        match msg {
-            Message::Data(data_message) => todo!(),
-            Message::Epoch(_) => todo!(),
-            Message::AbsBarrier(barrier) => todo!(),
-            Message::Rescale(rescale_message) => todo!(),
-            Message::ShutdownMarker(shutdown_marker) => todo!(),
-            Message::Interrogate(interrogate) => todo!(),
-            Message::Collect(collect) => todo!(),
-            Message::Acquire(acquire) => todo!(),
-            Message::DropKey(_) => todo!(),
-        }
     }
 }
 

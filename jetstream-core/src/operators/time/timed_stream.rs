@@ -56,11 +56,10 @@ where
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(c) => output.send(Message::Collect(c)),
                     Message::Acquire(a) => output.send(Message::Acquire(a)),
-                    Message::DropKey(k) => output.send(Message::DropKey(k)),
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
                     Message::Rescale(x) => output.send(Message::Rescale(x)),
-                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                    Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
                 }
             }
         });
@@ -81,11 +80,10 @@ where
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(c) => output.send(Message::Collect(c)),
                     Message::Acquire(a) => output.send(Message::Acquire(a)),
-                    Message::DropKey(k) => output.send(Message::DropKey(k)),
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
                     Message::Rescale(x) => output.send(Message::Rescale(x)),
-                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                    Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
                 }
             }
         });
@@ -113,11 +111,10 @@ where
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(c) => output.send(Message::Collect(c)),
                     Message::Acquire(a) => output.send(Message::Acquire(a)),
-                    Message::DropKey(k) => output.send(Message::DropKey(k)),
                     Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
                     // Message::Load(l) => output.send(Message::Load(l)),
                     Message::Rescale(x) => output.send(Message::Rescale(x)),
-                    Message::ShutdownMarker(x) => output.send(Message::ShutdownMarker(x)),
+                    Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
                 }
             }
         });

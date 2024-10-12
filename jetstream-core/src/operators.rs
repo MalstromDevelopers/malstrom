@@ -25,6 +25,5 @@ pub use window::*;
 pub use time::*;
 
 // These are only to be used internally in jetstream
-pub(crate) mod stateful_transform;
 pub(crate) mod stateless_op;
 pub(crate) mod void;

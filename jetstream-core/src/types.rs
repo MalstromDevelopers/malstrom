@@ -6,7 +6,7 @@ mod time;
 mod operator_partitioner;
 
 
-pub use message::{DataMessage, Message, RescaleMessage, ShutdownMarker};
+pub use message::{DataMessage, Message, RescaleMessage, SuspendMarker};
 pub use key::{Key, NoKey, MaybeKey};
 pub use data::{Data, NoData, MaybeData};
 pub use time::{Timestamp, NoTime, MaybeTime};

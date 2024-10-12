@@ -270,7 +270,7 @@ mod tests {
     /// check we can build with persistance enabled
     #[test]
     fn builds_with_persistence() {
-        let rt = WorkerBuilder::new(SingleThreadRuntime)
+        WorkerBuilder::new(SingleThreadRuntime)
             .with_persistence_backend(NoPersistence::default())
             .with_snapshot_timer(|| false)
             .build()

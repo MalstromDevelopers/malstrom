@@ -1,6 +1,5 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
-use serde::Serialize;
 
 mod message_router;
 pub mod types;
@@ -15,7 +14,7 @@ use crate::{
     runtime::CommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
-    types::{DataMessage, Message, RescaleMessage, ShutdownMarker, Timestamp, WorkerId},
+    types::{DataMessage, Message, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;
@@ -28,7 +27,7 @@ pub(super) struct Distributor<K, V, T> {
     remotes: Remotes<K, V, T>,
     partitioner: WorkerPartitioner<K>,
     local_barrier: Option<Barrier>,
-    local_shutdown: Option<ShutdownMarker>,
+    local_shutdown: Option<SuspendMarker>,
     local_frontier: Option<T>
 }
 
@@ -128,7 +127,7 @@ where
                     }
                     Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
                     Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
-                    Message::ShutdownMarker(shutdown_marker) => {
+                    Message::SuspendMarker(shutdown_marker) => {
                         self.local_shutdown = Some(shutdown_marker)
                     }
 
@@ -136,7 +135,6 @@ where
                     Message::Interrogate(_) => (),
                     Message::Collect(_) => (),
                     Message::Acquire(_) => (),
-                    Message::DropKey(_) => (),
                 }
             }
         }
@@ -284,7 +282,7 @@ where
     #[inline]
     fn try_emit_shutdown(&mut self, output: &mut Sender<K, V, T>) {
         if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_shutdown) {
-            let msg = Message::ShutdownMarker(self.local_shutdown.take().unwrap());
+            let msg = Message::SuspendMarker(self.local_shutdown.take().unwrap());
             output.send(msg);
         }
     }
@@ -340,12 +338,10 @@ fn panic_wrong_scale(build_scale: usize, snapshot_scale: usize) {
 
 #[cfg(test)]
 mod test {
-    use indexmap::IndexSet;
 
     use crate::{
         keyed::partitioners::partition_index,
-        snapshot::NoPersistence,
-        testing::{FakeCommunication, OperatorTester}, types::NoData,
+        testing::OperatorTester,
     };
 
     use super::*;
