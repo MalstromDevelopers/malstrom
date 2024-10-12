@@ -5,7 +5,7 @@ use super::{communication::InterThreadCommunication, Shared};
 /// Runs all dataflows in a single thread on a
 /// single machine with no parrallelism.
 #[derive(Debug, Default)]
-pub struct SingleThreadRuntime;
+pub(crate) struct SingleThreadRuntime;
 
 impl RuntimeFlavor for SingleThreadRuntime {
     type Communication = InterThreadCommunication;

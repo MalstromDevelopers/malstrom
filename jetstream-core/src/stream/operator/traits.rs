@@ -40,5 +40,5 @@ pub trait Operator {
 
     /// Indicate to the worker this operator need not run again
     /// The worker will stop execution once all operators are finished
-    fn is_finished(&self) -> bool;
+    fn is_finalized(&self) -> bool;
 }

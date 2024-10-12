@@ -61,7 +61,7 @@ where
             };
             let mut final_emitted = false;
     
-            move |input: &mut Receiver<NoKey, NoData, NoTime>, output: &mut Sender<NoKey, V, usize>, _ctx| {
+            move |input: &mut Receiver<NoKey, NoData, NoTime>, output: &mut Sender<NoKey, V, usize>, ctx| {
                 if !final_emitted {
                     if let Some(x) = inner.next() {
                         output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
@@ -98,7 +98,7 @@ mod tests {
     use proptest::bits::usize;
 
     use crate::{
-        operators::*, runtime::{threaded::MultiThreadRuntime, RuntimeBuilder}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::Message
+        operators::*, runtime::{threaded::MultiThreadRuntime, WorkerBuilder}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::Message
     };
 
     /// The into_iter source should emit the iterator values
@@ -131,7 +131,7 @@ mod tests {
         let args = [sink.clone(), sink.clone()];
 
         let rt = MultiThreadRuntime::new_with_args(|flavor, this_sink| {
-            let mut builder = RuntimeBuilder::new(flavor);
+            let mut builder = WorkerBuilder::new(flavor);
             builder.new_stream().source(SingleIteratorSource::new(0..10)).sink(this_sink).finish();
             builder
         }, args);

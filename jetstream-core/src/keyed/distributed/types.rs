@@ -152,11 +152,11 @@ where
         Self { shared, tester }
     }
 
-    pub fn add_keys(&mut self, keys: &[K]) {
+    pub fn add_keys<'a>(&mut self, keys: impl IntoIterator<Item=&'a K>) {
         let mut guard = self.shared.lock().unwrap();
-        for key in keys.iter().cloned() {
+        for key in keys {
             if (self.tester)(&key) {
-                guard.insert(key);
+                guard.insert(key.clone());
             }
         }
     }

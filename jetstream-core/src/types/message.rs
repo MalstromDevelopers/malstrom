@@ -13,7 +13,7 @@ use super::WorkerId;
 
 /// A message which gets processed in a JetStream
 /// Messages always include a timestamp and content.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DataMessage<K, V, T> {
     pub key: K,
     pub value: V,

@@ -4,7 +4,7 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntime;
-use crate::runtime::RuntimeBuilder;
+use crate::runtime::WorkerBuilder;
 use crate::snapshot::Barrier;
 use crate::types::MaybeTime;
 use crate::types::{Key, RescaleMessage, ShutdownMarker};
@@ -25,15 +25,15 @@ mod operator_tester;
 pub use vec_sink::VecSink;
 // pub use iterator_source::SingleIteratorSource;
 pub use communication::{NoCommunication, NoCommunicationError};
-pub use operator_tester::{OperatorTester, SentMessage};
+pub use operator_tester::{OperatorTester, SentMessage, FakeCommunication};
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
 pub fn get_test_stream() -> (
-    RuntimeBuilder<SingleThreadRuntime, NoPersistence>,
+    WorkerBuilder<SingleThreadRuntime, NoPersistence>,
     JetStreamBuilder<NoKey, NoData, NoTime>,
 ) {
-    let mut worker = RuntimeBuilder::new(SingleThreadRuntime);
+    let mut worker = WorkerBuilder::new(SingleThreadRuntime);
     let stream = worker.new_stream();
     (worker, stream)
 }

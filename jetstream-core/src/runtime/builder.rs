@@ -18,11 +18,11 @@ use thiserror::Error;
 use super::runtime_flavor::CommunicationError;
 use super::{CommunicationBackend, RuntimeFlavor};
 
-/// Builder for a JetStream runtime.
-/// The Runtime is the core block of executing JetStream dataflows.
+/// Builder for a JetStream worker.
+/// The Worker is the core block of executing JetStream dataflows.
 /// This builder is used to create new streams and configure the
 /// execution environment.
-pub struct RuntimeBuilder<F, P> {
+pub struct WorkerBuilder<F, P> {
     // root_stream: JetStreamBuilder<NoKey, NoData, NoTime>,
     persistence_backend: Rc<P>,
     inner: Rc<Mutex<InnerRuntimeBuilder>>,
@@ -33,11 +33,11 @@ pub struct RuntimeBuilder<F, P> {
     root_stream_sender: Sender<NoKey, NoData, NoTime>,
 }
 
-impl<F> RuntimeBuilder<F, NoPersistence>
+impl<F> WorkerBuilder<F, NoPersistence>
 where
     F: RuntimeFlavor,
 {
-    pub fn new(flavor: F) -> RuntimeBuilder<F, NoPersistence> {
+    pub fn new(flavor: F) -> WorkerBuilder<F, NoPersistence> {
         let persistence_backend = Rc::new(NoPersistence::default());
         // let snapshot_op = make_snapshot_controller(persistence_backend.clone(), snapshot_timer);
 
@@ -47,7 +47,7 @@ where
         // let root_stream = JetStreamBuilder::from_operator(snapshot_op, inner.clone())
         //     .label("jetstream::stream_root");
         let root_stream_sender = Sender::new_unlinked(selective_broadcast::full_broadcast);
-        RuntimeBuilder {
+        WorkerBuilder {
             persistence_backend,
             inner,
             flavor,
@@ -57,7 +57,7 @@ where
     }
 }
 
-impl<F, P> RuntimeBuilder<F, P>
+impl<F, P> WorkerBuilder<F, P>
 where
     F: RuntimeFlavor,
     P: PersistenceBackend,
@@ -238,7 +238,7 @@ where
             while op.has_queued_work() {
                 op.step(&mut self.communication);
             }
-            all_done &= op.is_finished();
+            all_done &= op.is_finalized();
         }
         all_done
     }
@@ -248,6 +248,7 @@ where
     /// be the case
     pub fn execute(&mut self) {
         while !self.step() {}
+
     }
 }
 
@@ -256,12 +257,12 @@ mod tests {
     use crate::snapshot::NoPersistence;
 
     use crate::runtime::threaded::SingleThreadRuntime;
-    use super::RuntimeBuilder;
+    use super::WorkerBuilder;
 
     /// check we can build the most basic runtime
     #[test]
     fn builds_basic_rt() {
-        RuntimeBuilder::new(SingleThreadRuntime)
+        WorkerBuilder::new(SingleThreadRuntime)
             .build()
             .unwrap();
     }
@@ -269,7 +270,7 @@ mod tests {
     /// check we can build with persistance enabled
     #[test]
     fn builds_with_persistence() {
-        let rt = RuntimeBuilder::new(SingleThreadRuntime)
+        let rt = WorkerBuilder::new(SingleThreadRuntime)
             .with_persistence_backend(NoPersistence::default())
             .with_snapshot_timer(|| false)
             .build()

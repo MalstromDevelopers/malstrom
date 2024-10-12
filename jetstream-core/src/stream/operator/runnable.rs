@@ -38,8 +38,8 @@ impl RunnableOperator {
     }
 
     /// check if this operator will ever emit a message again
-    pub fn is_finished(&self) -> bool {
-        self.operator.is_finished()
+    pub fn is_finalized(&self) -> bool {
+        self.operator.is_finalized()
     }
 
     pub(crate) fn get_label(&self) -> &str {

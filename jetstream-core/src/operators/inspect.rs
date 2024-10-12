@@ -1,4 +1,4 @@
-use crate::{stream::JetStreamBuilder, types::{Timestamp, Data, MaybeKey}};
+use crate::{stream::{JetStreamBuilder, OperatorBuilder, OperatorContext}, types::{Data, DataMessage, MaybeKey, Message, Timestamp}};
 
 use super::map::Map;
 
@@ -18,7 +18,7 @@ pub trait Inspect<K, V, T> {
     /// stream.inspect(|x| debug!(x));
     ///
     /// ```
-    fn inspect(self, inspector: impl FnMut(&V) + 'static) -> JetStreamBuilder<K, V, T>;
+    fn inspect(self, inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static) -> JetStreamBuilder<K, V, T>;
 }
 
 impl<K, V, T> Inspect<K, V, T> for JetStreamBuilder<K, V, T>
@@ -27,11 +27,18 @@ where
     V: Data,
     T: Timestamp,
 {
-    fn inspect(self, mut inspector: impl FnMut(&V) + 'static) -> JetStreamBuilder<K, V, T> {
-        self.map(move |x| {
-            inspector(&x);
-            x
-        })
+    fn inspect(self, mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static) -> JetStreamBuilder<K, V, T> {
+        let operator = OperatorBuilder::direct(move |input, output, ctx| {
+            match input.recv() {
+                Some(Message::Data(d)) => {
+                    inspector(&d, ctx);
+                    output.send(Message::Data(d));
+                }
+                Some(x) => output.send(x),
+                None => ()
+            }
+        });
+        self.then(operator)
     }
 }
 
@@ -62,7 +69,7 @@ mod tests {
         let expected = input.clone();
         stream
             .source(SingleIteratorSource::new(input))
-            .inspect(move |x| inspect_collector_moved.give(x.to_owned()))
+            .inspect(move |x, _ctx| inspect_collector_moved.give(x.value.to_owned()))
             .sink(output_collector.clone())
             .finish();
         builder.build().unwrap().execute();

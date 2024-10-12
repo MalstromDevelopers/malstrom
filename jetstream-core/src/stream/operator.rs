@@ -53,18 +53,18 @@ mod test {
         );
         let mut op = Box::new(buildable).into_runnable(&mut ctx);
 
-        assert!(!op.is_finished());
+        assert!(!op.is_finalized());
         op.step(&mut comm);
-        assert!(!op.is_finished());
+        assert!(!op.is_finalized());
 
         sender.send(Message::Epoch(42));
         op.step(&mut comm);
-        assert!(!op.is_finished());
+        assert!(!op.is_finalized());
 
         sender.send(Message::Epoch(i32::MAX));
-        assert!(!op.is_finished());
+        assert!(!op.is_finalized());
         op.step(&mut comm);
         // now finally finished
-        assert!(op.is_finished());
+        assert!(op.is_finalized());
     }
 }

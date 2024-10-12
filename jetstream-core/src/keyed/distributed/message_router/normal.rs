@@ -27,3 +27,24 @@ impl NormalRouter {
         partitioner(key, &self.worker_set)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::types::*;
+    use super::*;
+    use indexmap::IndexSet;
+
+    /// a partitioner that just uses the key as a wrapping index
+    fn partiton_index(i: &usize, s: &IndexSet<WorkerId>) -> WorkerId {
+        *s.get_index(i % s.len()).unwrap()
+    }
+    
+    #[test]
+    /// Check we return the target the 
+    fn give_correct_target() {
+        let router = NormalRouter::new(IndexSet::from([0, 1]), 0);
+        assert_eq!(0, router.route_message(&0, partiton_index));
+        assert_eq!(1, router.route_message(&1, partiton_index));
+        assert_eq!(1, router.route_message(&555, partiton_index));
+    }
+}

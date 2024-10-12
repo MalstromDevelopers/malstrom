@@ -12,6 +12,7 @@ use std::sync::{
 
 use indexmap::{map::Entry, IndexMap, IndexSet};
 use thiserror::Error;
+use tracing::debug;
 
 /// uniquely identifies a connection
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -72,6 +73,7 @@ impl CommunicationBackend for InterThreadCommunication {
         to_operator: OperatorId,
         from_operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
+        let wid = self.this_worker;
         let mut shared = self.shared.lock().unwrap();
         let key = ConnectionKey::new(to_worker, to_operator, self.this_worker, from_operator);
         
@@ -111,7 +113,11 @@ impl Transport for ChannelTransport {
         match self.receiver.try_recv() {
             Ok(x) => Ok(Some(x)),
             Err(mpsc::TryRecvError::Empty) => Ok(None),
-            Err(e) => Err(TransportError::RecvError(Box::new(e))),
+            // TODO: Currently we don't really have a way to know if the channel
+            // is closed because the other thread paniced or if it was closed in
+            // an orderly fashion. In the panic case we probably should emit
+            // an error instead....
+            Err(mpsc::TryRecvError::Disconnected) => Ok(None)
         }
     }
 }
@@ -188,4 +194,24 @@ mod test {
             Ok(_) => panic!("OK IS NOT OK")
         };
     }
+
+    /// Check we don't give out an error on recv if the other side disconnected in
+    /// an orderly way (e.g because it is done)
+    #[test]
+    fn no_error_orderly_disconnect() {
+        let shared = Shared::default();
+        let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
+        let mut worker1 = InterThreadCommunication::new(shared.clone(), 1);
+        let operator_0_42 = worker0.new_connection(1, 42, 42).unwrap();
+        let operator_1_42 = worker1.new_connection(0, 42, 42).unwrap();
+
+        // now drop one of them
+        drop(operator_0_42);
+        // this should not be an error
+
+        assert!(operator_1_42.recv().is_ok());
+        assert!(operator_1_42.recv_all().all(|x| x.is_ok()));
+    }
+
+
 }

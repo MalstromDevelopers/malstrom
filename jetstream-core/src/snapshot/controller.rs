@@ -77,19 +77,12 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
         None;
 
     let worker_ids = build_context.get_worker_ids().collect_vec();
+    let this_worker = build_context.worker_id;
     let clients: IndexMap<WorkerId, CommunicationClient<ComsMessage>> = worker_ids
         .iter()
+        .filter(|i| **i != this_worker)
         .cloned()
-        .filter_map(|i| {
-            if i != build_context.worker_id {
-                Some((
-                    i,
-                    build_context.create_communication_client(i, build_context.operator_id),
-                ))
-            } else {
-                None
-            }
-        })
+        .map(|i| (i, build_context.create_communication_client(i, build_context.operator_id)))
         .collect();
 
     move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
@@ -109,8 +102,6 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                     barrier.clone(),
                 ),
             );
-
-            println!("Starting new snapshot at epoch {snapshot_version}");
 
             // instruct other workers to start snapshotting
             broadcast(
@@ -172,7 +163,6 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             Some(b) => {
                 if b.strong_count() == 1 {
                     let version = b.get_version();
-                    println!("Completed snapshot at {version}");
                     leader.send(ComsMessage::CommitSnapshot(version));
                     None
                 } else {
@@ -182,7 +172,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
             None => None,
         };
 
-        for msg in leader.recv_all() {
+        while let Some(msg) = leader.recv() {
             match msg {
                 ComsMessage::StartSnapshot(i) => {
                     let barrier = Barrier::new(backend_builder.for_version(ctx.worker_id, &i));
@@ -198,6 +188,7 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                 }
             }
         }
+        
     }
 }
 

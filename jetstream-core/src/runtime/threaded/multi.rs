@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    runtime::{RuntimeBuilder, RuntimeFlavor},
+    runtime::{WorkerBuilder, RuntimeFlavor},
     snapshot::PersistenceBackend,
     types::WorkerId,
 };
@@ -12,7 +12,7 @@ use crate::{
 use super::{communication::InterThreadCommunication, Shared};
 
 /// Runs all dataflows on multiple threads within one machine
-/// 
+///
 /// # Example
 /// ```
 /// let ranges = [(0..10), (10..20)];
@@ -40,24 +40,20 @@ pub struct MultiThreadRuntime {
     threads: Vec<JoinHandle<()>>,
 }
 impl MultiThreadRuntime {
-    pub fn new_with_args<P, const N: usize, A>(
-        builder_func: fn(InnerMultiThreadRuntime, A) -> RuntimeBuilder<InnerMultiThreadRuntime, P>,
-        args: [A; N],
-    ) -> Self
-    where
-        P: PersistenceBackend,
-        A: Send + 'static,
-    {
-        let execution_barrier = Arc::new(Barrier::new(N + 1)); // +1 because we are keeping one here
-        let mut threads = Vec::with_capacity(N);
+    pub fn new<P: PersistenceBackend>(
+        parrallelism: usize,
+        builder_func: fn(InnerMultiThreadRuntime) -> WorkerBuilder<InnerMultiThreadRuntime, P>,
+    ) -> Self {
+        let execution_barrier = Arc::new(Barrier::new(parrallelism + 1)); // +1 because we are keeping one here
+        let mut threads = Vec::with_capacity(parrallelism);
 
         let shared = Shared::default();
-        for (i, arg) in args.into_iter().enumerate() {
+        for i in 0..parrallelism {
             let shared_this = Arc::clone(&shared);
             let barrier = Arc::clone(&execution_barrier);
             let thread = std::thread::spawn(move || {
-                let flavor = InnerMultiThreadRuntime::new(shared_this, i, N);
-                let worker = builder_func(flavor, arg);
+                let flavor = InnerMultiThreadRuntime::new(shared_this, i, parrallelism);
+                let worker = builder_func(flavor);
                 barrier.wait();
                 worker.build().unwrap().execute();
             });
@@ -68,12 +64,23 @@ impl MultiThreadRuntime {
             threads,
         }
     }
+    pub fn new_with_args<P, const N: usize, A, F>(
+        builder_func: fn(InnerMultiThreadRuntime, A) -> WorkerBuilder<F, P>,
+        args: [A; N],
+    ) -> Self
+    where
+        P: PersistenceBackend,
+        A: Send + 'static,
+        F: RuntimeFlavor + 'static,
+    {
+        todo!()
+    }
 
     pub fn execute(self) {
         // start execution on all threads
         self.execution_barrier.wait();
         for t in self.threads {
-            t.join().unwrap();
+            let _ = t.join();
         }
     }
 }
@@ -118,13 +125,14 @@ impl RuntimeFlavor for InnerMultiThreadRuntime {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::RuntimeBuilder;
+    use crate::runtime::WorkerBuilder;
 
     use super::MultiThreadRuntime;
 
     #[test]
     fn test_can_build() {
-        let rt = MultiThreadRuntime::new_with_args(|flavor, _| RuntimeBuilder::new(flavor), [(); 2]);
+        let rt =
+            MultiThreadRuntime::new_with_args(|flavor, _| WorkerBuilder::new(flavor), [(); 2]);
         rt.execute();
     }
 }

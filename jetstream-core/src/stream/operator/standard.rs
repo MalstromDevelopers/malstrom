@@ -15,7 +15,7 @@ pub(super) struct StandardOperator<KI, VI, TI, KO, VO, TO> {
 
 impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> where TI: MaybeTime, KO: Clone, VO: Clone, TO: MaybeTime {
     
-    fn is_finished(&self) -> bool {
+    fn is_finalized(&self) -> bool {
         TO::CHECK_FINISHED(self.output.get_frontier()) && TI::CHECK_FINISHED(self.input.get_frontier()) && self.input.is_empty()
     }
     

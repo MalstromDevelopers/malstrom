@@ -4,6 +4,7 @@ use super::{super::types::*, interrogate::InterrogateRouter, MessageRouter, Norm
 use crate::{channels::selective_broadcast::Sender, keyed::distributed::Remotes, types::*};
 /// A collect route which has finished its local collection cycles
 /// and is now just waiting for all remotes to finish
+#[derive(Debug)]
 pub(crate) struct FinishedRouter {
     pub(super) version: Version,
 

@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use indexmap::IndexSet;
 
-use crate::{types::{Key, RescaleMessage, WorkerId}};
+use crate::types::{Key, RescaleMessage, WorkerId};
 use super::super::types::*;
 use super::{collect::CollectRouter, MessageRouter};
 
-
+#[derive(Debug)]
 pub(crate) struct InterrogateRouter<K> {
     pub(super) version: Version,
     // keys we will always pass on (for the moment)
@@ -105,5 +105,110 @@ impl<K> InterrogateRouter<K> where K: Key {
             }
         }
 
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keyed::partitioners::partition_index;
+
+    /// It should create the new worker sets correctly on up and downscales
+    #[test]
+    fn create_new_worker_set() {
+        // scale up
+        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1, 2, 3]));
+        let (router, _) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        assert_eq!(router.new_worker_set, IndexSet::from([0, 1, 2, 3]));
+
+        let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([2, 3]));
+        let (router, _) = InterrogateRouter::new(0, IndexSet::from([0, 1, 2, 3]), trigger, partition_index);
+        assert_eq!(router.new_worker_set, IndexSet::from([0, 1]));
+    }
+
+    /// It should create an interrogate message
+    /// which only accepts keys, that need redistribution
+    #[test]
+    fn creates_interrogate() {
+        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let (mut router, mut interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+
+        // this should add 1, 3
+        interrogate.add_keys(&[0, 1, 2, 3, 4]);
+        // should add 5
+        router.route_message(&5, partition_index, 0);
+        drop(interrogate);
+        
+        // should create a collector since we dropped
+        let collect: MessageRouter<usize, i32, i32> = router.lifecycle();
+        match collect {
+            MessageRouter::Collect(c) => {
+                assert_eq!(c.whitelist, IndexSet::from([1, 3, 5]))
+            },
+            _ => panic!()
+        }
+    }
+
+    /// Should not create a collect router while we are keeping a ref to the interrogate
+    #[test]
+    fn noop_if_interrogate_is_running() {
+        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let (router, interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+
+        let router: MessageRouter<usize, i32, i32> = router.lifecycle();
+        let router = match router {
+             MessageRouter::Interrogate(x) => x,
+             _ => panic!()
+        };
+
+        drop(interrogate);
+        let collect: MessageRouter<usize, i32, i32> = router.lifecycle();
+        assert!(matches!(collect, MessageRouter::Collect(_)));
+    }
+
+    #[test]
+    /// Handle Rule 1.1
+    /// • Rule 1.1: If (F(K) == Local) && (F'(K) != Local)
+    /// • add the key K to the set whitelist
+    /// • pass the message downstream
+    fn handle_data_rule_1_1() {
+        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let (mut router, interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+
+        let target = router.route_message(&43, partition_index, 0);
+        assert_eq!(target, 0);
+        
+        drop(interrogate);
+        let collect: MessageRouter<usize, i32, i32> = router.lifecycle();
+        match collect {
+            MessageRouter::Collect(c) => {
+                assert!(c.whitelist.contains(&43))
+            },
+            _ => panic!()
+        }
+    }
+
+    #[test]
+    /// Handle Rule 1.2
+    /// • Rule 1.2: If (F(K) == Local) && (F'(K) == Local)
+    /// • pass the message downstream
+    fn handle_data_rule_1_2() {
+        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let (mut router, _interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+
+        let target = router.route_message(&44, partition_index, 0);
+        assert_eq!(target, 0);
+    }
+
+    #[test]
+    /// Handle Rule 2
+    /// • Rule 2:  If (F(K) != Local)
+    /// • send the message to the worker determined by F
+    fn handle_data_rule_2() {
+        let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([1]));
+        let (mut router, _interrogate) = InterrogateRouter::new(0, IndexSet::from([0, 1]), trigger, partition_index);
+
+        let target = router.route_message(&11, partition_index, 0);
+        assert_eq!(target, 1)
     }
 }

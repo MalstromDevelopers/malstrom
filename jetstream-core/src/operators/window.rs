@@ -1,3 +1,3 @@
-mod flexible;
+mod tumbling;
 
-pub use flexible::FlexibleWindow;
+pub use tumbling::TumblingWindow;

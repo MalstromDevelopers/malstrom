@@ -69,7 +69,6 @@ impl<'a> BuildContext<'a> {
     }
 
     pub fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
-        println!("Loading state for {}", self.operator_id); // TODO remove
         self.persistence_backend
             .load(&self.operator_id)
             .map(deserialize_state)
