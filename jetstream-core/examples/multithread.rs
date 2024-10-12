@@ -40,7 +40,7 @@ fn build_dataflow<R: RuntimeFlavor>(flavor: R) -> WorkerBuilder<R, NoPersistence
     ontime
         // each workers has its own window(s) but the `key_distribute` operator makes sure
         // all messages find their way to the correct window state.
-        // this message just aggregates timestamps of length `10` into a vec
+        // this message just aggregates time periods of length `10` into a vec
         .tumbling_window(10, |_| Some(vec![]), |msg, state| state.push(msg.value))
         // print the aggregated vec and where it was produced
         .inspect(|msg, ctx| println!("{msg:?} @ {}", ctx.worker_id))
