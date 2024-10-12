@@ -1,10 +1,12 @@
 use std::{
+    any::Any,
+    error::Error,
     sync::{Arc, Barrier},
     thread::JoinHandle,
 };
 
 use crate::{
-    runtime::{WorkerBuilder, RuntimeFlavor},
+    runtime::{RuntimeFlavor, WorkerBuilder},
     snapshot::PersistenceBackend,
     types::WorkerId,
 };
@@ -76,11 +78,29 @@ impl MultiThreadRuntime {
         todo!()
     }
 
-    pub fn execute(self) {
+    pub fn execute(self) -> std::thread::Result<()> {
         // start execution on all threads
         self.execution_barrier.wait();
-        for t in self.threads {
-            let _ = t.join();
+
+        // not pretty but pragmatic
+        // to eagerly panic if one of the spawned threads panics
+        let mut threads: Vec<_> = self.threads.into_iter().map(|x| Some(x)).collect();
+        loop {
+            if threads.iter().all(|x| x.is_none()) {
+                return Ok(());
+            }
+            for t in threads.iter_mut() {
+                match t.take() {
+                    Some(running) => {
+                        if running.is_finished() {
+                            running.join()?;
+                        } else {
+                            let _ = t.insert(running);
+                        }
+                    }
+                    None => (),
+                }
+            }
         }
     }
 }
@@ -131,8 +151,7 @@ mod tests {
 
     #[test]
     fn test_can_build() {
-        let rt =
-            MultiThreadRuntime::new_with_args(|flavor, _| WorkerBuilder::new(flavor), [(); 2]);
+        let rt = MultiThreadRuntime::new_with_args(|flavor, _| WorkerBuilder::new(flavor), [(); 2]);
         rt.execute();
     }
 }
