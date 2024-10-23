@@ -14,7 +14,10 @@ use std::{
 use crossbeam;
 use indexmap::IndexMap;
 
-use crate::{snapshot::Barrier, types::{MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker}};
+use crate::{
+    snapshot::Barrier,
+    types::{MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker},
+};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// This is a somewhat hacky we to get a unique id for each sender, which we
@@ -54,7 +57,7 @@ pub struct Sender<K, V, T> {
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     /// uniqe id of this sender
     id: usize,
-    frontier: Option<T>
+    frontier: Option<T>,
 }
 
 impl<K, V, T> Sender<K, V, T>
@@ -70,7 +73,7 @@ where
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
             id: get_id(),
-            frontier: None
+            frontier: None,
         }
     }
 
@@ -122,7 +125,10 @@ where
     }
 }
 
-impl<K, V, T> Clone for Sender<K, V, T>  where T: Clone{
+impl<K, V, T> Clone for Sender<K, V, T>
+where
+    T: Clone,
+{
     fn clone(&self) -> Self {
         let id = get_id();
         for s in &self.senders {
@@ -132,7 +138,7 @@ impl<K, V, T> Clone for Sender<K, V, T>  where T: Clone{
             senders: self.senders.clone(),
             partitioner: self.partitioner.clone(),
             id,
-            frontier: self.frontier.clone()
+            frontier: self.frontier.clone(),
         }
     }
 }
@@ -175,7 +181,7 @@ pub struct Receiver<K, V, T> {
     // from upstream to issue them
     buffered: VecDeque<Message<K, V, T>>,
     // largest observed Epoch
-    frontier: Option<T>
+    frontier: Option<T>,
 }
 
 impl<K, V, T> Receiver<K, V, T> {
@@ -186,7 +192,7 @@ impl<K, V, T> Receiver<K, V, T> {
             receiver,
             states: IndexMap::new(),
             buffered: VecDeque::new(),
-            frontier: None
+            frontier: None,
         }
     }
 
@@ -237,9 +243,7 @@ where
 
         while let Ok(msg_wrapper) = self.receiver.try_recv() {
             let out = match msg_wrapper {
-                MessageWrapper::Message(i, msg) => {
-                    self.handle_received(i, msg)
-                }
+                MessageWrapper::Message(i, msg) => self.handle_received(i, msg),
                 MessageWrapper::Register(i) => {
                     self.states.insert(i, UpstreamState::default());
                     None
@@ -256,63 +260,65 @@ where
         None
     }
 
-fn handle_received(
-    &mut self,
-    sender: usize,
-    msg: Message<K, V, T>,
-) -> Option<Message<K, V, T>> {
-    // PANIC: Caller guarantees valid index
-    let state = self.states.get_mut(&sender).unwrap();
-    if state.needs_alignement() {
-        self.buffered.push_back(msg);
-        return None;
-    }
-    match msg {
-        Message::Epoch(e) => {
-            state.epoch = Some(e);
-            let merged = merge_timestamps(self.states.values().map(|x| &x.epoch));
-            if let Some(m) = merged.as_ref() {
-                if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
-                    self.frontier = Some(m.clone());
+    fn handle_received(
+        &mut self,
+        sender: usize,
+        msg: Message<K, V, T>,
+    ) -> Option<Message<K, V, T>> {
+        // PANIC: Caller guarantees valid index
+        let state = self.states.get_mut(&sender).unwrap();
+        if state.needs_alignement() {
+            self.buffered.push_back(msg);
+            return None;
+        }
+        match msg {
+            Message::Epoch(e) => {
+                state.epoch = Some(e);
+                let merged = merge_timestamps(self.states.values().map(|x| &x.epoch));
+                if let Some(m) = merged.as_ref() {
+                    if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
+                        self.frontier = Some(m.clone());
+                    }
+                }
+                merged.map(|x| Message::Epoch(x.clone()))
+            }
+            Message::AbsBarrier(b) => {
+                state.barrier = Some(b);
+                if self.states.values().all(|x| x.barrier.is_some()) {
+                    self.states
+                        .values_mut()
+                        .map(|x| x.barrier.take())
+                        .last()
+                        .flatten()
+                        .map(|x| Message::AbsBarrier(x))
+                } else {
+                    None
                 }
             }
-            merged.map(|x| Message::Epoch(x.clone()))
-        }
-        Message::AbsBarrier(b) => {
-            state.barrier = Some(b);
-            if self.states.values().all(|x| x.barrier.is_some()) {
-                self.states
-                    .values_mut()
-                    .map(|x| x.barrier.take())
-                    .last()
-                    .flatten()
-                    .map(|x| Message::AbsBarrier(x))
-            } else {
-                None
+            Message::SuspendMarker(s) => {
+                state.shutdown_marker = Some(s);
+                if self.states.values().all(|x| x.shutdown_marker.is_some()) {
+                    self.states
+                        .values_mut()
+                        .map(|x| x.shutdown_marker.take())
+                        .last()
+                        .flatten()
+                        .map(|x| Message::SuspendMarker(x))
+                } else {
+                    None
+                }
             }
+            x => Some(x),
         }
-        Message::SuspendMarker(s) => {
-            state.shutdown_marker = Some(s);
-            if self.states.values().all(|x| x.shutdown_marker.is_some()) {
-                self.states
-                    .values_mut()
-                    .map(|x| x.shutdown_marker.take())
-                    .last()
-                    .flatten()
-                    .map(|x| Message::SuspendMarker(x))
-            } else {
-                None
-            }
-        }
-        x => Some(x),
     }
-}
-
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{snapshot::NoPersistence, types::{NoTime, DataMessage, NoData, NoKey}};
+    use crate::{
+        snapshot::NoPersistence,
+        types::{DataMessage, NoData, NoKey, NoTime},
+    };
 
     use super::*;
 
@@ -493,7 +499,7 @@ mod test {
     }
 
     #[test]
-    fn receiver_observe_frontier(){
+    fn receiver_observe_frontier() {
         let mut sender1: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
         let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
         let mut receiver = Receiver::new_unlinked();
@@ -520,7 +526,10 @@ mod test {
     fn merges_timestamps() {
         assert_eq!(merge_timestamps([None, Some(43)].iter()), None);
         assert_eq!(merge_timestamps([Some(42), Some(43)].iter()), Some(42));
-        assert_eq!(merge_timestamps([Some(1337), Some(1337)].iter()), Some(1337));
+        assert_eq!(
+            merge_timestamps([Some(1337), Some(1337)].iter()),
+            Some(1337)
+        );
         assert_eq!(merge_timestamps::<i32>([None, None].iter()), None);
     }
 

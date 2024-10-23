@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use indexmap::IndexSet;
 
-use crate::types::{Key, RescaleMessage, WorkerId};
 use super::super::types::*;
 use super::{collect::CollectRouter, MessageRouter};
+use crate::types::{Key, RescaleMessage, WorkerId};
 
 #[derive(Debug)]
 pub(crate) struct InterrogateRouter<K> {
@@ -19,7 +19,10 @@ pub(crate) struct InterrogateRouter<K> {
     // so we will buffer them, waiting for the normal dist to deal with them
     pub(super) queued_rescales: Vec<RescaleMessage>,
 }
-impl<K> InterrogateRouter<K> where K: Key {
+impl<K> InterrogateRouter<K>
+where
+    K: Key,
+{
     pub(super) fn new(
         version: Version,
         old_worker_set: IndexSet<WorkerId>,
@@ -81,9 +84,8 @@ impl<K> InterrogateRouter<K> where K: Key {
             (false, _) => old_target,
         }
     }
-    
+
     pub(crate) fn lifecycle<V, T>(self) -> MessageRouter<K, V, T> {
-        
         match self.interrogate_msg.try_unwrap() {
             Ok(whitelist) => {
                 // interrogate is done
@@ -92,8 +94,9 @@ impl<K> InterrogateRouter<K> where K: Key {
                     whitelist,
                     self.old_worker_set,
                     self.new_worker_set,
-                    self.queued_rescales);
-                    MessageRouter::Collect(router)
+                    self.queued_rescales,
+                );
+                MessageRouter::Collect(router)
             }
             // still running
             Err(e) => {
@@ -104,25 +107,25 @@ impl<K> InterrogateRouter<K> where K: Key {
                 MessageRouter::Interrogate(router)
             }
         }
-
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keyed::partitioners::partition_index;
+    use crate::keyed::partitioners::index_select;
 
     /// It should create the new worker sets correctly on up and downscales
     #[test]
     fn create_new_worker_set() {
         // scale up
         let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1, 2, 3]));
-        let (router, _) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        let (router, _) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1, 2, 3]));
 
         let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([2, 3]));
-        let (router, _) = InterrogateRouter::new(0, IndexSet::from([0, 1, 2, 3]), trigger, partition_index);
+        let (router, _) =
+            InterrogateRouter::new(0, IndexSet::from([0, 1, 2, 3]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1]));
     }
 
@@ -131,21 +134,22 @@ mod tests {
     #[test]
     fn creates_interrogate() {
         let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
-        let (mut router, mut interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        let (mut router, mut interrogate) =
+            InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
         // this should add 1, 3
         interrogate.add_keys(&[0, 1, 2, 3, 4]);
         // should add 5
-        router.route_message(&5, partition_index, 0);
+        router.route_message(&5, index_select, 0);
         drop(interrogate);
-        
+
         // should create a collector since we dropped
         let collect: MessageRouter<usize, i32, i32> = router.lifecycle();
         match collect {
             MessageRouter::Collect(c) => {
                 assert_eq!(c.whitelist, IndexSet::from([1, 3, 5]))
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
     }
 
@@ -153,12 +157,13 @@ mod tests {
     #[test]
     fn noop_if_interrogate_is_running() {
         let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
-        let (router, interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        let (router, interrogate) =
+            InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
         let router: MessageRouter<usize, i32, i32> = router.lifecycle();
         let router = match router {
-             MessageRouter::Interrogate(x) => x,
-             _ => panic!()
+            MessageRouter::Interrogate(x) => x,
+            _ => panic!(),
         };
 
         drop(interrogate);
@@ -173,18 +178,19 @@ mod tests {
     /// • pass the message downstream
     fn handle_data_rule_1_1() {
         let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
-        let (mut router, interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        let (mut router, interrogate) =
+            InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
-        let target = router.route_message(&43, partition_index, 0);
+        let target = router.route_message(&43, index_select, 0);
         assert_eq!(target, 0);
-        
+
         drop(interrogate);
         let collect: MessageRouter<usize, i32, i32> = router.lifecycle();
         match collect {
             MessageRouter::Collect(c) => {
                 assert!(c.whitelist.contains(&43))
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
     }
 
@@ -194,9 +200,10 @@ mod tests {
     /// • pass the message downstream
     fn handle_data_rule_1_2() {
         let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
-        let (mut router, _interrogate) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, partition_index);
+        let (mut router, _interrogate) =
+            InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
-        let target = router.route_message(&44, partition_index, 0);
+        let target = router.route_message(&44, index_select, 0);
         assert_eq!(target, 0);
     }
 
@@ -206,9 +213,10 @@ mod tests {
     /// • send the message to the worker determined by F
     fn handle_data_rule_2() {
         let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([1]));
-        let (mut router, _interrogate) = InterrogateRouter::new(0, IndexSet::from([0, 1]), trigger, partition_index);
+        let (mut router, _interrogate) =
+            InterrogateRouter::new(0, IndexSet::from([0, 1]), trigger, index_select);
 
-        let target = router.route_message(&11, partition_index, 0);
+        let target = router.route_message(&11, index_select, 0);
         assert_eq!(target, 1)
     }
 }

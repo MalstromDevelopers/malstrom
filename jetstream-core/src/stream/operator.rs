@@ -1,5 +1,3 @@
-
-
 use crate::types::MaybeTime;
 use crate::types::{Data, MaybeKey};
 
@@ -30,7 +28,11 @@ pub(crate) fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
 mod test {
     use super::{pass_through_operator, AppendableOperator, OperatorBuilder};
     use crate::{
-        channels::selective_broadcast::{full_broadcast, link, Sender}, snapshot::NoPersistence, stream::operator::BuildContext, testing::NoCommunication, types::{Message, NoData, NoKey}
+        channels::selective_broadcast::{full_broadcast, link, Sender},
+        snapshot::NoPersistence,
+        stream::operator::BuildContext,
+        testing::NoCommunication,
+        types::{Message, NoData, NoKey},
     };
 
     /// The operator should report as finished once the MAX time has passed it

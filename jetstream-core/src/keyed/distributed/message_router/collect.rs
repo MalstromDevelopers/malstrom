@@ -250,21 +250,20 @@ mod test {
         let msg = DataMessage::new(key, 22, 555);
         let out = dist.route_message(msg, None, partiton_index, 0, 0);
         assert!(out.is_none());
-        
+
         // drop the collector, next lifecycle should emit the acquire
         drop(collector);
         let _ = dist.lifecycle(partiton_index, &mut sender, &remotes);
 
         let acquire = comm.recv_from_operator().unwrap();
-        assert_eq!(acquire.operator_id, 0);
-        assert_eq!(acquire.worker_id, 1);
+        assert_eq!(acquire.to_operator, 0);
+        assert_eq!(acquire.to_worker, 1);
         match acquire.msg {
             NetworkMessage::Acquire(a) => {
                 assert_eq!(a.key, key)
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
-
     }
 
     /// Rule 2: (F'(K) != Local) && K ∉ whitelist && K ∉ hold
@@ -285,7 +284,9 @@ mod test {
             timestamp: 512,
         };
 
-        let (out_msg, target) = dist.route_message(msg.clone(), partiton_index, 0, 0).unwrap();
+        let (out_msg, target) = dist
+            .route_message(msg.clone(), partiton_index, 0, 0)
+            .unwrap();
         assert_eq!(out_msg, msg);
         assert_eq!(target, 1);
     }
@@ -302,14 +303,16 @@ mod test {
             IndexSet::from([0]),
             Vec::new(),
         );
-        
+
         // this should go downstream
         let msg = DataMessage {
             key: 2,
             value: 42,
             timestamp: 512,
         };
-        let (out_msg, target) = dist.route_message(msg.clone(), partiton_index, 0, 0).unwrap();
+        let (out_msg, target) = dist
+            .route_message(msg.clone(), partiton_index, 0, 0)
+            .unwrap();
         assert_eq!(out_msg, msg);
         assert_eq!(target, 0);
 
@@ -319,7 +322,9 @@ mod test {
             value: 42,
             timestamp: 512,
         };
-        let (out_msg, target) = dist.route_message(msg.clone(), partiton_index, 0, 0).unwrap();
+        let (out_msg, target) = dist
+            .route_message(msg.clone(), partiton_index, 0, 0)
+            .unwrap();
         assert_eq!(out_msg, msg);
         assert_eq!(target, 1);
     }
@@ -347,13 +352,21 @@ mod test {
 
         let (mut sender, mut receiver) = get_input_output();
         let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
-        assert!(matches!(receiver.recv().unwrap(), Message::Collect(Collect { key: 5, .. })));
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            Message::Collect(Collect { key: 5, .. })
+        ));
         let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
-        assert!(matches!(receiver.recv().unwrap(), Message::Collect(Collect { key: 3, .. })));
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            Message::Collect(Collect { key: 3, .. })
+        ));
         dist.lifecycle(partiton_index, &mut sender, &remotes);
-        assert!(matches!(receiver.recv().unwrap(), Message::Collect(Collect { key: 1, .. })));
+        assert!(matches!(
+            receiver.recv().unwrap(),
+            Message::Collect(Collect { key: 1, .. })
+        ));
     }
-
 
     /// Should create an acquire message and emit buffered messages
     #[test]
@@ -379,10 +392,10 @@ mod test {
         let (mut sender, mut receiver) = get_input_output();
 
         let mut dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
-        
-        let mut collector = match receiver.recv().unwrap()  {
+
+        let mut collector = match receiver.recv().unwrap() {
             Message::Collect(c) => c,
-            _ => panic!()
+            _ => panic!(),
         };
 
         // this message should get buffered
@@ -393,10 +406,10 @@ mod test {
         // drop it to trigger the acquire
         drop(collector);
         dist.lifecycle(partiton_index, &mut sender, &remotes);
-        
+
         let acquire = comm.recv_from_operator().unwrap();
-        assert_eq!(acquire.worker_id, 1);
-        assert_eq!(acquire.operator_id, 0);
+        assert_eq!(acquire.to_worker, 1);
+        assert_eq!(acquire.to_operator, 0);
 
         match acquire.msg {
             NetworkMessage::Acquire(a) => {
@@ -404,8 +417,8 @@ mod test {
                 let (key, state): (usize, String) = local_acquire.take_state(&25).unwrap();
                 assert_eq!(key, 1);
                 assert_eq!(state, "foobar");
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
 
         // buffered data
@@ -414,8 +427,8 @@ mod test {
             NetworkMessage::Data(d) => {
                 assert_eq!(d.content, buffered_msg);
                 assert_eq!(d.version, 1);
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
     }
 
@@ -454,23 +467,31 @@ mod test {
         let upgrade2 = comm.recv_from_operator().unwrap();
 
         let mut upgrade_messages = [upgrade1, upgrade2];
-        upgrade_messages.sort_by(|a, b| a.worker_id.cmp(&b.worker_id));
+        upgrade_messages.sort_by(|a, b| a.to_worker.cmp(&b.to_worker));
 
         match upgrade_messages[0] {
-            SentMessage{worker_id: wid, operator_id: oid, msg: NetworkMessage::Upgrade(v)} => {
+            SentMessage {
+                to_worker: wid,
+                to_operator: oid,
+                msg: NetworkMessage::Upgrade(v),
+            } => {
                 assert_eq!(wid, 1);
                 assert_eq!(oid, 0);
                 assert_eq!(v, 1);
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
         match upgrade_messages[1] {
-            SentMessage{worker_id: wid, operator_id: oid, msg: NetworkMessage::Upgrade(v)} => {
+            SentMessage {
+                to_worker: wid,
+                to_operator: oid,
+                msg: NetworkMessage::Upgrade(v),
+            } => {
                 assert_eq!(wid, 2);
                 assert_eq!(oid, 0);
                 assert_eq!(v, 1);
-            },
-            _ => panic!()
+            }
+            _ => panic!(),
         }
     }
 
@@ -498,11 +519,10 @@ mod test {
 
         // tell it worker 1 is done with rescaling
         remotes.get_mut(&1).unwrap().1.last_version = 1;
-        
+
         let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
         assert!(matches!(dist, MessageRouter::Finished(_)));
         let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
         assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
-    }    
-
+    }
 }

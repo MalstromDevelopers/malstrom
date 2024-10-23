@@ -1,24 +1,45 @@
 use super::stateless_op::StatelessOp;
+use crate::channels::selective_broadcast::Sender;
 use crate::stream::JetStreamBuilder;
+use crate::types::{Data, DataMessage, MaybeKey};
 use crate::types::{Message, Timestamp};
-use crate::types::{Data, MaybeKey};
 
 pub trait Filter<K, V, T> {
     /// Filters the datastream based on a given predicate.
     ///
     /// The given function receives an immutable reference to the value
     /// of every data message reaching this operator.
-    /// If the function return `true`, the message will be retained and
+    /// If the function returns `true`, the message will be retained and
     /// passed downstream, if the function returns `false`, the message
-    /// will be dropped.
+    /// will be discarded.
     ///
     /// # Example
     ///
     /// Only retain numbers <= 42
+    /// ```rust
+    /// use jetstream::operators::*;
+    /// use jetstream::operators::Source;
+    /// use jetstream::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
+    /// use jetstream::testing::VecSink;
+    /// use jetstream::sources::SingleIteratorSource;
+    ///
+    /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
+    ///
+    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    ///
+    /// worker
+    ///     .new_stream()
+    ///     .source(SingleIteratorSource::new(0..100))
+    ///     .filter(|x| *x <= 42)
+    ///     .sink(sink_clone)
+    ///     .finish();
+    ///
+    /// worker.build().expect("can build").execute();
+    /// let expected: Vec<i32> = (0..=42).collect();
+    /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+    /// assert_eq!(out, expected);
     /// ```
-    /// stream: JetStreamBuilder<NoKey, i64, NoTime, NoPersistence>
-    /// stream.filter(|x| *x <= 42)
-    /// ````
     fn filter(self, filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T>;
 }
 
@@ -29,11 +50,13 @@ where
     T: Timestamp,
 {
     fn filter(self, mut filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T> {
-        self.stateless_op(move |item, out| {
-            if filter(&item.value) {
-                out.send(Message::Data(item))
-            }
-        })
+        self.stateless_op(
+            move |item: DataMessage<K, V, T>, out: &mut Sender<K, V, T>| {
+                if filter(&item.value) {
+                    out.send(Message::Data(item))
+                }
+            },
+        )
     }
 }
 

@@ -15,7 +15,7 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
 }
 
 /// Zero sozed marker indicating a stream with no timestamps associated.
-/// 
+///
 /// **IMPORTANT:** The NoTime type has a special meaning in JetStream:
 /// Operators emittng `NoTime` are seen as not able to advance the computation.
 /// This means if all operators emitting timestamps in a stream are finished, a `NoTime`
@@ -41,12 +41,16 @@ pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
     /// us to indicate that NoTime emitting operators are always done
     const CHECK_FINISHED: fn(&Option<Self>) -> bool;
 }
-impl<T> MaybeTime for T where T: Timestamp + Clone + 'static {
+impl<T> MaybeTime for T
+where
+    T: Timestamp + Clone + 'static,
+{
     fn try_merge(&self, other: &Self) -> Option<Self> {
         Some(self.merge(other))
     }
-    
-    const CHECK_FINISHED: fn(&Option<Self>) -> bool = |opt_t| opt_t.as_ref().map_or(false, |t| *t == T::MAX);
+
+    const CHECK_FINISHED: fn(&Option<Self>) -> bool =
+        |opt_t| opt_t.as_ref().map_or(false, |t| *t == T::MAX);
 }
 impl MaybeTime for NoTime {
     fn try_merge(&self, _other: &Self) -> Option<Self> {

@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
-
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::types::{OperatorId, WorkerId};
 
-/// A type which can be sent (dsitributed) between workers
-pub trait Distributable: Serialize + DeserializeOwned{}
-impl <T> Distributable for T where  T: Serialize + DeserializeOwned{}
+/// A type which can be sent (distributed) between workers
+pub trait Distributable: Serialize + DeserializeOwned {}
+impl<T> Distributable for T where T: Serialize + DeserializeOwned {}
 
 /// A backend facilitating inter-worker communication in jetstream
 pub trait CommunicationBackend {
@@ -24,13 +23,13 @@ pub trait CommunicationBackend {
 
 pub trait Transport {
     /// Send a single message to the Operator on the other end of the transport.
-    /// 
+    ///
     /// Fallible transports must implement applicable retry logic internally,
     /// an error should only be returned on **unrecoverable conditions**.
     fn send(&self, msg: Vec<u8>) -> Result<(), TransportError>;
 
     /// Receive a single message for the operator on this end of the transport.
-    /// 
+    ///
     /// If no message is available at this moment, `Ok(None)` shall be returned.
     /// Fallible transports must implement applicable retry logic internally,
     /// an error should only be returned on **unrecoverable conditions**.
@@ -78,7 +77,7 @@ where
     pub fn recv(&self) -> Option<T> {
         let encoded = self.transport.recv().unwrap()?;
         let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
-        .expect("Received message is deserializable");
+            .expect("Received message is deserializable");
         Some(decoded)
     }
 
@@ -91,8 +90,8 @@ where
     }
     pub(crate) fn decode(msg: &[u8]) -> T {
         bincode::serde::decode_from_slice(msg, BINCODE_CONFIG)
-        .expect("Deserialization successfull")
-        .0
+            .expect("Deserialization successfull")
+            .0
     }
 }
 
@@ -133,7 +132,6 @@ pub fn broadcast<'a, T: Distributable + Clone + 'a>(
     for c in clients {
         c.send(msg.clone());
     }
-    
 }
 
 #[derive(thiserror::Error, Debug)]

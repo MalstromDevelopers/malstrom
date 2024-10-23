@@ -131,7 +131,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keyed::partitioners::partition_index;
+    use crate::keyed::partitioners::index_select;
     use proptest::prelude::*;
 
     proptest! {
@@ -143,25 +143,25 @@ mod tests {
             33,
             IndexSet::from([0, 1, 2]),
             RescaleMessage::ScaleAddWorker(IndexSet::from([3])),
-            partition_index,
+            index_select,
         ).0);
         let mut collect_router = MessageRouter::Collect(CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
         let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
 
 
         let msg = DataMessage::new(key, 100, 0);
-        
-        let (msg, target) = normal_router.route_message(msg, Some(34), partition_index, this_worker, sender).unwrap();
+
+        let (msg, target) = normal_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
         assert_eq!(target, this_worker);
-        
-        let (msg, target) = interrogate_router.route_message(msg, Some(34), partition_index, this_worker, sender).unwrap();
+
+        let (msg, target) = interrogate_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
         assert_eq!(target, this_worker);
-        
+
         // must increase the version here since the collect increases it on construction
-        let (msg, target) = collect_router.route_message(msg, Some(35), partition_index, this_worker, sender).unwrap();
+        let (msg, target) = collect_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
         assert_eq!(target, this_worker);
-        
-        let (_msg, target) = finished_router.route_message(msg, Some(35), partition_index, this_worker, sender).unwrap();
+
+        let (_msg, target) = finished_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
         assert_eq!(target, this_worker);
     }
     }

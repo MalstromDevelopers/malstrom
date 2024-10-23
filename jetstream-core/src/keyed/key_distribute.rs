@@ -1,10 +1,15 @@
-
 use crate::{
     stream::{JetStreamBuilder, OperatorBuilder},
     types::{DataMessage, Key, MaybeKey},
 };
 
-use super::{distributed::{types::{DistData, DistKey, DistTimestamp, WorkerPartitioner}, Distributor}, KeyLocal};
+use super::{
+    distributed::{
+        types::{DistData, DistKey, DistTimestamp, WorkerPartitioner},
+        Distributor,
+    },
+    KeyLocal,
+};
 
 pub trait KeyDistribute<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and distribute
@@ -37,10 +42,9 @@ where
         let keyed = self
             .key_local(key_func)
             .label("jetstream::key_distribute::key_local");
-        keyed
-            .then(OperatorBuilder::built_by(move |ctx| {
-                let mut dist = Distributor::new(partitioner, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-    }))
+        keyed.then(OperatorBuilder::built_by(move |ctx| {
+            let mut dist = Distributor::new(partitioner, ctx);
+            move |input, output, op_ctx| dist.run(input, output, op_ctx)
+        }))
     }
 }

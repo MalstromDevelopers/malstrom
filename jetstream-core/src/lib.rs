@@ -1,7 +1,7 @@
-pub mod runtime;
 pub mod channels;
 pub mod keyed;
 pub mod operators;
+pub mod runtime;
 pub mod snapshot;
 pub mod sources;
 pub mod stream;

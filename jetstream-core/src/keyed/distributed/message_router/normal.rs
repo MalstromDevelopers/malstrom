@@ -1,9 +1,8 @@
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
-use crate::types::*;
 use super::super::types::*;
-
+use crate::types::*;
 
 /// The "normal" message router, i.e. the one used while there is no rescaling
 /// configuration under way
@@ -30,7 +29,6 @@ impl NormalRouter {
 
 #[cfg(test)]
 mod test {
-    use crate::types::*;
     use super::*;
     use indexmap::IndexSet;
 
@@ -38,9 +36,9 @@ mod test {
     fn partiton_index(i: &usize, s: &IndexSet<WorkerId>) -> WorkerId {
         *s.get_index(i % s.len()).unwrap()
     }
-    
+
     #[test]
-    /// Check we return the target the 
+    /// Check we return the target the
     fn give_correct_target() {
         let router = NormalRouter::new(IndexSet::from([0, 1]), 0);
         assert_eq!(0, router.route_message(&0, partiton_index));

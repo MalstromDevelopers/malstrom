@@ -1,8 +1,11 @@
 use std::iter;
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender}, operators::IntoSource, stream::OperatorBuilder, types::{Data, DataMessage, Message, NoData, NoKey, NoTime
-}};
+    channels::selective_broadcast::{Receiver, Sender},
+    operators::IntoSource,
+    stream::OperatorBuilder,
+    types::{Data, DataMessage, Message, NoData, NoKey, NoTime},
+};
 
 /// A datasource which yields values from an iterator
 /// on **one single worker**.
@@ -14,21 +17,27 @@ use crate::{
 /// element in the iterator.
 ///
 /// # Example
+/// ```rust
+/// use jetstream::operators::*;
+/// use jetstream::operators::Source;
+/// use jetstream::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
+/// use jetstream::testing::VecSink;
+/// use jetstream::sources::SingleIteratorSource;
+///
+/// let sink = VecSink::new();
+/// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+///
+/// worker
+///     .new_stream()
+///     .source(SingleIteratorSource::new(0..100))
+///     .sink(sink.clone())
+///     .finish();
+///
+/// worker.build().expect("can build").execute();
+/// let expected: Vec<i32> = (0..100).collect();
+/// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+/// assert_eq!(out, expected);
 /// ```
-/// # use jetstream::sources::SingleIteratorSource;
-/// use jetstream::{JetStreamBuilder, RuntimeBuilder};
-/// use jetstream::test::TestingValuesSink;
-/// use jetstream::runtimes::SingleThreadRuntime;
-///
-/// let values = vec!["foo", "bar", "baz"];
-/// let output = Vec::new();
-/// let rt = RuntimeBuilder::new(SingleThreadRuntime::default())
-/// rt.new_stream()
-///     .source(SingleIteratorSource::new(values))
-///     .sink(TestingValuesSink::new(&mut output)); // collects into output
-///
-/// rt.build().execute() // runs until stream reaches time `usize::MAX`
-/// assert_eq!(values, output);
 pub struct SingleIteratorSource<T> {
     iterator: Box<dyn Iterator<Item = T>>,
 }
@@ -45,13 +54,11 @@ impl<T> SingleIteratorSource<T> {
     }
 }
 
-impl <V> IntoSource<NoKey, V, usize> for SingleIteratorSource<V>
+impl<V> IntoSource<NoKey, V, usize> for SingleIteratorSource<V>
 where
     V: Data,
 {
     fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
-
-
         OperatorBuilder::built_by(|build_context| {
             let mut inner = if build_context.worker_id == 0 {
                 self.iterator.enumerate()
@@ -60,8 +67,10 @@ where
                 (Box::new(iter::empty::<V>()) as Box<dyn Iterator<Item = V>>).enumerate()
             };
             let mut final_emitted = false;
-    
-            move |input: &mut Receiver<NoKey, NoData, NoTime>, output: &mut Sender<NoKey, V, usize>, ctx| {
+
+            move |input: &mut Receiver<NoKey, NoData, NoTime>,
+                  output: &mut Sender<NoKey, V, usize>,
+                  ctx| {
                 if !final_emitted {
                     if let Some(x) = inner.next() {
                         output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
@@ -84,9 +93,7 @@ where
                     }
                 }
             }
-        }
-        
-        )
+        })
     }
 }
 
@@ -97,7 +104,11 @@ mod tests {
     use proptest::bits::usize;
 
     use crate::{
-        operators::*, runtime::{threaded::MultiThreadRuntime, WorkerBuilder}, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}, types::Message
+        operators::*,
+        runtime::{threaded::MultiThreadRuntime, WorkerBuilder},
+        sources::SingleIteratorSource,
+        testing::{get_test_stream, VecSink},
+        types::Message,
     };
 
     /// The into_iter source should emit the iterator values
@@ -115,10 +126,7 @@ mod tests {
         stream.finish();
         builder.build().unwrap().execute();
 
-        let c = collector
-            .into_iter()
-            .map(|x| x.value)
-            .collect_vec();
+        let c = collector.into_iter().map(|x| x.value).collect_vec();
         assert_eq!(c, (0..100).collect_vec())
     }
 
@@ -126,16 +134,23 @@ mod tests {
     #[test]
     fn emits_only_on_worker_0() {
         let sink = VecSink::new();
-        
+
         let args = [sink.clone(), sink.clone()];
 
-        let rt = MultiThreadRuntime::new_with_args(|flavor, this_sink| {
-            let mut builder = WorkerBuilder::new(flavor);
-            builder.new_stream().source(SingleIteratorSource::new(0..10)).sink(this_sink).finish();
-            builder
-        }, args);
-        
-        rt.execute();
+        let rt = MultiThreadRuntime::new_with_args(
+            |flavor, this_sink| {
+                let mut builder = WorkerBuilder::new(flavor);
+                builder
+                    .new_stream()
+                    .source(SingleIteratorSource::new(0..10))
+                    .sink(this_sink)
+                    .finish();
+                builder
+            },
+            args,
+        );
+
+        rt.execute().unwrap();
         // if both threads emitted values, we would expect this to contain 20 values, not 10
         assert_eq!(sink.len(), 10);
     }
@@ -145,7 +160,10 @@ mod tests {
     fn emits_timestamped_messages() {
         let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
-        stream.source(SingleIteratorSource::new(42..52)).sink(sink.clone()).finish();
+        stream
+            .source(SingleIteratorSource::new(42..52))
+            .sink(sink.clone())
+            .finish();
         builder.build().unwrap().execute();
 
         let timestamps = sink.into_iter().map(|x| x.timestamp).collect_vec();
@@ -159,15 +177,17 @@ mod tests {
     fn emits_max_epoch() {
         let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
-        stream.source(SingleIteratorSource::new(0..10)).sink_full(sink.clone()).finish();
+        stream
+            .source(SingleIteratorSource::new(0..10))
+            .sink_full(sink.clone())
+            .finish();
         builder.build().unwrap().execute();
 
         let messages = sink.drain_vec(..);
         let last = messages.last().unwrap();
         match last {
             Message::Epoch(usize::MAX) => (),
-            _ => panic!()
+            _ => panic!(),
         }
     }
-
 }

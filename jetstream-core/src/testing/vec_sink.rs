@@ -1,9 +1,9 @@
-use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 use crate::{
     operators::{IntoSink, IntoSinkFull},
     stream::OperatorBuilder,
     types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime},
 };
+use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 
 /// A Helper to write values into a shared vector and take them out
 /// again.

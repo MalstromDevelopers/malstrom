@@ -7,6 +7,7 @@ mod map;
 mod sink;
 mod source;
 mod stateful_map;
+mod stateful_op;
 mod time;
 mod window;
 
@@ -18,11 +19,11 @@ pub use filter_map::FilterMap;
 pub use flatten::Flatten;
 pub use inspect::Inspect;
 pub use map::Map;
-pub use sink::{Sink, SinkFull, IntoSink, IntoSinkFull};
-pub use source::{Source, IntoSource};
+pub use sink::{IntoSink, IntoSinkFull, Sink, SinkFull};
+pub use source::{IntoSource, Source};
 pub use stateful_map::StatefulMap;
-pub use window::*;
 pub use time::*;
+pub use window::*;
 
 // These are only to be used internally in jetstream
 pub(crate) mod stateless_op;

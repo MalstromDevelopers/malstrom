@@ -1,10 +1,10 @@
 mod builder;
-pub mod threaded;
 pub mod communication;
 mod runtime_flavor;
+pub mod threaded;
 
-pub use runtime_flavor::RuntimeFlavor;
+pub use builder::{Worker, WorkerBuilder};
 pub use communication::{CommunicationBackend, CommunicationClient};
-pub use builder::{WorkerBuilder, Worker};
+pub use runtime_flavor::RuntimeFlavor;
 
-pub(crate) use builder::{InnerRuntimeBuilder, split_n, union};
+pub(crate) use builder::{split_n, union, InnerRuntimeBuilder};

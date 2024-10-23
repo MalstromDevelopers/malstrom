@@ -241,7 +241,9 @@ mod tests {
             .generate_epochs(|msg, _| Some(msg.timestamp));
 
         // this should remove epochs
-        let (stream, _) = stream.assign_timestamps(|x| x.timestamp as i32).generate_epochs(|_x, _y| None);
+        let (stream, _) = stream
+            .assign_timestamps(|x| x.timestamp as i32)
+            .generate_epochs(|_x, _y| None);
 
         let time_collector = VecSink::new();
 
@@ -294,7 +296,10 @@ mod tests {
         late.finish();
         builder.build().unwrap().execute();
 
-        assert_eq!(collector.drain_vec(..), vec![1, -1, 2, -2, 3, -3, -i32::MAX])
+        assert_eq!(
+            collector.drain_vec(..),
+            vec![1, -1, 2, -2, 3, -3, -i32::MAX]
+        )
     }
 
     /// Test late messages are placed into the late stream
@@ -339,13 +344,22 @@ mod tests {
             .generate_epochs(|msg, _epoch| {
                 match msg.timestamp {
                     3 => Some(2), // should be ignrored
-                    1 => None, // this too
-                    x => Some(x)
+                    1 => None,    // this too
+                    x => Some(x),
                 }
             });
         ontime.sink_full(collector_ontime.clone()).finish();
         builder.build().unwrap().execute();
-        let epochs = collector_ontime.into_iter().filter_map(|msg| if let Message::Epoch(e) = msg {Some(e)} else { None}).collect_vec();
+        let epochs = collector_ontime
+            .into_iter()
+            .filter_map(|msg| {
+                if let Message::Epoch(e) = msg {
+                    Some(e)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
         assert_eq!(epochs, vec![0, 2, 4, 5, usize::MAX])
     }
 }

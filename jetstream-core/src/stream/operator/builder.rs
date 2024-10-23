@@ -1,11 +1,17 @@
 //! A builder to build JetStream operators
 
-use crate::{channels::selective_broadcast::{full_broadcast, Receiver, Sender}, types::{Data, MaybeKey, MaybeTime, OperatorPartitioner}};
+use crate::{
+    channels::selective_broadcast::{full_broadcast, Receiver, Sender},
+    types::{Data, MaybeKey, MaybeTime, OperatorPartitioner},
+};
 
-use super::{standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, OperatorContext, RunnableOperator};
+use super::{
+    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator,
+    OperatorContext, RunnableOperator,
+};
 
-
-type LogicBuilder<KI, VI, TI, KO, VO, TO> = dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>;
+type LogicBuilder<KI, VI, TI, KO, VO, TO> =
+    dyn FnOnce(&mut BuildContext) -> Box<dyn Logic<KI, VI, TI, KO, VO, TO>>;
 
 /// A builder type to build generic operators
 pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
@@ -107,7 +113,7 @@ where
     TI: MaybeTime,
     KO: MaybeKey,
     VO: Data,
-    TO: MaybeTime
+    TO: MaybeTime,
 {
     fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator {
         let operator = StandardOperator {

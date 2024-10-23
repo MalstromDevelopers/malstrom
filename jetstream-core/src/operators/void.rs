@@ -1,11 +1,7 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    stream::{
-        JetStreamBuilder,
-        OperatorBuilder, OperatorContext,
-    },
-    types::{MaybeTime, NoTime,
-    MaybeData, MaybeKey, NoData, NoKey,}
+    stream::{JetStreamBuilder, OperatorBuilder, OperatorContext},
+    types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
 };
 
 /// The Void operator will drop all (yes ALL) messages it receives
@@ -44,7 +40,10 @@ mod test {
     use indexmap::{IndexMap, IndexSet};
 
     use crate::{
-        keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::{Barrier, NoPersistence}, testing::OperatorTester, types::{DataMessage, Message, RescaleMessage, SuspendMarker,}
+        keyed::distributed::{Acquire, Collect, Interrogate},
+        snapshot::{Barrier, NoPersistence},
+        testing::OperatorTester,
+        types::{DataMessage, Message, RescaleMessage, SuspendMarker},
     };
     /// Simple test, the operator must destroy everything 💀
     #[test]
@@ -68,5 +67,4 @@ mod test {
             assert!(tester.recv_local().is_none())
         }
     }
-
 }

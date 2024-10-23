@@ -1,4 +1,5 @@
 use super::stateless_op::StatelessOp;
+use crate::channels::selective_broadcast::Sender;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
@@ -13,11 +14,30 @@ pub trait Flatten<K, VI, T, VO, I> {
     /// # Example
     ///
     /// Only retain numbers <= 42
-    /// ```
-    /// stream: JetStreamBuilder<NoKey, Vec<i64>, NoTime, NoPersistence>
-    /// let flat: JetStreamBuilder<NoKey, i64, NoTime, NoPersistence> = stream.flatten();
+    /// ```rust
+    /// use jetstream::operators::*;
+    /// use jetstream::operators::Source;
+    /// use jetstream::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
+    /// use jetstream::testing::VecSink;
+    /// use jetstream::sources::SingleIteratorSource;
     ///
-    /// ````
+    /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
+    ///
+    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    ///
+    /// worker
+    ///     .new_stream()
+    ///     .source(SingleIteratorSource::new([vec![1, 2, 3], vec![4, 5], vec![6]]))
+    ///     .flatten()
+    ///     .sink(sink_clone)
+    ///     .finish();
+    ///
+    /// worker.build().expect("can build").execute();
+    /// let expected: Vec<i32> = vec![1, 2, 3, 4, 5, 6];
+    /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+    /// assert_eq!(out, expected);
+    /// ```
     fn flatten(self) -> JetStreamBuilder<K, VO, T>;
 }
 
@@ -30,17 +50,19 @@ where
     T: Timestamp,
 {
     fn flatten(self) -> JetStreamBuilder<K, VO, T> {
-        self.stateless_op(move |item, out| {
-            let key = item.key;
-            let timestamp = item.timestamp;
-            for x in item.value {
-                out.send(Message::Data(DataMessage::new(
-                    key.clone(),
-                    x,
-                    timestamp.clone(),
-                )))
-            }
-        })
+        self.stateless_op(
+            move |item: DataMessage<K, VI, T>, out: &mut Sender<K, VO, T>| {
+                let key = item.key;
+                let timestamp = item.timestamp;
+                for x in item.value {
+                    out.send(Message::Data(DataMessage::new(
+                        key.clone(),
+                        x,
+                        timestamp.clone(),
+                    )))
+                }
+            },
+        )
     }
 }
 
@@ -49,10 +71,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{
-            source::Source,
-            KeyLocal, Sink,
-        },
+        operators::{source::Source, KeyLocal, Sink},
         sources::SingleIteratorSource,
         testing::{get_test_stream, VecSink},
     };

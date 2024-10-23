@@ -1,5 +1,7 @@
-use crate::{stream::{JetStreamBuilder, OperatorBuilder, OperatorContext}, types::{Data, DataMessage, MaybeKey, Message, Timestamp}};
-
+use crate::{
+    stream::{JetStreamBuilder, OperatorBuilder, OperatorContext},
+    types::{Data, DataMessage, MaybeKey, Message, Timestamp},
+};
 
 pub trait Inspect<K, V, T> {
     /// Observe values in a stream without modifying them.
@@ -10,14 +12,33 @@ pub trait Inspect<K, V, T> {
     ///
     /// To inspect the current event time see [`crate::operators::timely::InspectFrontier::inspect_frontier`].
     ///
-    /// ```
-    /// use tracing::debug;
+    /// ```rust
+    /// use jetstream::operators::*;
+    /// use jetstream::operators::Source;
+    /// use jetstream::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
+    /// use jetstream::testing::VecSink;
+    /// use jetstream::sources::SingleIteratorSource;
     ///
-    /// stream: JetStreamBuilder<NoKey, &str, NoTime, NoPersistence>
-    /// stream.inspect(|x| debug!(x));
+    /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
     ///
+    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    ///
+    /// worker
+    ///     .new_stream()
+    ///     .source(SingleIteratorSource::new(0..100))
+    ///     .inspect(move |msg, _ctx| sink_clone.give(msg.clone()))
+    ///     .finish();
+    ///
+    /// worker.build().expect("can build").execute();
+    /// let expected: Vec<i32> = (0..100).collect();
+    /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+    /// assert_eq!(out, expected);
     /// ```
-    fn inspect(self, inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static) -> JetStreamBuilder<K, V, T>;
+    fn inspect(
+        self,
+        inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
+    ) -> JetStreamBuilder<K, V, T>;
 }
 
 impl<K, V, T> Inspect<K, V, T> for JetStreamBuilder<K, V, T>
@@ -26,16 +47,17 @@ where
     V: Data,
     T: Timestamp,
 {
-    fn inspect(self, mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static) -> JetStreamBuilder<K, V, T> {
-        let operator = OperatorBuilder::direct(move |input, output, ctx| {
-            match input.recv() {
-                Some(Message::Data(d)) => {
-                    inspector(&d, ctx);
-                    output.send(Message::Data(d));
-                }
-                Some(x) => output.send(x),
-                None => ()
+    fn inspect(
+        self,
+        mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
+    ) -> JetStreamBuilder<K, V, T> {
+        let operator = OperatorBuilder::direct(move |input, output, ctx| match input.recv() {
+            Some(Message::Data(d)) => {
+                inspector(&d, ctx);
+                output.send(Message::Data(d));
             }
+            Some(x) => output.send(x),
+            None => (),
         });
         self.then(operator)
     }
@@ -43,15 +65,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    
 
     use itertools::Itertools;
 
     use crate::{
-        operators::{
-            inspect::Inspect,
-            source::Source, Sink,
-        }, sources::SingleIteratorSource, testing::{get_test_stream, VecSink}
+        operators::{inspect::Inspect, source::Source, Sink},
+        sources::SingleIteratorSource,
+        testing::{get_test_stream, VecSink},
     };
 
     #[test]
@@ -62,7 +82,6 @@ mod tests {
         let inspect_collector_moved = inspect_collector.clone();
 
         let output_collector = VecSink::new();
-
 
         let input = vec!["hello", "world", "foo", "bar"];
         let expected = input.clone();
@@ -75,6 +94,9 @@ mod tests {
 
         assert_eq!(inspect_collector.drain_vec(..), expected);
         // check we still get unmodified output
-        assert_eq!(output_collector.into_iter().map(|x| x.value).collect_vec(), expected);
+        assert_eq!(
+            output_collector.into_iter().map(|x| x.value).collect_vec(),
+            expected
+        );
     }
 }

@@ -9,7 +9,6 @@ use crate::runtime::{CommunicationBackend, CommunicationClient};
 use crate::snapshot::{deserialize_state, PersistenceClient};
 use crate::types::{OperatorId, WorkerId};
 
-
 /// This is a type injected to logic function at runtime
 /// and cotains context, whicht the logic generally can not change
 /// but utilize
@@ -35,8 +34,16 @@ impl<'a> OperatorContext<'a> {
         .unwrap()
     }
 
-    pub fn new(worker_id: WorkerId, operator_id: OperatorId, communication: &'a mut dyn CommunicationBackend) -> Self {
-        OperatorContext { worker_id, operator_id, communication }
+    pub fn new(
+        worker_id: WorkerId,
+        operator_id: OperatorId,
+        communication: &'a mut dyn CommunicationBackend,
+    ) -> Self {
+        OperatorContext {
+            worker_id,
+            operator_id,
+            communication,
+        }
     }
 }
 
@@ -99,6 +106,10 @@ impl<'a> BuildContext<'a> {
 
     /// Create an operator context (runtime context) for this operator
     pub fn get_operator_context(&mut self) -> OperatorContext {
-        OperatorContext { worker_id: self.worker_id, operator_id: self.operator_id, communication: self.communication }
+        OperatorContext {
+            worker_id: self.worker_id,
+            operator_id: self.operator_id,
+            communication: self.communication,
+        }
     }
 }

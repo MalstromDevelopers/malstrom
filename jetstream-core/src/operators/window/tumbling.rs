@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    marker::PhantomData,
-};
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
@@ -32,10 +29,10 @@ pub trait TumblingWindow<K, V, T, S> {
 
 impl<K, V, T, S> TumblingWindow<K, V, T, S> for JetStreamBuilder<K, V, T>
 where
-K: Key + Serialize + DeserializeOwned,
-V: Data,
-T: Timestamp + Serialize + DeserializeOwned + std::ops::Add<Output = T>,
-S: Data + Serialize + DeserializeOwned,
+    K: Key + Serialize + DeserializeOwned,
+    V: Data,
+    T: Timestamp + Serialize + DeserializeOwned + std::ops::Add<Output = T>,
+    S: Data + Serialize + DeserializeOwned,
 {
     fn tumbling_window(
         self,
@@ -43,68 +40,14 @@ S: Data + Serialize + DeserializeOwned,
         initializer: impl Fn(&DataMessage<K, V, T>) -> Option<S> + 'static,
         aggregator: impl Fn(DataMessage<K, V, T>, &mut S) + 'static,
     ) -> JetStreamBuilder<K, S, T> {
-
         let op = OperatorBuilder::built_by(move |ctx| {
-            let mut windower_impl = FlexibleWindowImpl::new(ctx, window_size, initializer, aggregator);
-            move |input, output, ctx| {windower_impl.run(input, output, ctx)}
+            let mut windower_impl =
+                FlexibleWindowImpl::new(ctx, window_size, initializer, aggregator);
+            move |input, output, ctx| windower_impl.run(input, output, ctx)
         });
         self.then(op)
-
-        // let op = OperatorBuilder::built_by(|ctx| )
-
-        // self.stateful_transform(
-        //     move |msg, mut key_state: BTreeMap<T, A>, _output| {
-        //         // get all states where closing time < msg time
-        //         // this should only ever be one or none
-        //         let mut open_windows = key_state.range_mut(T::MIN..msg.timestamp.clone());
-        //         let window_state = open_windows.next();
-        //         // only one
-        //         // TODO
-        //         let fixme = open_windows.map(|x| x.0).collect_vec();
-        //         debug_assert!(fixme.len() == 0, "{fixme:?}");
-
-        //         let (closing_time, window_state) = if let Some((k, v)) = window_state {
-        //             (k.clone(), v)
-        //         } else if let Some((v, k)) = initializer(&msg) {
-        //             let should_not_exist = key_state.insert(k.clone(), v);
-        //             debug_assert!(should_not_exist.is_none());
-        //             // PANIC: Can unwrap here since we just inserted the key
-        //             let window_state = key_state.get_mut(&k).unwrap();
-        //             (k, window_state)
-        //         } else {
-        //             return None;
-        //         };
-        //         aggregator(msg, window_state, &closing_time);
-        //         Some(key_state)
-        //     },
-        //     |epoch: FromEpoch<T>, global_state, output| {
-        //         let ts = epoch.0;
-
-        //         global_state.retain(|global_key, key_state| {
-        //             // split off returns everything right of the key (including the key)
-        //             // so we need to swap
-        //             let mut to_emit = key_state.split_off(&ts);
-        //             std::mem::swap(&mut to_emit, key_state);
-
-        //             for (time, window_state) in
-        //                 to_emit.into_iter().chain(key_state.remove_entry(&ts))
-        //             {
-        //                 // PANIC: Can unwrap since we got the key from the iterator over k, v
-        //                 output.send(Message::Data(DataMessage::new(
-        //                     global_key.clone(),
-        //                     window_state,
-        //                     time,
-        //                 )));
-        //             }
-        //             // remove any keys where we have emitted all aggregations
-        //             // TODO: Test
-        //             !key_state.is_empty()
-        //         });
-        //     },
-        // )
     }
 }
-
 
 // TODO a lot of cloning going on with T
 struct FlexibleWindowImpl<K, V, T, S, Initializer, Aggregator> {
@@ -124,10 +67,12 @@ where
     Initializer: Fn(&DataMessage<K, V, T>) -> Option<S> + 'static,
     Aggregator: Fn(DataMessage<K, V, T>, &mut S) + 'static,
 {
-    fn new(ctx: &BuildContext, 
+    fn new(
+        ctx: &BuildContext,
         window_size: T,
         initializer: Initializer,
-        aggregator: Aggregator) -> Self {
+        aggregator: Aggregator,
+    ) -> Self {
         let keyed_state = ctx.load_state().unwrap_or_default();
         Self {
             keyed_state,
@@ -138,7 +83,12 @@ where
         }
     }
 
-    fn run(&mut self, input: &mut Receiver<K, V, T>, output: &mut Sender<K, S, T>, ctx: &OperatorContext) {
+    fn run(
+        &mut self,
+        input: &mut Receiver<K, V, T>,
+        output: &mut Sender<K, S, T>,
+        ctx: &OperatorContext,
+    ) {
         let msg = match input.recv() {
             Some(x) => x,
             None => return,
@@ -148,36 +98,38 @@ where
             Message::Epoch(epoch) => {
                 self.handle_epoch(epoch.clone(), output);
                 output.send(Message::Epoch(epoch));
-            },
+            }
             Message::AbsBarrier(mut barrier) => {
                 barrier.persist(&self.keyed_state, &ctx.operator_id);
                 output.send(Message::AbsBarrier(barrier));
-            },
+            }
             Message::Rescale(rescale_message) => output.send(Message::Rescale(rescale_message)),
-            Message::SuspendMarker(shutdown_marker) => output.send(Message::SuspendMarker(shutdown_marker)),
+            Message::SuspendMarker(shutdown_marker) => {
+                output.send(Message::SuspendMarker(shutdown_marker))
+            }
             Message::Interrogate(mut interrogate) => {
                 interrogate.add_keys(self.keyed_state.keys());
                 output.send(Message::Interrogate(interrogate));
-            },
+            }
             Message::Collect(mut collect) => {
                 if let Some(s) = self.keyed_state.swap_remove(&collect.key) {
                     collect.add_state(ctx.operator_id, s);
                 }
                 output.send(Message::Collect(collect));
-            },
+            }
             Message::Acquire(acquire) => {
                 if let Some(s) = acquire.take_state(&ctx.operator_id) {
                     self.keyed_state.insert(s.0, s.1);
                 }
                 output.send(Message::Acquire(acquire));
-            },
+            }
         }
     }
 
     fn handle_data_msg(&mut self, msg: DataMessage<K, V, T>) {
         let state = self.keyed_state.entry(msg.key.clone()).or_default();
         // get any window this msg may belong to
-        let window_end_time = msg.timestamp .clone() + self.window_size.clone();
+        let window_end_time = msg.timestamp.clone() + self.window_size.clone();
         let mut windows = state.range_mut(msg.timestamp.clone()..=window_end_time.clone());
         let window = windows.next();
         // only one window, non-overlapping
@@ -199,17 +151,23 @@ where
         (self.aggregator)(msg, &mut window_state);
     }
 
-    /// returns and removes all window state where 
+    /// returns and removes all window state where
     fn handle_epoch(&mut self, epoch: T, output: &mut Sender<K, S, T>) {
         // emit all windows where end_time <= epoch
         self.keyed_state.retain(|key, windows| {
-            let to_emit_keys = windows.range(T::MIN..=epoch.clone()).map(|(k, _)| k).cloned().collect_vec();
+            let to_emit_keys = windows
+                .range(T::MIN..=epoch.clone())
+                .map(|(k, _)| k)
+                .cloned()
+                .collect_vec();
             for window_end in to_emit_keys.into_iter() {
                 let state = windows.remove(&window_end).expect("Key exists");
-                output.send(
-                    Message::Data(DataMessage::new(key.clone(), state, window_end.clone()))
-                );
-            };
+                output.send(Message::Data(DataMessage::new(
+                    key.clone(),
+                    state,
+                    window_end.clone(),
+                )));
+            }
             // remove any empty key states
             windows.len() != 0
         });

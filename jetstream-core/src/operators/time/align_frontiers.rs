@@ -8,10 +8,8 @@ use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::stream::JetStreamBuilder;
 
-use crate::stream::{
-    BuildContext, Logic, OperatorBuilder,
-};
-use crate::types::{MaybeData, MaybeKey, Message, WorkerId, Timestamp};
+use crate::stream::{BuildContext, Logic, OperatorBuilder};
+use crate::types::{MaybeData, MaybeKey, Message, Timestamp, WorkerId};
 
 pub trait AlignFrontiers<K, V, T> {
     fn align_frontiers(self, max_diff: T) -> JetStreamBuilder<K, V, T>;
@@ -68,7 +66,7 @@ where
                 let others_min = other_frontiers.values().filter_map(|x| x.as_ref()).min();
                 let must_wait = match others_min {
                     Some(x) => *x < this.clone().sub(max_diff.clone()),
-                    None => false
+                    None => false,
                 };
                 if must_wait {
                     // simpy do not advance the input
@@ -78,14 +76,20 @@ where
                 }
             }
             None => {
-                if let Some(x) = input.recv() { output.send(x) }
+                if let Some(x) = input.recv() {
+                    output.send(x)
+                }
                 None
             }
         }
     }
 }
 
-fn advance_input<K: MaybeKey, V: MaybeData, T: Timestamp + std::ops::Sub<Output = T> + Serialize + DeserializeOwned>(
+fn advance_input<
+    K: MaybeKey,
+    V: MaybeData,
+    T: Timestamp + std::ops::Sub<Output = T> + Serialize + DeserializeOwned,
+>(
     input: &mut Receiver<K, V, T>,
     output: &mut Sender<K, V, T>,
     clients: &IndexMap<WorkerId, CommunicationClient<T>>,
@@ -96,8 +100,10 @@ fn advance_input<K: MaybeKey, V: MaybeData, T: Timestamp + std::ops::Sub<Output 
             broadcast(clients.values(), e.clone());
             output.send(Message::Epoch(e.clone()));
             Some(e)
-        },
-        x => {output.send(x); None}
-
+        }
+        x => {
+            output.send(x);
+            None
+        }
     }
 }

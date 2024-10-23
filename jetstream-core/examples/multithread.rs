@@ -2,7 +2,7 @@
 //! via keying and with a stateful computation happening in these threads.
 //! Every message will be routed to the correct thread based on its key
 
-use jetstream::keyed::partitioners::partition_index;
+use jetstream::keyed::partitioners::index_select;
 use jetstream::operators::*;
 use jetstream::runtime::threaded::MultiThreadRuntime;
 use jetstream::runtime::{RuntimeFlavor, WorkerBuilder};
@@ -17,7 +17,7 @@ fn main() {
 }
 
 /// A Builder function for the dataflow logic executed in each runtime thread.
-/// 
+///
 /// The actual runtime implementation is specified as a generic, this allows us
 /// to reuse the same builder function with a different runtime. For example
 /// we can use [MultiThreadRuntime] locally and
@@ -33,9 +33,9 @@ fn build_dataflow<R: RuntimeFlavor>(flavor: R) -> WorkerBuilder<R, NoPersistence
         .source(SingleIteratorSource::new(0..100))
         // key_distribute creates a keyed stream and distributes messages by key
         // to the different workers
-        .key_distribute(|msg| msg.value % 10, partition_index)
+        .key_distribute(|msg| msg.value % 10, index_select)
         // we generate an epoch every 10th message to progress time
-        .generate_epochs(|msg, _| (msg.timestamp % 10 == 0).then_some(msg.timestamp));
+        .generate_epochs(|msg, _| (msg.timestamp % 5 == 0).then_some(msg.timestamp));
 
     ontime
         // each workers has its own window(s) but the `key_distribute` operator makes sure

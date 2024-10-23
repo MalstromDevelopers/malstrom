@@ -1,9 +1,27 @@
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{Timestamp,
-    Data, DataMessage, MaybeKey, Message,}
+    types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
+
+pub trait StatelessLogic<K, VI, T, VO>: 'static {
+    /// Return Some to retain the key-state and None to discard it
+    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Sender<K, VO, T>) -> ();
+
+    fn on_epoch(&mut self, _epoch: &T, _output: &mut Sender<K, VO, T>) -> () {}
+}
+
+impl<X, K, VI, T, VO> StatelessLogic<K, VI, T, VO> for X
+where
+    X: FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) -> () + 'static,
+    K: MaybeKey,
+    VO: MaybeData,
+    T: MaybeTime,
+{
+    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Sender<K, VO, T>) -> () {
+        self(msg, output);
+    }
+}
 
 pub trait StatelessOp<K, VI, T> {
     /// A small wrapper around StandardOperator to make allow simpler
@@ -13,7 +31,7 @@ pub trait StatelessOp<K, VI, T> {
     /// along as they are.
     fn stateless_op<VO: Data>(
         self,
-        mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) + 'static,
+        logic: impl StatelessLogic<K, VI, T, VO>,
     ) -> JetStreamBuilder<K, VO, T>;
 }
 
@@ -25,7 +43,7 @@ where
 {
     fn stateless_op<VO: Data>(
         self,
-        mut mapper: impl FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) + 'static,
+        mut logic: impl StatelessLogic<K, VI, T, VO>,
     ) -> JetStreamBuilder<K, VO, T> {
         let op = OperatorBuilder::direct(
             move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, _ctx| {
@@ -34,7 +52,7 @@ where
                     None => return,
                 };
                 match msg {
-                    Message::Data(d) => mapper(d, output),
+                    Message::Data(d) => logic.on_data(d, output),
                     Message::Interrogate(x) => output.send(Message::Interrogate(x)),
                     Message::Collect(c) => output.send(Message::Collect(c)),
                     Message::Acquire(a) => output.send(Message::Acquire(a)),
@@ -43,7 +61,10 @@ where
                     // Message::Load(l) => output.send(Message::Load(l)),
                     Message::Rescale(x) => output.send(Message::Rescale(x)),
                     Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
-                    Message::Epoch(x) => output.send(Message::Epoch(x)),
+                    Message::Epoch(x) => {
+                        logic.on_epoch(&x, output);
+                        output.send(Message::Epoch(x))
+                    }
                 };
             },
         );

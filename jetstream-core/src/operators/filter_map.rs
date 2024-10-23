@@ -1,4 +1,5 @@
 use super::stateless_op::StatelessOp;
+use crate::channels::selective_broadcast::Sender;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
@@ -11,10 +12,30 @@ pub trait FilterMap<K, VI, T> {
     /// # Example
     ///
     /// Only retain numeric strings
+    /// ```rust
+    /// use jetstream::operators::*;
+    /// use jetstream::operators::Source;
+    /// use jetstream::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
+    /// use jetstream::testing::VecSink;
+    /// use jetstream::sources::SingleIteratorSource;
+    ///
+    /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
+    ///
+    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    ///
+    /// worker
+    ///     .new_stream()
+    ///     .source(SingleIteratorSource::new(["0", "one", "2", "3", "four"]))
+    ///     .filter_map(|x| x.parse::<i32>().ok())
+    ///     .sink(sink_clone)
+    ///     .finish();
+    ///
+    /// worker.build().expect("can build").execute();
+    /// let expected: Vec<i32> = vec![0, 2, 3];
+    /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+    /// assert_eq!(out, expected);
     /// ```
-    /// stream: JetStreamBuilder<NoKey, String, NoTime, NoPersistence>
-    /// stream.filter_map(|x| x.parse::<i64>().ok())
-    /// ````
     fn filter_map<VO: Data>(
         self,
         mapper: impl FnMut(VI) -> Option<VO> + 'static,
@@ -31,11 +52,13 @@ where
         self,
         mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
     ) -> JetStreamBuilder<K, VO, T> {
-        self.stateless_op(move |item, out| {
-            if let Some(x) = mapper(item.value) {
-                out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
-            }
-        })
+        self.stateless_op(
+            move |item: DataMessage<K, VI, T>, out: &mut Sender<K, VO, T>| {
+                if let Some(x) = mapper(item.value) {
+                    out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
+                }
+            },
+        )
     }
 }
 
@@ -52,7 +75,6 @@ mod tests {
     fn test_filter_map() {
         let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-
         let stream = stream
             .source(SingleIteratorSource::new(0..100))
             .filter_map(|x| if x < 42 { Some(x * 2) } else { None })

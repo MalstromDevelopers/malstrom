@@ -3,7 +3,6 @@ use crate::channels::selective_broadcast::{Receiver, Sender};
 use crate::stream::{JetStreamBuilder, OperatorBuilder};
 use crate::types::{Data, DataMessage, Key, MaybeKey, Message, Timestamp};
 
-
 pub trait KeyLocal<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and **do not** distribute
     /// messages across workers.

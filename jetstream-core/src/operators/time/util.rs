@@ -2,12 +2,10 @@ use crate::{
     channels::selective_broadcast::Sender,
     operators::map::Map,
     stream::JetStreamBuilder,
-    types::{Timestamp,
-    DataMessage, MaybeData, MaybeKey, Message,}
+    types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
 use super::timed_stream::OnTimeLate;
-
 
 #[inline(always)]
 pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
@@ -41,10 +39,9 @@ pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
         OnTimeLate::Late(_) => unreachable!("ontime"),
     });
 
-    let late = late
-        .map(|x| match x {
-            OnTimeLate::OnTime(_) => unreachable!("late"),
-            OnTimeLate::Late(y) => y,
-        });
+    let late = late.map(|x| match x {
+        OnTimeLate::OnTime(_) => unreachable!("late"),
+        OnTimeLate::Late(y) => y,
+    });
     (ontime, late)
 }

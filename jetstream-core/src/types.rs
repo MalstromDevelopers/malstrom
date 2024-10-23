@@ -1,16 +1,15 @@
 //! Types and traits used accross JetStream
-mod message;
-mod key;
 mod data;
-mod time;
+mod key;
+mod message;
 mod operator_partitioner;
+mod time;
 
-
+pub use data::{Data, MaybeData, NoData};
+pub use key::{Key, MaybeKey, NoKey};
 pub use message::{DataMessage, Message, RescaleMessage, SuspendMarker};
-pub use key::{Key, NoKey, MaybeKey};
-pub use data::{Data, NoData, MaybeData};
-pub use time::{Timestamp, NoTime, MaybeTime};
-pub use operator_partitioner::{OperatorPartitioner, OperatorId};
+pub use operator_partitioner::{OperatorId, OperatorPartitioner};
+pub use time::{MaybeTime, NoTime, Timestamp};
 
 /// Uniquely identifies a worker in a JetStream cluster
 pub type WorkerId = usize;

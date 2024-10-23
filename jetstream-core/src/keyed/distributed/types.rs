@@ -1,5 +1,9 @@
-use std::{ops::{Deref, DerefMut}, rc::Rc, sync::Mutex};
 use std::fmt::Debug;
+use std::{
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::Mutex,
+};
 
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -21,17 +25,17 @@ impl<T: Timestamp + Distributable> DistTimestamp for T {}
 
 pub(super) type Version = u64;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(super) enum NetworkMessage<K, V, T> {
     Data(NetworkDataMessage<K, V, T>),
     Epoch(T),
     BarrierMarker,
-    ShutdownMarker,
+    SuspendMarker,
     Acquire(NetworkAcquire<K>),
     Upgrade(Version),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(super) struct NetworkDataMessage<K, V, T> {
     pub content: DataMessage<K, V, T>,
     pub version: Version,
@@ -84,7 +88,7 @@ pub(super) struct RemoteState<T> {
     /// definition be back up and running if we restart the cluster
     /// and reload from state
     #[serde(skip)]
-    pub sent_shutdown: bool,
+    pub sent_suspend: bool,
 }
 impl<T> Default for RemoteState<T> {
     fn default() -> Self {
@@ -92,7 +96,7 @@ impl<T> Default for RemoteState<T> {
             is_barred: Default::default(),
             frontier: Default::default(),
             last_version: Version::default(),
-            sent_shutdown: false,
+            sent_suspend: false,
         }
     }
 }
@@ -152,7 +156,7 @@ where
         Self { shared, tester }
     }
 
-    pub fn add_keys<'a>(&mut self, keys: impl IntoIterator<Item=&'a K>) {
+    pub fn add_keys<'a>(&mut self, keys: impl IntoIterator<Item = &'a K>) {
         let mut guard = self.shared.lock().unwrap();
         for key in keys {
             if (self.tester)(&key) {

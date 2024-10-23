@@ -9,7 +9,7 @@ use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::{BuildContext, Logic, OperatorContext};
-use crate::types::{Data, MaybeKey, Message, WorkerId,MaybeTime};
+use crate::types::{Data, MaybeKey, MaybeTime, Message, WorkerId};
 
 use crate::{channels::selective_broadcast::Receiver, stream::OperatorBuilder};
 
@@ -82,7 +82,12 @@ fn build_leader_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
         .iter()
         .filter(|i| **i != this_worker)
         .cloned()
-        .map(|i| (i, build_context.create_communication_client(i, build_context.operator_id)))
+        .map(|i| {
+            (
+                i,
+                build_context.create_communication_client(i, build_context.operator_id),
+            )
+        })
         .collect();
 
     move |input: &mut Receiver<K, V, T>, output: &mut Sender<K, V, T>, ctx: &mut OperatorContext| {
@@ -188,36 +193,18 @@ fn build_follower_controller_logic<K: MaybeKey, V: Data, T: MaybeTime>(
                 }
             }
         }
-        
     }
 }
 
 pub fn make_snapshot_controller<K: MaybeKey, V: Data, T: MaybeTime>(
     backend_builder: Rc<dyn PersistenceBackend>,
     timer: impl FnMut() -> bool + 'static,
-) -> OperatorBuilder<K, V, T, K, V,T> {
+) -> OperatorBuilder<K, V, T, K, V, T> {
     let op = OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend_builder, timer));
     // indicate we will never emit data records
     // op.get_output_mut().send(crate::Message::Epoch(NoTime::MAX));
     op
 }
 
-// pub fn end_snapshot_region<K: Key, V: Data, T: Timestamp, P: PersistenceBackend>(
-//     stream: JetStreamBuilder<K, V, T>,
-//     region_handle: RegionHandle,
-// ) -> JetStreamBuilder<K, V, T> {
-//     let op = OperatorBuilder::direct(move |input: &mut Receiver<K, V, T>, output, _ctx| {
-//         match input.recv() {
-//             Some(Message::AbsBarrier(b)) => region_handle.sender.send(b).unwrap(),
-//             Some(x) => output.send(x),
-//             None => (),
-//         };
-//     });
-//     stream.then(op)
-// }
-
 #[cfg(test)]
-mod tests {
-    
-    
-}
+mod tests {}

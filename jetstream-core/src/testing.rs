@@ -3,37 +3,35 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
-use crate::runtime::threaded::SingleThreadRuntime;
+use crate::runtime::threaded::SingleThreadRuntimeFlavor;
 use crate::runtime::WorkerBuilder;
 use crate::snapshot::Barrier;
 use crate::types::MaybeTime;
 use crate::types::{Key, RescaleMessage, SuspendMarker};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
-    stream::{
-        JetStreamBuilder,
-    },
+    stream::JetStreamBuilder,
     types::{MaybeData, MaybeKey, Message, NoData, NoKey, NoTime, OperatorId, WorkerId},
 };
 use indexmap::{IndexMap, IndexSet};
 
 mod communication;
-mod vec_sink;
 mod operator_tester;
+mod vec_sink;
 // mod iterator_source;
 
 pub use vec_sink::VecSink;
 // pub use iterator_source::SingleIteratorSource;
 pub use communication::{NoCommunication, NoCommunicationError};
-pub use operator_tester::{OperatorTester, SentMessage, FakeCommunication};
+pub use operator_tester::{FakeCommunication, OperatorTester, SentMessage};
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
 pub fn get_test_stream() -> (
-    WorkerBuilder<SingleThreadRuntime, NoPersistence>,
+    WorkerBuilder<SingleThreadRuntimeFlavor, NoPersistence>,
     JetStreamBuilder<NoKey, NoData, NoTime>,
 ) {
-    let mut worker = WorkerBuilder::new(SingleThreadRuntime);
+    let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor);
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -86,9 +84,9 @@ pub fn test_forward_system_messages<
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: Distributable + 'static
+    R: Distributable + 'static,
 >(
-    tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>
+    tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
 ) {
     let msg = Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default()));
     tester.send_local(msg);
@@ -98,24 +96,15 @@ pub fn test_forward_system_messages<
         Message::AbsBarrier(_)
     ));
 
-    let msg = Message::Acquire(Acquire::new(
-        KI::default(),
-        IndexMap::new(),
-    ));
+    let msg = Message::Acquire(Acquire::new(KI::default(), IndexMap::new()));
     tester.send_local(msg);
     tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Acquire(_)
-    ));
+    assert!(matches!(tester.recv_local().unwrap(), Message::Acquire(_)));
 
     let msg = Message::Collect(Collect::new(KI::default()));
     tester.send_local(msg);
     tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Collect(_)
-    ));
+    assert!(matches!(tester.recv_local().unwrap(), Message::Collect(_)));
 
     let msg = Message::Interrogate(Interrogate::new(Rc::new(|_| false)));
     tester.send_local(msg);
@@ -186,5 +175,4 @@ mod tests {
         let deser: String = a.load(&42).map(deserialize_state).unwrap();
         assert_eq!(deser, val);
     }
-
 }

@@ -124,6 +124,7 @@ impl<R> FakeCommunication<R> {
     ///
     /// # Example
     /// ```
+    /// use jetstream::testing::FakeCommunication;
     /// let comm = FakeCommunication::<String>::default();
     /// // pretend operator `4` on worker `15` sends the message `"Hello World"`
     /// comm.send_to_operator("Hello World".to_owned(), 15, 4);
@@ -148,9 +149,9 @@ impl<R> FakeCommunication<R> {
 #[derive(Debug)]
 pub struct SentMessage<R> {
     /// WorkerId this message was intended for
-    pub worker_id: WorkerId,
+    pub to_worker: WorkerId,
     /// OperatorId this message was intended for
-    pub operator_id: OperatorId,
+    pub to_operator: OperatorId,
     /// Message content
     pub msg: R,
 }
@@ -200,8 +201,8 @@ where
         // since communication clients are bidirectional, the intended reciptient and the sender we are impersonating
         // are the same
         let wrapped = SentMessage {
-            worker_id: self.impersonate.worker_id,
-            operator_id: self.impersonate.operator_id,
+            to_worker: self.impersonate.worker_id,
+            to_operator: self.impersonate.operator_id,
             msg: decoded,
         };
         self.sent_by_operator.lock().unwrap().push_back(wrapped);
@@ -258,8 +259,8 @@ mod tests {
         assert!(matches!(
             msg,
             SentMessage {
-                worker_id: 1,
-                operator_id: 0,
+                to_worker: 1,
+                to_operator: 0,
                 msg: 42
             }
         ));

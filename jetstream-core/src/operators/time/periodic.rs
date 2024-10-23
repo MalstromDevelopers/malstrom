@@ -4,8 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{Timestamp,
-    MaybeData, MaybeKey, Message,}
+    types::{MaybeData, MaybeKey, Message, Timestamp},
 };
 
 use super::{

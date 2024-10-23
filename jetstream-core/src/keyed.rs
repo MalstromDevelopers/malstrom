@@ -1,7 +1,6 @@
 pub mod distributed;
-mod key_local;
-mod types;
-pub mod partitioners;
 mod key_distribute;
-pub use key_local::KeyLocal;
+mod key_local;
+pub mod partitioners;
 pub use key_distribute::KeyDistribute;
+pub use key_local::KeyLocal;

@@ -1,6 +1,4 @@
 use std::{
-    any::Any,
-    error::Error,
     sync::{Arc, Barrier},
     thread::JoinHandle,
 };
@@ -16,25 +14,29 @@ use super::{communication::InterThreadCommunication, Shared};
 /// Runs all dataflows on multiple threads within one machine
 ///
 /// # Example
-/// ```
-/// let ranges = [(0..10), (10..20)];
-/// let rt = MultiThreadRuntime::new_with_args(
-///     args,
-///     |flavor, range| {
-///         // create the stream builder
-///         let mut builder = RuntimeBuilder::new(flavor);
-///         // create the stream
-///         builder
+/// ```rust
+/// use jetstream::operators::*;
+/// use jetstream::operators::Source;
+/// use jetstream::runtime::{WorkerBuilder, RuntimeFlavor, threaded::MultiThreadRuntime};
+/// use jetstream::snapshot::NoPersistence;
+/// use jetstream::keyed::partitioners::rendezvous_select;
+/// use jetstream::sources::SingleIteratorSource;
+///
+/// fn build_dataflow<R: RuntimeFlavor>(rt: R) -> WorkerBuilder<R, NoPersistence>{
+///     let mut worker = WorkerBuilder::new(rt);
+///     worker
 ///         .new_stream()
-///         .source(MultiIteratorSource::new(range))
-///         .inspect(|x| println!("{x}"))    
+///         .source(SingleIteratorSource::new(0..10))
+///         // we just use the value as key here
+///         .key_distribute(|msg| msg.value, rendezvous_select)
+///         // all operations from this point on are distributed
 ///         .finish();
-///         // return the builder with its streams
-///         builder
-///     },
-/// );
-/// // execute on all threads
-/// rt.execute();
+///     worker
+/// }
+///
+/// // run with 4 workers in parallel
+/// let runtime = MultiThreadRuntime::new(4, build_dataflow);
+/// runtime.execute().unwrap()
 /// ```
 pub struct MultiThreadRuntime {
     /// we need to wait on this for the threads to start executing
@@ -44,7 +46,7 @@ pub struct MultiThreadRuntime {
 impl MultiThreadRuntime {
     pub fn new<P: PersistenceBackend>(
         parrallelism: usize,
-        builder_func: fn(InnerMultiThreadRuntime) -> WorkerBuilder<InnerMultiThreadRuntime, P>,
+        builder_func: fn(MultiThreadRuntimeFlavor) -> WorkerBuilder<MultiThreadRuntimeFlavor, P>,
     ) -> Self {
         let execution_barrier = Arc::new(Barrier::new(parrallelism + 1)); // +1 because we are keeping one here
         let mut threads = Vec::with_capacity(parrallelism);
@@ -54,7 +56,7 @@ impl MultiThreadRuntime {
             let shared_this = Arc::clone(&shared);
             let barrier = Arc::clone(&execution_barrier);
             let thread = std::thread::spawn(move || {
-                let flavor = InnerMultiThreadRuntime::new(shared_this, i, parrallelism);
+                let flavor = MultiThreadRuntimeFlavor::new(shared_this, i, parrallelism);
                 let worker = builder_func(flavor);
                 barrier.wait();
                 worker.build().unwrap().execute();
@@ -66,16 +68,37 @@ impl MultiThreadRuntime {
             threads,
         }
     }
-    pub fn new_with_args<P, const N: usize, A, F>(
-        builder_func: fn(InnerMultiThreadRuntime, A) -> WorkerBuilder<F, P>,
-        args: [A; N],
+    pub fn new_with_args<P, A, F>(
+        builder_func: fn(MultiThreadRuntimeFlavor, A) -> WorkerBuilder<F, P>,
+        args: impl IntoIterator<Item = A>,
     ) -> Self
     where
         P: PersistenceBackend,
         A: Send + 'static,
         F: RuntimeFlavor + 'static,
     {
-        todo!()
+        let args_vec: Vec<A> = args.into_iter().collect();
+        let parrallelism = args_vec.len();
+
+        let execution_barrier = Arc::new(Barrier::new(parrallelism + 1)); // +1 because we are keeping one here
+        let mut threads = Vec::with_capacity(parrallelism);
+
+        let shared = Shared::default();
+        for (i, arg) in args_vec.into_iter().enumerate() {
+            let shared_this = Arc::clone(&shared);
+            let barrier = Arc::clone(&execution_barrier);
+            let thread = std::thread::spawn(move || {
+                let flavor = MultiThreadRuntimeFlavor::new(shared_this, i, parrallelism);
+                let worker = builder_func(flavor, arg);
+                barrier.wait();
+                worker.build().unwrap().execute();
+            });
+            threads.push(thread);
+        }
+        MultiThreadRuntime {
+            execution_barrier,
+            threads,
+        }
     }
 
     pub fn execute(self) -> std::thread::Result<()> {
@@ -107,14 +130,14 @@ impl MultiThreadRuntime {
 
 /// This is passed to the worker
 /// You can not construct this directly use [MultiThreadRuntime] instead
-pub struct InnerMultiThreadRuntime {
+pub struct MultiThreadRuntimeFlavor {
     shared: Shared,
     worker_id: usize,
     total_size: usize,
 }
-impl InnerMultiThreadRuntime {
+impl MultiThreadRuntimeFlavor {
     fn new(shared: Shared, worker_id: WorkerId, total_size: usize) -> Self {
-        InnerMultiThreadRuntime {
+        MultiThreadRuntimeFlavor {
             shared,
             worker_id,
             total_size,
@@ -122,7 +145,7 @@ impl InnerMultiThreadRuntime {
     }
 }
 
-impl RuntimeFlavor for InnerMultiThreadRuntime {
+impl RuntimeFlavor for MultiThreadRuntimeFlavor {
     type Communication = InterThreadCommunication;
 
     fn establish_communication(
@@ -152,6 +175,6 @@ mod tests {
     #[test]
     fn test_can_build() {
         let rt = MultiThreadRuntime::new_with_args(|flavor, _| WorkerBuilder::new(flavor), [(); 2]);
-        rt.execute();
+        rt.execute().unwrap();
     }
 }

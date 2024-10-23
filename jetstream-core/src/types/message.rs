@@ -6,10 +6,12 @@ use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
-use crate::{keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::Barrier};
+use crate::{
+    keyed::distributed::{Acquire, Collect, Interrogate},
+    snapshot::Barrier,
+};
 
 use super::WorkerId;
-
 
 /// A message which gets processed in a JetStream
 /// Messages always include a timestamp and content.
@@ -92,4 +94,3 @@ impl SuspendMarker {
         Rc::strong_count(&self.rc)
     }
 }
-

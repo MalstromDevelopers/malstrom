@@ -1,7 +1,9 @@
-use crate::{runtime::CommunicationBackend, types::{OperatorId, WorkerId}};
+use crate::{
+    runtime::CommunicationBackend,
+    types::{OperatorId, WorkerId},
+};
 
 use super::{traits::Operator, BuildContext, OperatorContext};
-
 
 pub struct RunnableOperator {
     worker_id: WorkerId,

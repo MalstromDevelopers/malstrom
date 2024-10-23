@@ -17,10 +17,19 @@ pub(crate) struct FinishedRouter {
 }
 
 impl FinishedRouter {
-    pub(super) fn new(version: Version, old_worker_set: IndexSet<WorkerId>, new_worker_set: IndexSet<WorkerId>, queued_rescales: Vec<RescaleMessage>) -> Self {
-        Self { version, old_worker_set, new_worker_set, queued_rescales }
+    pub(super) fn new(
+        version: Version,
+        old_worker_set: IndexSet<WorkerId>,
+        new_worker_set: IndexSet<WorkerId>,
+        queued_rescales: Vec<RescaleMessage>,
+    ) -> Self {
+        Self {
+            version,
+            old_worker_set,
+            new_worker_set,
+            queued_rescales,
+        }
     }
-    
 
     pub(super) fn route_message<K>(
         &mut self,
@@ -49,22 +58,33 @@ impl FinishedRouter {
         partitioner: WorkerPartitioner<K>,
         output: &mut Sender<K, V, T>,
         remotes: &Remotes<K, V, T>,
-    ) -> MessageRouter<K, V, T> where K: Key, V: MaybeData, T: MaybeTime {
+    ) -> MessageRouter<K, V, T>
+    where
+        K: Key,
+        V: MaybeData,
+        T: MaybeTime,
+    {
         // TODO: Remove removed remotes
-        if remotes.values().all(|(_, state)| state.last_version >= self.version) {
+        if remotes
+            .values()
+            .all(|(_, state)| state.last_version >= self.version)
+        {
             match self.queued_rescales.pop() {
                 Some(rescale) => {
                     let (interrogate_router, interrogate_msg) = InterrogateRouter::new(
-                        self.version, self.new_worker_set, rescale, partitioner);
+                        self.version,
+                        self.new_worker_set,
+                        rescale,
+                        partitioner,
+                    );
                     output.send(Message::Interrogate(interrogate_msg));
                     MessageRouter::Interrogate(interrogate_router)
-                },
+                }
                 None => {
                     let normal_router = NormalRouter::new(self.new_worker_set, self.version);
                     MessageRouter::Normal(normal_router)
                 }
             }
-
         } else {
             MessageRouter::Finished(self)
         }

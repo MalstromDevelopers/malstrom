@@ -1,4 +1,3 @@
-
 use std::rc::Rc;
 use std::sync::Mutex;
 
@@ -11,8 +10,8 @@ use crate::stream::{
     pass_through_operator, AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder,
     RunnableOperator,
 };
-use crate::types::{MaybeTime, NoTime};
 use crate::types::{MaybeData, MaybeKey, NoData, NoKey, OperatorPartitioner, WorkerId};
+use crate::types::{MaybeTime, NoTime};
 use thiserror::Error;
 
 use super::runtime_flavor::CommunicationError;
@@ -248,7 +247,6 @@ where
     /// be the case
     pub fn execute(&mut self) {
         while !self.step() {}
-
     }
 }
 
@@ -256,13 +254,13 @@ where
 mod tests {
     use crate::snapshot::NoPersistence;
 
-    use crate::runtime::threaded::SingleThreadRuntime;
     use super::WorkerBuilder;
+    use crate::runtime::threaded::SingleThreadRuntimeFlavor;
 
     /// check we can build the most basic runtime
     #[test]
     fn builds_basic_rt() {
-        WorkerBuilder::new(SingleThreadRuntime)
+        WorkerBuilder::new(SingleThreadRuntimeFlavor)
             .build()
             .unwrap();
     }
@@ -270,7 +268,7 @@ mod tests {
     /// check we can build with persistance enabled
     #[test]
     fn builds_with_persistence() {
-        WorkerBuilder::new(SingleThreadRuntime)
+        WorkerBuilder::new(SingleThreadRuntimeFlavor)
             .with_persistence_backend(NoPersistence::default())
             .with_snapshot_timer(|| false)
             .build()

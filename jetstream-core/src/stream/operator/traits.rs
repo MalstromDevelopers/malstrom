@@ -6,8 +6,6 @@ use crate::channels::selective_broadcast::Sender;
 
 use super::{BuildContext, OperatorContext, RunnableOperator};
 
-
-
 /// An Operator which can have output added and can be turned
 /// into a FrontieredOperator
 /// This trait exists mainly for type erasure, so that the Jetstream

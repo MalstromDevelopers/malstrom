@@ -3,7 +3,7 @@ use crate::{
         communication::{CommunicationBackendError, Transport, TransportError},
         CommunicationBackend,
     },
-    types::{OperatorId, WorkerId,}
+    types::{OperatorId, WorkerId},
 };
 use std::sync::{
     mpsc::{self, Receiver, Sender},
@@ -54,14 +54,14 @@ pub struct InterThreadCommunication {
     // the purpose is to prevent the worker from obtaining the same
     // channel twice (which should not happen), as then they would have both
     // ends, and the other worker would simply create a new Connection pair
-    burnt_keys: IndexSet<ConnectionKey>
+    burnt_keys: IndexSet<ConnectionKey>,
 }
 impl InterThreadCommunication {
     pub(crate) fn new(shared: Shared, this_worker: WorkerId) -> Self {
         Self {
             shared,
             this_worker,
-            burnt_keys: IndexSet::new()
+            burnt_keys: IndexSet::new(),
         }
     }
 }
@@ -74,13 +74,13 @@ impl CommunicationBackend for InterThreadCommunication {
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
         let mut shared = self.shared.lock().unwrap();
         let key = ConnectionKey::new(to_worker, to_operator, self.this_worker, from_operator);
-        
+
         if self.burnt_keys.contains(&key) {
             return Err(CommunicationBackendError::ClientBuildError(Box::new(
                 InterThreadCommunicationError::TransportAlreadyEstablished,
-            )))
+            )));
         }
-        
+
         let transport = match shared.entry(key) {
             Entry::Occupied(o) => o.swap_remove(),
             Entry::Vacant(v) => {
@@ -115,7 +115,7 @@ impl Transport for ChannelTransport {
             // is closed because the other thread paniced or if it was closed in
             // an orderly fashion. In the panic case we probably should emit
             // an error instead....
-            Err(mpsc::TryRecvError::Disconnected) => Ok(None)
+            Err(mpsc::TryRecvError::Disconnected) => Ok(None),
         }
     }
 }
@@ -189,7 +189,7 @@ mod test {
                     InterThreadCommunicationError::TransportAlreadyEstablished
                 ));
             }
-            Ok(_) => panic!("OK IS NOT OK")
+            Ok(_) => panic!("OK IS NOT OK"),
         };
     }
 
@@ -210,6 +210,4 @@ mod test {
         assert!(operator_1_42.recv().is_ok());
         assert!(operator_1_42.recv_all().all(|x| x.is_ok()));
     }
-
-
 }

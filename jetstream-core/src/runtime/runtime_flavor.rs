@@ -1,5 +1,3 @@
-
-
 use super::communication::CommunicationBackend;
 
 pub trait RuntimeFlavor {

@@ -28,7 +28,7 @@ pub(super) struct Distributor<K, V, T> {
     partitioner: WorkerPartitioner<K>,
     local_barrier: Option<Barrier>,
     local_shutdown: Option<SuspendMarker>,
-    local_frontier: Option<T>
+    local_frontier: Option<T>,
 }
 
 impl<K, V, T> Distributor<K, V, T>
@@ -38,7 +38,8 @@ where
     T: DistTimestamp,
 {
     pub(super) fn new(paritioner: WorkerPartitioner<K>, ctx: &mut BuildContext) -> Self {
-        let snapshot: Option<(NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>)> = ctx.load_state();
+        let snapshot: Option<(NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>)> =
+            ctx.load_state();
         let other_workers = ctx
             .get_worker_ids()
             .filter(|x| *x != ctx.worker_id)
@@ -67,7 +68,7 @@ where
             partitioner: paritioner,
             local_barrier: None,
             local_shutdown: None,
-            local_frontier: frontier
+            local_frontier: frontier,
         }
     }
 
@@ -83,7 +84,7 @@ where
         let remote_message: Vec<(WorkerId, NetworkMessage<K, V, T>)> = self
             .remotes
             .iter()
-            .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_shutdown)
+            .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_suspend)
             .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
             .collect();
 
@@ -99,8 +100,8 @@ where
                 NetworkMessage::BarrierMarker => {
                     self.remotes.get_mut(&wid).unwrap().1.is_barred = true
                 }
-                NetworkMessage::ShutdownMarker => {
-                    self.remotes.get_mut(&wid).unwrap().1.sent_shutdown = true
+                NetworkMessage::SuspendMarker => {
+                    self.remotes.get_mut(&wid).unwrap().1.sent_suspend = true
                 }
                 NetworkMessage::Acquire(network_acquire) => {
                     output.send(Message::Acquire(network_acquire.into()))
@@ -128,7 +129,11 @@ where
                     Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
                     Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
                     Message::SuspendMarker(shutdown_marker) => {
-                        self.local_shutdown = Some(shutdown_marker)
+                        self.local_shutdown = Some(shutdown_marker);
+                        broadcast(
+                            self.remotes.values().map(|x| &x.0),
+                            NetworkMessage::SuspendMarker,
+                        );
                     }
 
                     // these ones we can just ignore
@@ -266,7 +271,12 @@ where
     /// - we have one from every connected client
     #[inline]
     fn try_emit_barrier(&mut self, output: &mut Sender<K, V, T>) {
-        if self.local_barrier.is_some() && self.remotes.values().all(|x| x.1.is_barred) {
+        if self.local_barrier.is_some()
+            && self
+                .remotes
+                .values()
+                .all(|x| x.1.is_barred || x.1.sent_suspend)
+        {
             let msg = Message::AbsBarrier(self.local_barrier.take().unwrap());
             output.send(msg);
 
@@ -281,7 +291,7 @@ where
     /// - we have one from every connected client
     #[inline]
     fn try_emit_shutdown(&mut self, output: &mut Sender<K, V, T>) {
-        if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_shutdown) {
+        if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
             let msg = Message::SuspendMarker(self.local_shutdown.take().unwrap());
             output.send(msg);
         }
@@ -340,8 +350,9 @@ fn panic_wrong_scale(build_scale: usize, snapshot_scale: usize) {
 mod test {
 
     use crate::{
-        keyed::partitioners::partition_index,
-        testing::OperatorTester,
+        keyed::partitioners::index_select,
+        snapshot::NoPersistence,
+        testing::{OperatorTester, SentMessage},
     };
 
     use super::*;
@@ -351,7 +362,7 @@ mod test {
     fn remote_barrier_aligned() {
         let mut tester = OperatorTester::built_by(
             move |ctx| {
-                let mut dist: Distributor<usize, (), i32> = Distributor::new(partition_index, ctx);
+                let mut dist: Distributor<usize, (), i32> = Distributor::new(index_select, ctx);
                 move |input, output, op_ctx| dist.run(input, output, op_ctx)
             },
             0,
@@ -363,340 +374,402 @@ mod test {
         // should be none since we have no epoch from remote yet to align
         tester.step();
         assert!(tester.recv_local().is_none());
-        tester.remote().send_to_operator(NetworkMessage::<usize, (), i32>::Epoch(42), 1, 0);
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::<usize, (), i32>::Epoch(42), 1, 0);
         tester.step();
 
         // should be 15 since that is the lower alignment of both epochs
         match tester.recv_local() {
             Some(Message::Epoch(e)) => assert_eq!(e, 15),
-            _ => panic!()
+            _ => panic!(),
         }
     }
+
+    /// Epoch should be broadcasted to other workers
+    #[test]
+    fn epoch_is_broadcasted() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..3,
+        );
+
+        let in_msg = Message::Epoch(22);
+        tester.send_local(in_msg);
+        tester.step();
+
+        let out0 = tester.remote().recv_from_operator().unwrap();
+        let out1 = tester.remote().recv_from_operator().unwrap();
+        assert!(
+            matches!(
+                out0,
+                SentMessage {
+                    to_worker: 1,
+                    to_operator: 0,
+                    msg: NetworkMessage::Epoch(22)
+                }
+            ),
+            "{out0:?}"
+        );
+        assert!(
+            matches!(
+                out1,
+                SentMessage {
+                    to_worker: 2,
+                    to_operator: 0,
+                    msg: NetworkMessage::Epoch(22)
+                }
+            ),
+            "{out1:?}"
+        );
+    }
+
+    /// A shutdown marker coming in from local upstream should be broadcasted and sent downstream
+    #[test]
+    fn broadcast_shutdown() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..3,
+        );
+        tester.send_local(Message::SuspendMarker(SuspendMarker::default()));
+        tester.step();
+
+        let out0 = tester.remote().recv_from_operator().unwrap();
+        let out1 = tester.remote().recv_from_operator().unwrap();
+        assert!(
+            matches!(
+                out0,
+                SentMessage {
+                    to_worker: 1,
+                    to_operator: 0,
+                    msg: NetworkMessage::SuspendMarker
+                }
+            ),
+            "{out0:?}"
+        );
+        assert!(
+            matches!(
+                out1,
+                SentMessage {
+                    to_worker: 2,
+                    to_operator: 0,
+                    msg: NetworkMessage::SuspendMarker
+                }
+            ),
+            "{out1:?}"
+        );
+    }
+    /// A barrier received from a local upstream should not trigger any output, when there is no state on the remote barrier
+    #[test]
+    fn align_barrier_from_local_none() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+        tester.step();
+
+        assert!(tester.recv_local().is_none());
+    }
+    /// A barrier received from a remote should not trigger any output, when there is no state on the local barrier
+    #[test]
+    fn align_barrier_from_remote_none() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.step();
+        assert!(tester.recv_local().is_none());
+    }
+    /// A barrier received from a local upstream should trigger a barrier output when there is state
+    /// for the remote
+    #[test]
+    fn align_barrier_from_local() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+
+        tester.step();
+        let local_result = tester.recv_local().unwrap();
+        assert!(
+            matches!(local_result, Message::AbsBarrier(_)),
+            "{local_result:?}"
+        );
+    }
+    /// A barrier received from a local upstream should trigger a barrier output when there is state
+    /// for the remote but the next barrier should need to be aligned again
+    #[test]
+    fn align_barrier_from_local_twice() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+
+        tester.step();
+        let local_result = tester.recv_local().unwrap();
+        assert!(
+            matches!(local_result, Message::AbsBarrier(_)),
+            "{local_result:?}"
+        );
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+        tester.step();
+        assert!(tester.recv_local().is_none());
+    }
+    /// A barrier received from a remote should trigger a barrier output when there is state
+    /// for the local barrier
+    #[test]
+    fn align_barrier_from_remote() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.step();
+        let local_result = tester.recv_local().unwrap();
+        assert!(
+            matches!(local_result, Message::AbsBarrier(_)),
+            "{local_result:?}"
+        );
+    }
+    /// If we receive a suspend marker from a remote and that remote was previously holding back the
+    /// advancement of the barrier, the barrier should advance after the remote has shut down
+    #[test]
+    fn advance_barrier_after_remote_shutdown() {
+        let mut tester: OperatorTester<
+            usize,
+            (),
+            i32,
+            usize,
+            (),
+            i32,
+            NetworkMessage<usize, (), i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::SuspendMarker, 1, 0);
+        tester.step();
+
+        let advanced = tester.recv_local().unwrap();
+
+        assert!(matches!(advanced, Message::AbsBarrier(_)));
+    }
+
+    /// It must not forward any data before the barriers are aligned
+    #[test]
+    fn no_barrier_overtaking_remote_barrier() {
+        let mut tester: OperatorTester<
+            usize,
+            String,
+            i32,
+            usize,
+            String,
+            i32,
+            NetworkMessage<usize, String, i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+        // send a barrier to "block" the operator from forwarding data
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.remote().send_to_operator(
+            NetworkMessage::Data(NetworkDataMessage::new(
+                DataMessage::new(1, "Hi".to_owned(), 1),
+                0,
+            )),
+            1,
+            0,
+        );
+
+        tester.step();
+        tester.step();
+
+        // this should be none since the operator will block until
+        // it gets a barrier message from upstream too
+        let msg = tester.recv_local();
+        assert!(msg.is_none(), "{msg:?}");
+
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+        tester.step();
+
+        let barrier = tester.recv_local().unwrap();
+        assert!(matches!(barrier, Message::AbsBarrier(_)));
+    }
+
+    /// It must not forward any data before the barriers are aligned
+    #[test]
+    fn no_barrier_overtaking_local_barrier() {
+        let mut tester: OperatorTester<
+            usize,
+            String,
+            i32,
+            usize,
+            String,
+            i32,
+            NetworkMessage<usize, String, i32>,
+        > = OperatorTester::built_by(
+            move |ctx| {
+                let mut dist = Distributor::new(index_select, ctx);
+                move |input, output, op_ctx| dist.run(input, output, op_ctx)
+            },
+            0,
+            0,
+            0..2,
+        );
+
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
+            NoPersistence::default(),
+        ))));
+        tester.send_local(Message::Data(DataMessage::new(0, "Hi".to_owned(), 10)));
+
+        tester.step();
+        assert!(tester.recv_local().is_none());
+
+        tester
+            .remote()
+            .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
+        tester.step();
+        let barrier = tester.recv_local().unwrap();
+        tester.step();
+        let message = tester.recv_local().unwrap();
+        assert!(matches!(barrier, Message::AbsBarrier(_)));
+        assert!(matches!(message, Message::Data(_)));
+    }
 }
-
-// #[cfg(test)]
-// mod test {
-//     use std::{rc::Rc, sync::Mutex};
-
-//     use indexmap::IndexSet;
-
-//     use super::*;
-//     use crate::{
-//         keyed::distributed::{Acquire, Collect, Interrogate},
-//         snapshot::NoPersistence,
-//         testing::{OperatorTester, SentMessage},
-//         types::*,
-//     };
-
-// #[test]
-// fn epoch_is_broadcasted() {
-//     todo!()
-// }
-
-//     /// A barrier coming in from local upstream should be broadcasted
-//     #[test]
-//     fn broadcast_barrier() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester.step();
-//         let remote_result: SentMessage<ExchangedMessage<i32, String, u64>> =
-//             tester.remote().recv_from_operator().unwrap();
-//         assert!(matches!(
-//             remote_result,
-//             SentMessage {
-//                 worker_id: 1,
-//                 operator_id: 1,
-//                 msg: ExchangedMessage::Barrier
-//             }
-//         ))
-//     }
-
-//     /// A shutdown marker coming in from local upstream should be broadcasted and sent downstream
-//     #[test]
-//     fn broadcast_shutdown() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..1,
-//         );
-//         tester.send_local(Message::ShutdownMarker(ShutdownMarker::default()));
-//         tester.step();
-//         let local_result = tester.recv_local().unwrap();
-//         assert!(matches!(local_result, Message::ShutdownMarker(_)));
-
-//         let remote_result: SentMessage<ExchangedMessage<i32, String, u64>> =
-//             tester.remote().recv_from_operator().unwrap();
-//         assert!(matches!(
-//             remote_result,
-//             SentMessage {
-//                 worker_id: 0,
-//                 operator_id: 1,
-//                 msg: ExchangedMessage::Shutdown
-//             }
-//         ))
-//     }
-
-//     /// A barrier received from a local upstream should not trigger any output, when there is no state on the remote barrier
-//     #[test]
-//     fn align_barrier_from_local_none() {
-//         let mut tester: OperatorTester<
-//             i32,
-//             VersionedMessage<String>,
-//             u64,
-//             i32,
-//             VersionedMessage<String>,
-//             u64,
-//             (),
-//         > = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester.step();
-
-//         assert!(tester.recv_local().is_none());
-//     }
-
-//     /// A barrier received from a remote should not trigger any output, when there is no state on the local barrier
-//     #[test]
-//     fn align_barrier_from_remote_none() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester
-//             .remote()
-//             .send_to_operator(ExchangedMessage::<i32, String, u64>::Barrier, 1, 1);
-//         tester.step();
-//         assert!(tester.recv_local().is_none());
-//     }
-
-//     /// A barrier received from a local upstream should trigger a barrier output when there is state
-//     /// for the remote
-//     #[test]
-//     fn align_barrier_from_local() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester
-//             .remote()
-//             .send_to_operator(ExchangedMessage::<i32, String, u64>::Barrier, 1, 1);
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-
-//         tester.step();
-//         let local_result = tester.recv_local().unwrap();
-//         assert!(
-//             matches!(local_result, Message::AbsBarrier(_)),
-//             "{local_result:?}"
-//         );
-//     }
-
-//     /// A barrier received from a local upstream should trigger a barrier output when there is state
-//     /// for the remote but the next barrier should need to be aligned again
-//     #[test]
-//     fn align_barrier_from_local_twice() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester
-//             .remote()
-//             .send_to_operator(ExchangedMessage::<i32, String, u64>::Barrier, 1, 1);
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-
-//         tester.step();
-//         let local_result = tester.recv_local().unwrap();
-//         assert!(
-//             matches!(local_result, Message::AbsBarrier(_)),
-//             "{local_result:?}"
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester.step();
-//         assert!(tester.recv_local().is_none());
-//     }
-
-//     /// A barrier received from a remote should trigger a barrier output when there is state
-//     /// for the local barrier
-//     #[test]
-//     fn align_barrier_from_remote() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester
-//             .remote()
-//             .send_to_operator(ExchangedMessage::<i32, String, u64>::Barrier, 1, 1);
-//         tester.step();
-//         let local_result = tester.recv_local().unwrap();
-//         assert!(
-//             matches!(local_result, Message::AbsBarrier(_)),
-//             "{local_result:?}"
-//         );
-//     }
-
-//     /// If we receive a shutdownmarker from a remote and that remote was previously holding back the
-//     /// advancement of the barrier, the barrier should advance after the remote has shut down
-//     #[test]
-//     fn advance_barrier_after_remote_shutdown() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester
-//             .remote()
-//             .send_to_operator(ExchangedMessage::<i32, String, u64>::Shutdown, 1, 1);
-//         tester.step();
-//         let advanced = tester.recv_local().unwrap();
-
-//         assert!(matches!(advanced, Message::AbsBarrier(_)));
-//     }
-
-//     /// These message types should simply pass the operator
-//     #[test]
-//     fn pass_through_operator() {
-//         let messages = vec![
-//             Message::Data(DataMessage::new(
-//                 1,
-//                 VersionedMessage::new("Hello".to_string(), 0, 0),
-//                 2,
-//             )),
-//             Message::Epoch(42),
-//             Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new())),
-//             Message::Rescale(RescaleMessage::ScaleRemoveWorker(IndexSet::new())),
-//             Message::Interrogate(Interrogate::new(Rc::new(|_| false))),
-//             Message::Collect(Collect::new(1)),
-//             Message::Acquire(Acquire::new(1, Rc::new(Mutex::new(IndexMap::new())))),
-//             Message::DropKey(1),
-//         ];
-//         let mut tester: OperatorTester<
-//             i32,
-//             VersionedMessage<String>,
-//             u64,
-//             i32,
-//             VersionedMessage<String>,
-//             u64,
-//             (),
-//         > = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..1,
-//         );
-//         for m in messages.into_iter() {
-//             tester.send_local(m.clone());
-//             tester.step();
-//             assert!(tester.recv_local().is_some());
-//         }
-//     }
-
-//     /// It must not forward any data before the barriers are aligned
-//     #[test]
-//     fn no_barrier_overtaking_remote_barrier() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..2,
-//         );
-//         // send a barrier to "block" the operator from forwarding data
-//         tester.remote().send_to_operator(
-//             ExchangedMessage::<i32, VersionedMessage<String>, u64>::Barrier,
-//             1,
-//             1,
-//         );
-//         tester.remote().send_to_operator(
-//             ExchangedMessage::<i32, VersionedMessage<String>, u64>::Data(DataMessage::new(
-//                 1,
-//                 VersionedMessage::new("Hi".into(), 0, 0),
-//                 10,
-//             )),
-//             1,
-//             3,
-//         );
-
-//         tester.step();
-
-//         // this should be none since the operator will block until
-//         // it gets a barrier message from upstream too
-//         let msg = tester.recv_local();
-//         assert!(msg.is_none(), "{msg:?}");
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester.step();
-//         tester.step();
-
-//         let barrier = tester.recv_local().unwrap();
-//         let message = tester.recv_local().unwrap();
-//         assert!(matches!(barrier, Message::AbsBarrier(_)));
-//         assert!(matches!(message, Message::Data(_)));
-//     }
-
-//     /// It must not forward any data before the barriers are aligned
-//     #[test]
-//     fn no_barrier_overtaking_local_barrier() {
-//         let mut tester = OperatorTester::built_by(
-//             |ctx| upstream_exchanger::<i32, String, u64>(2, ctx),
-//             0,
-//             1,
-//             0..1,
-//         );
-//         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-//             NoPersistence::default(),
-//         ))));
-//         tester.send_local(Message::Data(DataMessage::new(
-//             1,
-//             VersionedMessage::new("Hi".into(), 0, 0),
-//             10,
-//         )));
-//         tester.step();
-//         assert!(tester.recv_local().is_none());
-
-//         tester.remote().send_to_operator(
-//             ExchangedMessage::<i32, VersionedMessage<String>, u64>::Barrier,
-//             1,
-//             1,
-//         );
-//         tester.step();
-//         let barrier = tester.recv_local().unwrap();
-//         let message = tester.recv_local().unwrap();
-//         assert!(matches!(barrier, Message::AbsBarrier(_)));
-//         assert!(matches!(message, Message::Data(_)));
-//     }
-
-// }

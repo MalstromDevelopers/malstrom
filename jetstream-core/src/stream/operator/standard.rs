@@ -1,6 +1,9 @@
 //! The standard do-it-all baseline operator used for everything.
 
-use crate::{channels::selective_broadcast::{Receiver, Sender}, types::MaybeTime};
+use crate::{
+    channels::selective_broadcast::{Receiver, Sender},
+    types::MaybeTime,
+};
 
 use super::{traits::Operator, Logic, OperatorContext};
 
@@ -12,17 +15,23 @@ pub(super) struct StandardOperator<KI, VI, TI, KO, VO, TO> {
     pub(super) output: Sender<KO, VO, TO>,
 }
 
-
-impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO> where TI: MaybeTime, KO: Clone, VO: Clone, TO: MaybeTime {
-    
+impl<KI, VI, TI, KO, VO, TO> Operator for StandardOperator<KI, VI, TI, KO, VO, TO>
+where
+    TI: MaybeTime,
+    KO: Clone,
+    VO: Clone,
+    TO: MaybeTime,
+{
     fn is_finalized(&self) -> bool {
-        TO::CHECK_FINISHED(self.output.get_frontier()) && TI::CHECK_FINISHED(self.input.get_frontier()) && self.input.is_empty()
+        TO::CHECK_FINISHED(self.output.get_frontier())
+            && TI::CHECK_FINISHED(self.input.get_frontier())
+            && self.input.is_empty()
     }
-    
+
     fn step(&mut self, context: &mut OperatorContext) {
         (self.logic)(&mut self.input, &mut self.output, context);
     }
-    
+
     fn has_queued_work(&self) -> bool {
         !self.input.is_empty()
     }
