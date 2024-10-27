@@ -82,7 +82,7 @@ Epoch(1234)
 ```
 
 and send it downstream, you are promising to all operators obeserving the Epoch, **that no data with a
-timestamp less than 1234 will ever reach them again**.
+timestamp less than or equal 1234 will ever reach them again**.
 
 As you see, issuing the epoch is not enough, we need also to ensure we are keeping this promise.
 One very simple way of doing this, is to simply drop any messages with a lower timestamp.
