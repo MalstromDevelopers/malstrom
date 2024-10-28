@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 # anyhow = "1.0.75"
 bincode = {version = "2.0.0-rc.3", features = ["serde"] }
-crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 derive-new = "0.6.0"
 # dns-lookup = "2.0.4"
 flume = "0.11.0"

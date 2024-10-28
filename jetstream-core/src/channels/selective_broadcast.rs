@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crossbeam;
+use super::mpsc;
 use indexmap::IndexMap;
 
 use crate::{
@@ -52,7 +52,7 @@ pub struct Sender<K, V, T> {
     // TOOD: We only have the partitioner in the Box to allow cloning
     // Which is only really needed in the snapshot conroller
     // Check if we can solve that another way
-    senders: Vec<crossbeam::channel::Sender<MessageWrapper<K, V, T>>>,
+    senders: Vec<mpsc::Sender<MessageWrapper<K, V, T>>>,
     #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     /// uniqe id of this sender
@@ -174,8 +174,8 @@ impl<T> Default for UpstreamState<T> {
 /// Selective Broadcast Receiver
 pub struct Receiver<K, V, T> {
     /// this sender can be cloned to send messages to this receiver
-    sender: crossbeam::channel::Sender<MessageWrapper<K, V, T>>,
-    receiver: crossbeam::channel::Receiver<MessageWrapper<K, V, T>>,
+    sender: mpsc::Sender<MessageWrapper<K, V, T>>,
+    receiver: mpsc::Receiver<MessageWrapper<K, V, T>>,
     states: IndexMap<usize, UpstreamState<T>>,
     // messages we are buffering, because we need alignement
     // from upstream to issue them
@@ -186,7 +186,7 @@ pub struct Receiver<K, V, T> {
 
 impl<K, V, T> Receiver<K, V, T> {
     pub fn new_unlinked() -> Self {
-        let (sender, receiver) = crossbeam::channel::unbounded();
+        let (sender, receiver) = mpsc::unbounded();
         Self {
             sender,
             receiver,
@@ -200,7 +200,7 @@ impl<K, V, T> Receiver<K, V, T> {
         self.receiver.is_empty()
     }
 
-    fn get_sender(&self) -> crossbeam::channel::Sender<MessageWrapper<K, V, T>> {
+    fn get_sender(&self) -> mpsc::Sender<MessageWrapper<K, V, T>> {
         self.sender.clone()
     }
 
@@ -241,7 +241,7 @@ where
             return self.buffered.pop_front();
         }
 
-        while let Ok(msg_wrapper) = self.receiver.try_recv() {
+        while let Some(msg_wrapper) = self.receiver.recv() {
             let out = match msg_wrapper {
                 MessageWrapper::Message(i, msg) => self.handle_received(i, msg),
                 MessageWrapper::Register(i) => {
