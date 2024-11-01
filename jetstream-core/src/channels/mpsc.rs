@@ -1,13 +1,13 @@
 //! A dead simple non-threaded unbounded channel
 //! Inspiration taken from https://docs.rs/local-channel
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{cell::RefCell, collections::LinkedList, rc::Rc};
 
 type Shared<T> = Rc<RefCell<SharedInner<T>>>;
 
 #[derive(Debug)]
 struct SharedInner<T> {
-    buffer: VecDeque<T>,
+    buffer: LinkedList<T>,
     has_receiver: bool
 }
 impl <T> SharedInner<T> {

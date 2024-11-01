@@ -11,7 +11,7 @@ use crate::{
     snapshot::Barrier,
 };
 
-use super::WorkerId;
+use super::{Timestamp, WorkerId};
 
 /// A message which gets processed in a JetStream
 /// Messages always include a timestamp and content.
@@ -49,6 +49,46 @@ pub enum Message<K, V, T> {
     Interrogate(Interrogate<K>),
     Collect(Collect<K>),
     Acquire(Acquire<K>),
+}
+// impl <K, V, T> From<DataMessage<K, V, T>> for Message<K, V, T> {
+//     fn from(value: DataMessage<K, V, T>) -> Self {
+//         Message::Data(value)
+//     }
+// }
+// impl <K, V, T> From<T> for Message<K, V, T> where T: Timestamp {
+//     fn from(value: T) -> Self {
+//         Message::Epoch(value)
+//     }
+// }
+// impl <K, V, T> From<Barrier> for Message<K, V, T> {
+//     fn from(value: Barrier) -> Self {
+//         Message::AbsBarrier(value)
+//     }
+// }
+macro_rules! impl_from_variants {
+    ($($variant:ident($variant_type:ty)),* $(,)?) => {
+        $(
+            impl<K, V, T> From<$variant_type> for Message<K, V, T> {
+                fn from(value: $variant_type) -> Self {
+                    Message::$variant(value)
+                }
+            }
+        )*
+    };
+}
+impl_from_variants!(
+    Data(DataMessage<K, V, T>),
+    AbsBarrier(Barrier),
+    Rescale(RescaleMessage),
+    SuspendMarker(SuspendMarker),
+    Interrogate(Interrogate<K>),
+    Collect(Collect<K>),
+    Acquire(Acquire<K>),
+);
+impl<K, V, T> From<T> for Message<K, V, T> where T: Timestamp {
+    fn from(value: T) -> Self {
+        Message::Epoch(value)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

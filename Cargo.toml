@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
+members = [ "dirty-tests",
     "jetstream-core",
+    "malstrom-kafka"
 ]

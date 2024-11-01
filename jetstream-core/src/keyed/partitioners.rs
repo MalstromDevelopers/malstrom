@@ -16,7 +16,7 @@ fn default_hash<T: Hash>(value: &T) -> u64 {
 /// **PANIC:** if the set is empty
 ///
 /// TODD: Add test
-pub fn rendezvous_select<T: Hash + Copy>(value: &usize, options: &IndexSet<T>) -> T {
+pub fn rendezvous_select<V: Hash, T: Hash + Copy>(value: &V, options: &IndexSet<T>) -> T {
     let v_hash = default_hash(value);
     options
         .iter()

@@ -2,8 +2,8 @@ use std::iter;
 
 use crate::{
     channels::selective_broadcast::{Receiver, Sender},
-    operators::IntoSource,
-    stream::OperatorBuilder,
+    operators::StreamSource,
+    stream::{JetStreamBuilder, OperatorBuilder},
     types::{Data, DataMessage, Message, NoData, NoKey, NoTime},
 };
 
@@ -54,12 +54,12 @@ impl<T> SingleIteratorSource<T> {
     }
 }
 
-impl<V> IntoSource<NoKey, V, usize> for SingleIteratorSource<V>
+impl<V> StreamSource<NoKey, V, usize> for SingleIteratorSource<V>
 where
     V: Data,
 {
-    fn into_source(self) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, V, usize> {
-        OperatorBuilder::built_by(|build_context| {
+    fn into_stream(self, builder: JetStreamBuilder<NoKey, NoData, NoTime>) -> JetStreamBuilder<NoKey, V, usize> {
+        let operator = OperatorBuilder::built_by(|build_context| {
             let mut inner = if build_context.worker_id == 0 {
                 self.iterator.enumerate()
             } else {
@@ -93,7 +93,8 @@ where
                     }
                 }
             }
-        })
+        });
+        builder.then(operator)
     }
 }
 

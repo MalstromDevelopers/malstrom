@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
@@ -22,10 +22,17 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
     fn on_epoch(
         &mut self,
         epoch: &T,
-        state: &mut HashMap<K, S>,
+        state: &mut IndexMap<K, S>,
         output: &mut Sender<K, VO, T>,
     ) -> () {
     }
+
+    #[allow(unused)]
+    fn on_schedule(
+        &mut self,
+        state: &mut IndexMap<K, S>,
+        output: &mut Sender<K, VO, T>,
+    ) -> () {}
 }
 impl<X, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for X
 where
@@ -76,9 +83,10 @@ fn build_stateful_logic<
     context: &BuildContext,
     mut logic: impl StatefulLogic<K, VI, T, VO, S>,
 ) -> impl FnMut(&mut Receiver<K, VI, T>, &mut Sender<K, VO, T>, &mut OperatorContext) {
-    let mut state: HashMap<K, S> = context.load_state().unwrap_or_default();
+    let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
 
     move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, ctx| {
+        logic.on_schedule(&mut state, output);
         let msg = match input.recv() {
             Some(x) => x,
             None => return,
@@ -86,7 +94,7 @@ fn build_stateful_logic<
         match msg {
             Message::Data(msg) => {
                 let key = msg.key.to_owned();
-                let key_state = state.remove(&key).unwrap_or_default();
+                let key_state = state.swap_remove(&key).unwrap_or_default();
                 let new_state = logic.on_data(msg, key_state, output);
                 if let Some(n) = new_state {
                     state.insert(key.to_owned(), n);
@@ -393,7 +401,7 @@ mod tests {
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(backend.clone()))));
         tester.step();
 
-        let state: HashMap<bool, i32> = CommunicationClient::decode(&backend.load(&42).unwrap());
+        let state: IndexMap<bool, i32> = CommunicationClient::decode(&backend.load(&42).unwrap());
         assert_eq!(*state.get(&false).unwrap(), 1);
     }
 
