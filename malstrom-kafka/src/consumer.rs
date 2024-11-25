@@ -1,38 +1,22 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
-use indexmap::IndexMap;
+use jetstream::sources::StatefulSourcePartition;
 
-use jetstream::channels::selective_broadcast::{Receiver, Sender};
-use jetstream::keyed::partitioners::rendezvous_select;
-use jetstream::keyed::KeyDistribute;
-use jetstream::operators::{Source, StatefulLogic, StatefulOp};
-use jetstream::sources::{SingleIteratorSource, StatefulSourcePartition};
-use jetstream::types::*;
-
-use jetstream::stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext};
+use jetstream::sources::StatefulSourceImpl;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::ConsumerContext;
 use rdkafka::consumer::DefaultConsumerContext;
 use rdkafka::consumer::{BaseConsumer, Consumer};
-use rdkafka::error::KafkaError;
 use rdkafka::message::OwnedMessage;
 
-use bon::{bon, Builder};
+use bon::Builder;
 use rdkafka::Message as _;
 use rdkafka::TopicPartitionList;
-use rdkafka::{ClientContext, Offset};
-use serde::{Deserialize, Serialize};
-
-struct DefaultKafkaContext;
-impl ClientContext for DefaultKafkaContext {}
-impl ConsumerContext for DefaultKafkaContext {}
 
 type OffsetIndex = i64;
 type KafkaPartition = i32;
 
 #[derive(Builder)]
-#[builder(on(String, into))]  
+#[builder(on(String, into))]
 pub struct KafkaSource {
     brokers: Vec<String>,
     topic: String,
@@ -44,16 +28,18 @@ pub struct KafkaSource {
     extra_config: Option<ClientConfig>,
 }
 
-use jetstream::sources::StatefulSourceImpl;
-
 impl StatefulSourceImpl<OwnedMessage, OffsetIndex> for KafkaSource {
     type Part = KafkaPartition;
     type PartitionState = Option<OffsetIndex>;
     type SourcePartition = KafkaConsumer;
 
     fn list_parts(&self) -> impl IntoIterator<Item = Self::Part> + 'static {
-        let consumer: BaseConsumer =
-            create_consumer(&self.group_id, &self.brokers, &self.auto_offset_reset, &self.extra_config);
+        let consumer: BaseConsumer = create_consumer(
+            &self.group_id,
+            &self.brokers,
+            &self.auto_offset_reset,
+            &self.extra_config,
+        );
         let metadata = consumer
             .fetch_metadata(Some(&self.topic), self.fetch_timeout)
             .expect("Can fetch metadata");
@@ -71,10 +57,17 @@ impl StatefulSourceImpl<OwnedMessage, OffsetIndex> for KafkaSource {
         part: &Self::Part,
         part_state: Option<Self::PartitionState>,
     ) -> Self::SourcePartition {
-        let consumer: BaseConsumer = create_consumer(&self.group_id, &self.brokers, &self.auto_offset_reset, &self.extra_config);
+        let consumer: BaseConsumer = create_consumer(
+            &self.group_id,
+            &self.brokers,
+            &self.auto_offset_reset,
+            &self.extra_config,
+        );
         let mut topic_partitions = TopicPartitionList::with_capacity(1);
         topic_partitions.add_partition(&self.topic, *part);
-        consumer.assign(&topic_partitions).expect("Can assign topic-partition");
+        consumer
+            .assign(&topic_partitions)
+            .expect("Can assign topic-partition");
         KafkaConsumer::new(consumer, part_state.flatten())
     }
 }
@@ -112,9 +105,12 @@ pub struct KafkaConsumer {
 impl KafkaConsumer {
     fn new(
         consumer: BaseConsumer<DefaultConsumerContext>,
-        last_recvd_offset: LastReceivedOffset
+        last_recvd_offset: LastReceivedOffset,
     ) -> Self {
-        Self{consumer, last_recvd_offset}
+        Self {
+            consumer,
+            last_recvd_offset,
+        }
     }
 }
 

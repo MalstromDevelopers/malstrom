@@ -1,0 +1,18 @@
+syntax = "proto3";
+package malstrom_k8s;
+
+service Exchange {
+    rpc UniStream(StreamRequest) returns (stream StreamResponse) {}
+}
+
+message StreamRequest {
+    // id of the worker initiating this request    
+    uint64 worker_id = 1;
+    // id of the operator it wants to receive messages from
+    uint64 operator_id = 2;
+}
+
+message StreamResponse {
+    // message data
+    bytes data = 1;
+}
