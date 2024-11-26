@@ -137,7 +137,7 @@ mod tests {
     proptest! {
     /// Check messages are always returned locally if the have a higher version
     #[test]
-    fn higher_version(this_worker in 0usize..3, sender in 0usize..3, key in 0usize..100) {
+    fn higher_version(this_worker in 0u64..3, sender in 0u64..3, key in 0u64..100) {
         let mut normal_router = MessageRouter::Normal(NormalRouter::new(IndexSet::from([0, 1, 2]), 33));
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,

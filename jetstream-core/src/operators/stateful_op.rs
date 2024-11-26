@@ -28,11 +28,7 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
     }
 
     #[allow(unused)]
-    fn on_schedule(
-        &mut self,
-        state: &mut IndexMap<K, S>,
-        output: &mut Sender<K, VO, T>,
-    ) -> () {}
+    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Sender<K, VO, T>) -> () {}
 }
 impl<X, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for X
 where

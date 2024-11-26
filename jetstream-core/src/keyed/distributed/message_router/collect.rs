@@ -235,7 +235,7 @@ mod test {
         remotes.insert(
             1,
             (
-                CommunicationClient::new(1, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(1, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );
@@ -345,7 +345,7 @@ mod test {
         remotes.insert(
             1,
             (
-                CommunicationClient::new(1, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(1, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );
@@ -384,7 +384,7 @@ mod test {
         remotes.insert(
             1,
             (
-                CommunicationClient::new(1, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(1, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );
@@ -448,14 +448,14 @@ mod test {
         remotes.insert(
             1,
             (
-                CommunicationClient::new(1, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(1, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );
         remotes.insert(
             2,
             (
-                CommunicationClient::new(2, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(2, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );
@@ -511,7 +511,7 @@ mod test {
         remotes.insert(
             1,
             (
-                CommunicationClient::new(1, 0, 0, &mut comm).unwrap(),
+                CommunicationClient::new(1, 0, &mut comm).unwrap(),
                 RemoteState::default(),
             ),
         );

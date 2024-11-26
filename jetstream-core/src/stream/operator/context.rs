@@ -1,5 +1,6 @@
 //! Build and runtime contexts used by operators
 use std::ops::Range;
+use std::rc::Rc;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -23,15 +24,8 @@ impl<'a> OperatorContext<'a> {
     pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
-        other_operator: OperatorId,
     ) -> CommunicationClient<T> {
-        CommunicationClient::new(
-            other_worker,
-            other_operator,
-            self.operator_id,
-            self.communication,
-        )
-        .unwrap()
+        CommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
     }
 
     pub fn new(
@@ -51,19 +45,19 @@ pub struct BuildContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
     pub label: String,
-    persistence_backend: Box<dyn PersistenceClient>, // TODO: use a mutable ref here
-    // HACK: We need this in the icadd tests
+    persistence_backend: Rc<dyn PersistenceClient>,
+    // HACK: We need this in the ica tests
     pub(crate) communication: &'a mut dyn CommunicationBackend,
-    worker_ids: Range<usize>,
+    worker_ids: Vec<WorkerId>,
 }
 impl<'a> BuildContext<'a> {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
         label: String,
-        persistence_backend: Box<dyn PersistenceClient>,
+        persistence_backend: Rc<dyn PersistenceClient>,
         communication: &'a mut dyn CommunicationBackend,
-        worker_ids: Range<usize>,
+        worker_ids: Vec<WorkerId>,
     ) -> Self {
         Self {
             worker_id,
@@ -85,23 +79,16 @@ impl<'a> BuildContext<'a> {
     /// at build time.
     /// NOTE: JetStream is designed to scale dynamically, so this information may become outdated
     /// at runtime
-    pub fn get_worker_ids(&self) -> Range<WorkerId> {
-        self.worker_ids.clone()
+    pub fn get_worker_ids(&self) -> &[WorkerId] {
+        &self.worker_ids
     }
 
     /// Create a client for inter-worker communication
     pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
-        other_operator: OperatorId,
     ) -> CommunicationClient<T> {
-        CommunicationClient::new(
-            other_worker,
-            other_operator,
-            self.operator_id,
-            self.communication,
-        )
-        .unwrap()
+        CommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
     }
 
     /// Create an operator context (runtime context) for this operator

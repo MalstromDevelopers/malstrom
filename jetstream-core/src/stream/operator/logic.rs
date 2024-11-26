@@ -1,53 +1,118 @@
-
 use crate::{
-    channels::selective_broadcast::{full_broadcast, Receiver, Sender}, keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::Barrier, types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, OperatorPartitioner, RescaleMessage, SuspendMarker}
+    channels::selective_broadcast::{full_broadcast, Receiver, Sender},
+    keyed::distributed::{Acquire, Collect, Interrogate},
+    snapshot::Barrier,
+    types::{
+        Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, OperatorPartitioner,
+        RescaleMessage, SuspendMarker,
+    },
 };
 
 use super::{
-    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, Logic, OperatorContext, RunnableOperator
+    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, Logic,
+    OperatorContext, RunnableOperator,
 };
 
 /// This trait provides a way to implement logic without using a closure
 /// Usually we would implement this trait on FnMut but unfortunately doing
 /// it that way really messes with Rust's type inference and makes closure
 /// hard to use as logic directy
-pub trait LogicWrapper<K: MaybeKey, VI: MaybeData, TI: MaybeTime, VO: MaybeData, TO: MaybeTime>: Sized + 'static {
-
+pub trait LogicWrapper<K: MaybeKey, VI: MaybeData, TI: MaybeTime, VO: MaybeData, TO: MaybeTime>:
+    Sized + 'static
+{
     #[allow(unused)]
     fn on_schedule(&mut self, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_data(&mut self, data_message: DataMessage<K, VI, TI>, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_epoch(&mut self, epoch: TI, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_barrier(&mut self, barrier: &mut Barrier, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_rescale(&mut self, rescale_message: &mut RescaleMessage, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_suspend(&mut self, suspend_marker: &mut SuspendMarker, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_interrogate(&mut self, interrogate: &mut Interrogate<K>, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_collect(&mut self, collect: &mut Collect<K>, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
-    fn on_acquire(&mut self, acquire: &mut Acquire<K>, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
-    
+
+    fn on_data(
+        &mut self,
+        data_message: DataMessage<K, VI, TI>,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_epoch(
+        &mut self,
+        epoch: TI,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_barrier(
+        &mut self,
+        barrier: &mut Barrier,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_rescale(
+        &mut self,
+        rescale_message: &mut RescaleMessage,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_suspend(
+        &mut self,
+        suspend_marker: &mut SuspendMarker,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_interrogate(
+        &mut self,
+        interrogate: &mut Interrogate<K>,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_collect(
+        &mut self,
+        collect: &mut Collect<K>,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
+    fn on_acquire(
+        &mut self,
+        acquire: &mut Acquire<K>,
+        output: &mut Sender<K, VO, TO>,
+        ctx: &mut OperatorContext,
+    ) -> ();
+
     fn into_logic(mut self) -> impl Logic<K, VI, TI, K, VO, TO> {
         move |input, output, ctx| {
             self.on_schedule(output, ctx);
             let msg = match input.recv() {
                 Some(x) => x,
-                None => return
+                None => return,
             };
             match msg {
                 Message::Data(data_message) => self.on_data(data_message, output, ctx),
                 Message::Epoch(epoch) => self.on_epoch(epoch, output, ctx),
-                Message::AbsBarrier(mut barrier) => {self.on_barrier(&mut barrier, output, ctx); output.send(barrier.into());},
-                Message::Rescale(mut rescale_message) => {self.on_rescale(&mut rescale_message, output, ctx); output.send(rescale_message.into());},
-                Message::SuspendMarker(mut suspend_marker) => {self.on_suspend(&mut suspend_marker, output, ctx); output.send(suspend_marker.into());},
-                Message::Interrogate(mut interrogate) => {self.on_interrogate(&mut interrogate, output, ctx); output.send(interrogate.into());},
-                Message::Collect(mut collect) => {self.on_collect(&mut collect, output, ctx); output.send(collect.into());},
-                Message::Acquire(mut acquire) => {self.on_acquire(&mut acquire, output, ctx); output.send(acquire.into());},
+                Message::AbsBarrier(mut barrier) => {
+                    self.on_barrier(&mut barrier, output, ctx);
+                    output.send(barrier.into());
+                }
+                Message::Rescale(mut rescale_message) => {
+                    self.on_rescale(&mut rescale_message, output, ctx);
+                    output.send(rescale_message.into());
+                }
+                Message::SuspendMarker(mut suspend_marker) => {
+                    self.on_suspend(&mut suspend_marker, output, ctx);
+                    output.send(suspend_marker.into());
+                }
+                Message::Interrogate(mut interrogate) => {
+                    self.on_interrogate(&mut interrogate, output, ctx);
+                    output.send(interrogate.into());
+                }
+                Message::Collect(mut collect) => {
+                    self.on_collect(&mut collect, output, ctx);
+                    output.send(collect.into());
+                }
+                Message::Acquire(mut acquire) => {
+                    self.on_acquire(&mut acquire, output, ctx);
+                    output.send(acquire.into());
+                }
             };
         }
     }

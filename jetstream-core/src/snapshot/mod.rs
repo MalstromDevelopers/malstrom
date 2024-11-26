@@ -1,11 +1,15 @@
 pub mod controller;
+#[cfg(feature = "slatedb")]
+pub mod slatedb;
+pub use slatedb::{SlateDbBackend, SlateDbClient};
+
 use std::{fmt::Debug, rc::Rc, sync::Mutex};
 
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::types::{OperatorId, WorkerId};
 
-pub type SnapshotVersion = usize;
+pub type SnapshotVersion = u64;
 
 const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
@@ -20,29 +24,32 @@ pub(crate) fn deserialize_state<S: DeserializeOwned>(state: Vec<u8>) -> S {
 }
 
 pub trait PersistenceBackend: 'static {
-    fn latest(&self, worker_id: WorkerId) -> Box<dyn PersistenceClient>;
-    fn for_version(
-        &self,
-        worker_id: WorkerId,
-        snapshot_epoch: &SnapshotVersion,
-    ) -> Box<dyn PersistenceClient>;
+    type Client: PersistenceClient;
+    fn last_commited(&self, worker_id: WorkerId) -> Self::Client;
+    fn for_version(&self, worker_id: WorkerId, snapshot_version: &SnapshotVersion) -> Self::Client;
+    // mark a specific snapshot version as finished
+    fn commit_version(&self, snapshot_version: &SnapshotVersion);
 }
 
-pub trait PersistenceClient: Debug {
+pub trait PersistenceClient: 'static {
     fn get_version(&self) -> SnapshotVersion;
     fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>>;
     fn persist(&mut self, state: &[u8], operator_id: &OperatorId);
 }
 
-#[derive(Debug)]
 pub struct Barrier {
     backend: Rc<Mutex<Box<dyn PersistenceClient>>>,
 }
 impl Clone for Barrier {
     fn clone(&self) -> Self {
         Self {
-            backend: self.backend.clone(),
+            backend: Rc::clone(&self.backend),
         }
+    }
+}
+impl Debug for Barrier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Barrier").finish()
     }
 }
 
@@ -76,19 +83,18 @@ pub struct NoPersistence {
     epoch: SnapshotVersion,
 }
 impl PersistenceBackend for NoPersistence {
-    fn latest(&self, _worker_id: WorkerId) -> Box<dyn PersistenceClient> {
-        Box::new(self.clone())
+    type Client = NoPersistence;
+    fn last_commited(&self, _worker_id: WorkerId) -> Self {
+        self.clone()
     }
 
-    fn for_version(
-        &self,
-        _worker_id: WorkerId,
-        snapshot_epoch: &SnapshotVersion,
-    ) -> Box<dyn PersistenceClient> {
-        Box::new(NoPersistence {
+    fn for_version(&self, _worker_id: WorkerId, snapshot_epoch: &SnapshotVersion) -> Self {
+        NoPersistence {
             epoch: *snapshot_epoch,
-        })
+        }
     }
+
+    fn commit_version(&self, _snapshot_version: &SnapshotVersion) {}
 }
 
 impl PersistenceClient for NoPersistence {

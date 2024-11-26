@@ -4,7 +4,7 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-use crate::runtime::WorkerBuilder;
+use crate::runtime::{no_snapshots, WorkerBuilder};
 use crate::snapshot::Barrier;
 use crate::types::MaybeTime;
 use crate::types::{Key, RescaleMessage, SuspendMarker};
@@ -31,7 +31,11 @@ pub fn get_test_stream() -> (
     WorkerBuilder<SingleThreadRuntimeFlavor, NoPersistence>,
     JetStreamBuilder<NoKey, NoData, NoTime>,
 ) {
-    let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor);
+    let mut worker = WorkerBuilder::new(
+        SingleThreadRuntimeFlavor,
+        no_snapshots,
+        NoPersistence::default(),
+    );
     let stream = worker.new_stream();
     (worker, stream)
 }
@@ -45,16 +49,22 @@ pub struct CapturingPersistenceBackend {
     capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
 }
 impl PersistenceBackend for CapturingPersistenceBackend {
-    fn latest(&self, _worker_id: WorkerId) -> Box<dyn PersistenceClient> {
-        Box::new(self.clone())
+    type Client = CapturingPersistenceBackend;
+
+    fn last_commited(&self, _worker_id: WorkerId) -> Self::Client {
+        self.clone()
     }
 
     fn for_version(
         &self,
         _worker_id: WorkerId,
         _snapshot_epoch: &crate::snapshot::SnapshotVersion,
-    ) -> Box<dyn PersistenceClient> {
-        Box::new(self.clone())
+    ) -> Self::Client {
+        self.clone()
+    }
+
+    fn commit_version(&self, _snapshot_version: &crate::snapshot::SnapshotVersion) {
+        // TODO
     }
 }
 
@@ -165,8 +175,8 @@ mod tests {
     #[test]
     fn capturing_persistence_backend() {
         let backend = CapturingPersistenceBackend::default();
-        let a = backend.latest(0);
-        let mut b = backend.latest(0);
+        let a = backend.last_commited(0);
+        let mut b = backend.last_commited(0);
 
         let val = "hello world".to_string();
         let ser = serialize_state(&val);

@@ -35,6 +35,7 @@ pub fn rendezvous_select<V: Hash, T: Hash + Copy>(value: &V, options: &IndexSet<
 /// If you plan on scaling dynamically, consider [rendezvous_select].
 ///
 /// **PANIC:** if the set is empty
-pub fn index_select<T: Copy>(i: &usize, s: &IndexSet<T>) -> T {
-    *s.get_index(i % s.len()).unwrap()
+pub fn index_select<T: Copy>(i: &u64, s: &IndexSet<T>) -> T {
+    let idx: usize = (*i).try_into().unwrap();
+    *s.get_index(idx % s.len()).unwrap()
 }

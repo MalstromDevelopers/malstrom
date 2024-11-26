@@ -85,7 +85,10 @@ impl_from_variants!(
     Collect(Collect<K>),
     Acquire(Acquire<K>),
 );
-impl<K, V, T> From<T> for Message<K, V, T> where T: Timestamp {
+impl<K, V, T> From<T> for Message<K, V, T>
+where
+    T: Timestamp,
+{
     fn from(value: T) -> Self {
         Message::Epoch(value)
     }

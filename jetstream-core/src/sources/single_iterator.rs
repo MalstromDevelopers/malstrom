@@ -58,7 +58,10 @@ impl<V> StreamSource<NoKey, V, usize> for SingleIteratorSource<V>
 where
     V: Data,
 {
-    fn into_stream(self, builder: JetStreamBuilder<NoKey, NoData, NoTime>) -> JetStreamBuilder<NoKey, V, usize> {
+    fn into_stream(
+        self,
+        builder: JetStreamBuilder<NoKey, NoData, NoTime>,
+    ) -> JetStreamBuilder<NoKey, V, usize> {
         let operator = OperatorBuilder::built_by(|build_context| {
             let mut inner = if build_context.worker_id == 0 {
                 self.iterator.enumerate()
@@ -70,7 +73,7 @@ where
 
             move |input: &mut Receiver<NoKey, NoData, NoTime>,
                   output: &mut Sender<NoKey, V, usize>,
-                  ctx| {
+                  _ctx| {
                 if !final_emitted {
                     if let Some(x) = inner.next() {
                         output.send(Message::Data(DataMessage::new(NoKey, x.1, x.0)));
@@ -106,7 +109,8 @@ mod tests {
 
     use crate::{
         operators::*,
-        runtime::{threaded::MultiThreadRuntime, WorkerBuilder},
+        runtime::{no_snapshots, threaded::MultiThreadRuntime, WorkerBuilder},
+        snapshot::NoPersistence,
         sources::SingleIteratorSource,
         testing::{get_test_stream, VecSink},
         types::Message,
@@ -140,7 +144,8 @@ mod tests {
 
         let rt = MultiThreadRuntime::new_with_args(
             |flavor, this_sink| {
-                let mut builder = WorkerBuilder::new(flavor);
+                let mut builder =
+                    WorkerBuilder::new(flavor, no_snapshots, NoPersistence::default());
                 builder
                     .new_stream()
                     .source(SingleIteratorSource::new(0..10))

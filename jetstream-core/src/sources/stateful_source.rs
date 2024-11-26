@@ -41,7 +41,10 @@ pub trait StatefulSourceImpl<V, T>: 'static {
     ) -> Self::SourcePartition;
 }
 pub struct StatefulSource<V, T, S: StatefulSourceImpl<V, T>>(S, PhantomData<(V, T)>);
-impl<V, T, S> StatefulSource<V, T, S> where S: StatefulSourceImpl<V, T> {
+impl<V, T, S> StatefulSource<V, T, S>
+where
+    S: StatefulSourceImpl<V, T>,
+{
     pub fn new(source: S) -> Self {
         Self(source, PhantomData)
     }

@@ -1,7 +1,13 @@
 //! A builder to build JetStream operators
 
 use crate::{
-    channels::selective_broadcast::{full_broadcast, Receiver, Sender}, keyed::distributed::{Acquire, Collect, Interrogate}, snapshot::Barrier, types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, OperatorPartitioner, RescaleMessage, SuspendMarker}
+    channels::selective_broadcast::{full_broadcast, Receiver, Sender},
+    keyed::distributed::{Acquire, Collect, Interrogate},
+    snapshot::Barrier,
+    types::{
+        Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, OperatorPartitioner,
+        RescaleMessage, SuspendMarker,
+    },
 };
 
 use super::{
@@ -36,7 +42,6 @@ impl<
     > Logic<KI, VI, TI, KO, VO, TO> for X
 {
 }
-
 
 impl<KI, VI, TI, KO, VO, TO> OperatorBuilder<KI, VI, TI, KO, VO, TO>
 where
@@ -95,6 +100,10 @@ where
 {
     fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO> {
         &mut self.output
+    }
+
+    fn get_output(&self) -> &Sender<KO, VO, TO> {
+        &self.output
     }
 
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {

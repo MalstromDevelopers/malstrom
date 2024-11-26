@@ -3,7 +3,7 @@
 use super::DataMessage;
 
 /// Uniquely identifies an operator within a worker
-pub type OperatorId = usize;
+pub type OperatorId = u64;
 
 /// Marker trait for functions which determine inter-operator routing
 /// The OperatorPartitioner is a function which receives as arguments:
@@ -12,10 +12,10 @@ pub type OperatorId = usize;
 ///
 /// And should emit the **indices** of the receivers, which should receive this message
 pub trait OperatorPartitioner<K, V, T>:
-    Fn(&DataMessage<K, V, T>, usize) -> Vec<OperatorId> + 'static
+    Fn(&DataMessage<K, V, T>, u64) -> Vec<OperatorId> + 'static
 {
 }
-impl<K, V, T, U: Fn(&DataMessage<K, V, T>, usize) -> Vec<OperatorId> + 'static>
+impl<K, V, T, U: Fn(&DataMessage<K, V, T>, u64) -> Vec<OperatorId> + 'static>
     OperatorPartitioner<K, V, T> for U
 {
 }

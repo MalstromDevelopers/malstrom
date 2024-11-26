@@ -25,7 +25,7 @@ where
     fn is_finalized(&self) -> bool {
         TO::CHECK_FINISHED(self.output.get_frontier())
             && TI::CHECK_FINISHED(self.input.get_frontier())
-            && self.input.is_empty()
+            && !self.input.can_progress()
     }
 
     fn step(&mut self, context: &mut OperatorContext) {
@@ -33,6 +33,6 @@ where
     }
 
     fn has_queued_work(&self) -> bool {
-        !self.input.is_empty()
+        self.input.can_progress()
     }
 }

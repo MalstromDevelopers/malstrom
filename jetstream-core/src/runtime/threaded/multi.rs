@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     runtime::{RuntimeFlavor, WorkerBuilder},
-    snapshot::PersistenceBackend,
+    snapshot::{PersistenceBackend, PersistenceClient},
     types::WorkerId,
 };
 
@@ -44,12 +44,15 @@ pub struct MultiThreadRuntime {
     threads: Vec<JoinHandle<()>>,
 }
 impl MultiThreadRuntime {
-    pub fn new<P: PersistenceBackend>(
-        parrallelism: usize,
+    pub fn new<P: PersistenceClient>(
+        parrallelism: u64,
         builder_func: fn(MultiThreadRuntimeFlavor) -> WorkerBuilder<MultiThreadRuntimeFlavor, P>,
     ) -> Self {
-        let execution_barrier = Arc::new(Barrier::new(parrallelism + 1)); // +1 because we are keeping one here
-        let mut threads = Vec::with_capacity(parrallelism);
+        let parrallelism_usize: usize = parrallelism
+            .try_into()
+            .expect("parallelism should be < usie::MAX");
+        let execution_barrier = Arc::new(Barrier::new(parrallelism_usize + 1)); // +1 because we are keeping one here
+        let mut threads = Vec::with_capacity(parrallelism_usize);
 
         let shared = Shared::default();
         for i in 0..parrallelism {
@@ -73,7 +76,7 @@ impl MultiThreadRuntime {
         args: impl IntoIterator<Item = A>,
     ) -> Self
     where
-        P: PersistenceBackend,
+        P: PersistenceClient,
         A: Send + 'static,
         F: RuntimeFlavor + 'static,
     {
@@ -83,8 +86,15 @@ impl MultiThreadRuntime {
         let execution_barrier = Arc::new(Barrier::new(parrallelism + 1)); // +1 because we are keeping one here
         let mut threads = Vec::with_capacity(parrallelism);
 
+        let parrallelism: u64 = parrallelism
+            .try_into()
+            .expect("Parallelism should be < usize::MAX");
+
         let shared = Shared::default();
         for (i, arg) in args_vec.into_iter().enumerate() {
+            let i: u64 = i
+                .try_into()
+                .expect("Should have less than usize::MAX workers");
             let shared_this = Arc::clone(&shared);
             let barrier = Arc::clone(&execution_barrier);
             let thread = std::thread::spawn(move || {
@@ -132,11 +142,11 @@ impl MultiThreadRuntime {
 /// You can not construct this directly use [MultiThreadRuntime] instead
 pub struct MultiThreadRuntimeFlavor {
     shared: Shared,
-    worker_id: usize,
-    total_size: usize,
+    worker_id: u64,
+    total_size: u64,
 }
 impl MultiThreadRuntimeFlavor {
-    fn new(shared: Shared, worker_id: WorkerId, total_size: usize) -> Self {
+    fn new(shared: Shared, worker_id: WorkerId, total_size: u64) -> Self {
         MultiThreadRuntimeFlavor {
             shared,
             worker_id,
@@ -157,24 +167,30 @@ impl RuntimeFlavor for MultiThreadRuntimeFlavor {
         ))
     }
 
-    fn runtime_size(&self) -> usize {
+    fn runtime_size(&self) -> u64 {
         self.total_size
     }
 
-    fn this_worker_id(&self) -> usize {
+    fn this_worker_id(&self) -> u64 {
         self.worker_id
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::WorkerBuilder;
+    use crate::{
+        runtime::{builder::no_snapshots, WorkerBuilder},
+        snapshot::NoPersistence,
+    };
 
     use super::MultiThreadRuntime;
 
     #[test]
     fn test_can_build() {
-        let rt = MultiThreadRuntime::new_with_args(|flavor, _| WorkerBuilder::new(flavor), [(); 2]);
+        let rt = MultiThreadRuntime::new_with_args(
+            |flavor, _| WorkerBuilder::new(flavor, no_snapshots, NoPersistence::default()),
+            [(); 2],
+        );
         rt.execute().unwrap();
     }
 }

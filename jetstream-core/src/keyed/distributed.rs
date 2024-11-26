@@ -42,6 +42,8 @@ where
             ctx.load_state();
         let other_workers = ctx
             .get_worker_ids()
+            .iter()
+            .map(|x| *x)
             .filter(|x| *x != ctx.worker_id)
             .collect_vec();
 
@@ -57,7 +59,10 @@ where
             }
             None => {
                 let remotes = create_remotes(&other_workers, ctx);
-                let state = MessageRouter::new(ctx.get_worker_ids().collect(), Version::default());
+                let state = MessageRouter::new(
+                    ctx.get_worker_ids().iter().map(|x| *x).collect(),
+                    Version::default(),
+                );
                 (state, remotes, None)
             }
         };
@@ -255,7 +260,7 @@ where
             RescaleMessage::ScaleRemoveWorker(_index_set) => (),
             RescaleMessage::ScaleAddWorker(to_add) => {
                 for wid in to_add {
-                    let comm_client = ctx.create_communication_client(*wid, ctx.worker_id);
+                    let comm_client = ctx.create_communication_client(*wid);
                     let remote_state = RemoteState::default();
                     self.remotes.insert(*wid, (comm_client, remote_state));
                 }
@@ -310,7 +315,7 @@ where
             (
                 *worker_id,
                 (
-                    ctx.create_communication_client(*worker_id, ctx.operator_id),
+                    ctx.create_communication_client(*worker_id),
                     RemoteState::default(),
                 ),
             )
@@ -362,7 +367,7 @@ mod test {
     fn remote_barrier_aligned() {
         let mut tester = OperatorTester::built_by(
             move |ctx| {
-                let mut dist: Distributor<usize, (), i32> = Distributor::new(index_select, ctx);
+                let mut dist: Distributor<u64, (), i32> = Distributor::new(index_select, ctx);
                 move |input, output, op_ctx| dist.run(input, output, op_ctx)
             },
             0,
@@ -376,7 +381,7 @@ mod test {
         assert!(tester.recv_local().is_none());
         tester
             .remote()
-            .send_to_operator(NetworkMessage::<usize, (), i32>::Epoch(42), 1, 0);
+            .send_to_operator(NetworkMessage::<u64, (), i32>::Epoch(42), 1, 0);
         tester.step();
 
         // should be 15 since that is the lower alignment of both epochs
@@ -389,23 +394,16 @@ mod test {
     /// Epoch should be broadcasted to other workers
     #[test]
     fn epoch_is_broadcasted() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..3,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..3,
+            );
 
         let in_msg = Message::Epoch(22);
         tester.send_local(in_msg);
@@ -440,23 +438,16 @@ mod test {
     /// A shutdown marker coming in from local upstream should be broadcasted and sent downstream
     #[test]
     fn broadcast_shutdown() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..3,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..3,
+            );
         tester.send_local(Message::SuspendMarker(SuspendMarker::default()));
         tester.step();
 
@@ -488,23 +479,16 @@ mod test {
     /// A barrier received from a local upstream should not trigger any output, when there is no state on the remote barrier
     #[test]
     fn align_barrier_from_local_none() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
             NoPersistence::default(),
         ))));
@@ -515,23 +499,16 @@ mod test {
     /// A barrier received from a remote should not trigger any output, when there is no state on the local barrier
     #[test]
     fn align_barrier_from_remote_none() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -542,23 +519,16 @@ mod test {
     /// for the remote
     #[test]
     fn align_barrier_from_local() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -577,23 +547,16 @@ mod test {
     /// for the remote but the next barrier should need to be aligned again
     #[test]
     fn align_barrier_from_local_twice() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -617,23 +580,16 @@ mod test {
     /// for the local barrier
     #[test]
     fn align_barrier_from_remote() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
             NoPersistence::default(),
         ))));
@@ -651,23 +607,16 @@ mod test {
     /// advancement of the barrier, the barrier should advance after the remote has shut down
     #[test]
     fn advance_barrier_after_remote_shutdown() {
-        let mut tester: OperatorTester<
-            usize,
-            (),
-            i32,
-            usize,
-            (),
-            i32,
-            NetworkMessage<usize, (), i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
+            OperatorTester::built_by(
+                move |ctx| {
+                    let mut dist = Distributor::new(index_select, ctx);
+                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
+                },
+                0,
+                0,
+                0..2,
+            );
 
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
             NoPersistence::default(),
@@ -687,13 +636,13 @@ mod test {
     #[test]
     fn no_barrier_overtaking_remote_barrier() {
         let mut tester: OperatorTester<
-            usize,
+            u64,
             String,
             i32,
-            usize,
+            u64,
             String,
             i32,
-            NetworkMessage<usize, String, i32>,
+            NetworkMessage<u64, String, i32>,
         > = OperatorTester::built_by(
             move |ctx| {
                 let mut dist = Distributor::new(index_select, ctx);
@@ -737,13 +686,13 @@ mod test {
     #[test]
     fn no_barrier_overtaking_local_barrier() {
         let mut tester: OperatorTester<
-            usize,
+            u64,
             String,
             i32,
-            usize,
+            u64,
             String,
             i32,
-            NetworkMessage<usize, String, i32>,
+            NetworkMessage<u64, String, i32>,
         > = OperatorTester::built_by(
             move |ctx| {
                 let mut dist = Distributor::new(index_select, ctx);

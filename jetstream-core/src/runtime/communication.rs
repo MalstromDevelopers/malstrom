@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{error::Error, marker::PhantomData};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -10,14 +10,14 @@ impl<T> Distributable for T where T: Serialize + DeserializeOwned {}
 
 /// A backend facilitating inter-worker communication in jetstream
 pub trait CommunicationBackend {
-    /// Establish a new two-way communciation transport between operators
+    /// Establish a new two-way communciation transport between the same operators
+    /// on two workers
     /// Implementors can expect this method to be called at most once per
     /// unique combination of arguments
     fn new_connection(
         &mut self,
         to_worker: WorkerId,
-        to_operator: OperatorId,
-        from_operator: OperatorId,
+        operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError>;
 }
 
@@ -45,7 +45,7 @@ pub trait Transport {
     }
 }
 
-pub const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
+pub(crate) const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// A Client for point to point communication between operators
 /// on different workers and possibly different machines
@@ -59,11 +59,10 @@ where
 {
     pub fn new(
         to_worker: WorkerId,
-        to_operator: OperatorId,
-        from: OperatorId,
+        operator: OperatorId,
         backend: &mut dyn CommunicationBackend,
     ) -> Result<Self, CommunicationBackendError> {
-        let transport = backend.new_connection(to_worker, to_operator, from)?;
+        let transport = backend.new_connection(to_worker, operator)?;
         Ok(Self {
             transport,
             message_type: PhantomData,
@@ -147,7 +146,7 @@ pub enum TransportError {
     /// Error returned if the communication transport failed to receive a message
     /// for example due to a decoding error
     #[error("Error sending message: {0}")]
-    SendError(Box<dyn std::error::Error>),
+    SendError(#[from] Box<dyn std::error::Error>),
 
     /// Error returned if the communication transport failed to receive a message
     /// for example due to a decoding error
@@ -155,4 +154,19 @@ pub enum TransportError {
     /// **NOTE:** No new message being available should **NOT** return an error.
     #[error("Error receiving message: {0}")]
     RecvError(Box<dyn std::error::Error>),
+}
+
+impl TransportError {
+    pub fn send_error<E>(err: E) -> Self
+    where
+        E: Error + 'static,
+    {
+        Self::SendError(Box::new(err))
+    }
+    pub fn recv_error<E>(err: E) -> Self
+    where
+        E: Error + 'static,
+    {
+        Self::RecvError(Box::new(err))
+    }
 }

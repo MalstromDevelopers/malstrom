@@ -13,6 +13,8 @@ use super::{BuildContext, OperatorContext, RunnableOperator};
 pub trait AppendableOperator<K, V, T> {
     fn get_output_mut(&mut self) -> &mut Sender<K, V, T>;
 
+    fn get_output(&self) -> &Sender<K, V, T>;
+
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
 
     /// Add a label to this operator which will show up in traces

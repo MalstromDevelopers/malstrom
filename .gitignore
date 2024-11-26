@@ -15,3 +15,5 @@ Cargo.lock
 **/.DS_Store
 **/proptest-regressions/**/*
 dirty-tests/**/*
+website/node_modules/
+website/.vitepress/cache/

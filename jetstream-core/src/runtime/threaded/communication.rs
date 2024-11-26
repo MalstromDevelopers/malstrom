@@ -17,23 +17,16 @@ use thiserror::Error;
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct ConnectionKey {
     worker_low: WorkerId,
-    operator_low: OperatorId,
     worker_high: WorkerId,
-    operator_high: OperatorId,
+    operator: OperatorId,
 }
 impl ConnectionKey {
     /// generates the same key no matter in which direction the connection is supplied
-    fn new(
-        worker_a: WorkerId,
-        operator_a: OperatorId,
-        worker_b: WorkerId,
-        operator_b: OperatorId,
-    ) -> Self {
+    fn new(worker_a: WorkerId, worker_b: WorkerId, operator: OperatorId) -> Self {
         Self {
             worker_low: worker_a.min(worker_b),
-            operator_low: operator_a.min(operator_b),
             worker_high: worker_a.max(worker_b),
-            operator_high: operator_a.max(operator_b),
+            operator,
         }
     }
 }
@@ -69,11 +62,10 @@ impl CommunicationBackend for InterThreadCommunication {
     fn new_connection(
         &mut self,
         to_worker: WorkerId,
-        to_operator: OperatorId,
-        from_operator: OperatorId,
+        operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
         let mut shared = self.shared.lock().unwrap();
-        let key = ConnectionKey::new(to_worker, to_operator, self.this_worker, from_operator);
+        let key = ConnectionKey::new(to_worker, self.this_worker, operator);
 
         if self.burnt_keys.contains(&key) {
             return Err(CommunicationBackendError::ClientBuildError(Box::new(
@@ -154,8 +146,8 @@ mod test {
         let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
         let mut worker1 = InterThreadCommunication::new(shared.clone(), 1);
 
-        let operator_0_42 = worker0.new_connection(1, 1337, 42).unwrap();
-        let operator_1_1337 = worker1.new_connection(0, 42, 1337).unwrap();
+        let operator_0_42 = worker0.new_connection(1, 1337).unwrap();
+        let operator_1_1337 = worker1.new_connection(0, 1337).unwrap();
 
         let val = vec![1, 8, 8, 7];
         operator_0_42.send(val.clone()).unwrap();
@@ -173,14 +165,12 @@ mod test {
         let shared = Shared::default();
         let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
 
-        worker0.new_connection(1, 1, 0).unwrap();
-        // this should work: it is for the same listener, but the to_operator arg is different
-        worker0.new_connection(1, 0, 0).unwrap();
-        // this should also work
-        worker0.new_connection(0, 1, 0).unwrap();
+        worker0.new_connection(1, 0).unwrap();
+        // this should work
+        worker0.new_connection(0, 0).unwrap();
 
         // but this should err since we already made the connection
-        let err = worker0.new_connection(1, 1, 0);
+        let err = worker0.new_connection(1, 0);
         match err {
             Err(CommunicationBackendError::ClientBuildError(e)) => {
                 let concrete = *e.downcast::<InterThreadCommunicationError>().unwrap();
@@ -200,8 +190,8 @@ mod test {
         let shared = Shared::default();
         let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
         let mut worker1 = InterThreadCommunication::new(shared.clone(), 1);
-        let operator_0_42 = worker0.new_connection(1, 42, 42).unwrap();
-        let operator_1_42 = worker1.new_connection(0, 42, 42).unwrap();
+        let operator_0_42 = worker0.new_connection(1, 42).unwrap();
+        let operator_1_42 = worker1.new_connection(0, 42).unwrap();
 
         // now drop one of them
         drop(operator_0_42);

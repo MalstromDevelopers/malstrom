@@ -1,6 +1,6 @@
 use crate::{
     runtime::{builder::BuildError, RuntimeFlavor, WorkerBuilder},
-    snapshot::PersistenceBackend,
+    snapshot::{PersistenceBackend, PersistenceClient},
 };
 
 use super::{communication::InterThreadCommunication, Shared};
@@ -13,7 +13,7 @@ pub struct SingleThreadRuntime<P> {
 
 impl<P> SingleThreadRuntime<P>
 where
-    P: PersistenceBackend,
+    P: PersistenceClient,
 {
     /// Create a new runtime for running on a single thread
     pub fn new(
@@ -44,11 +44,11 @@ impl RuntimeFlavor for SingleThreadRuntimeFlavor {
         Ok(InterThreadCommunication::new(Shared::default(), 0))
     }
 
-    fn runtime_size(&self) -> usize {
+    fn runtime_size(&self) -> u64 {
         1
     }
 
-    fn this_worker_id(&self) -> usize {
+    fn this_worker_id(&self) -> u64 {
         0
     }
 }

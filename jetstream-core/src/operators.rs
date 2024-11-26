@@ -20,11 +20,11 @@ pub use flatten::Flatten;
 pub use inspect::Inspect;
 pub use map::Map;
 pub use sink::{IntoSink, IntoSinkFull, Sink, SinkFull};
-pub use source::{StreamSource, Source};
+pub use source::{Source, StreamSource};
 pub use stateful_map::StatefulMap;
+pub use stateful_op::{StatefulLogic, StatefulOp};
 pub use time::*;
 pub use window::*;
-pub use stateful_op::{StatefulLogic, StatefulOp};
 
 // These are only to be used internally in jetstream
 pub(crate) mod stateless_op;

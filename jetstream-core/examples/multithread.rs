@@ -5,7 +5,7 @@
 use jetstream::keyed::partitioners::index_select;
 use jetstream::operators::*;
 use jetstream::runtime::threaded::MultiThreadRuntime;
-use jetstream::runtime::{RuntimeFlavor, WorkerBuilder};
+use jetstream::runtime::{no_snapshots, RuntimeFlavor, WorkerBuilder};
 use jetstream::snapshot::NoPersistence;
 use jetstream::sources::SingleIteratorSource;
 
@@ -24,7 +24,7 @@ fn main() {
 /// [jetstream::runtime::kubernetes::KubernetesRuntime](KubernetesRuntime) in
 /// production.
 fn build_dataflow<R: RuntimeFlavor>(flavor: R) -> WorkerBuilder<R, NoPersistence> {
-    let mut worker = WorkerBuilder::new(flavor);
+    let mut worker = WorkerBuilder::new(flavor, no_snapshots, NoPersistence::default());
 
     let stream = worker.new_stream();
 

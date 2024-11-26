@@ -6,12 +6,13 @@
 //! NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 //! big queues with this channel.
 use std::{
-    collections::VecDeque,
+    cell::{Ref, RefCell},
+    collections::{LinkedList, VecDeque},
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use super::mpsc;
+use super::spsc;
 use indexmap::IndexMap;
 
 use crate::{
@@ -36,27 +37,30 @@ enum MessageWrapper<K, V, T> {
 }
 
 // /// A simple partitioner, which will broadcast a value to all receivers
-pub fn full_broadcast<T>(_: &T, scale: usize) -> Vec<OperatorId> {
+pub fn full_broadcast<T>(_: &T, scale: u64) -> Vec<OperatorId> {
     (0..scale).collect()
 }
 
 /// Link a Sender and receiver together
 pub fn link<K, V, T>(sender: &mut Sender<K, V, T>, receiver: &mut Receiver<K, V, T>) {
-    let tx = receiver.get_sender();
-    let _ = tx.send(MessageWrapper::Register(sender.id));
-    sender.senders.push(tx)
+    let (tx, rx) = spsc::unbounded();
+    sender.senders.push(tx);
+    receiver.receivers.push(UpstreamState::new(rx));
 }
+
+// TODO DAMION: Fundamentally you need SPSC channels, which each
+// Sender containing multiple channel senders and each Receiver
+// containing multiple channel receivers, thus giving the illusion
+// of mpmc while still allowing the receivers to select where they
+// read from
 
 /// Selective Broadcast Sender
 pub struct Sender<K, V, T> {
-    // TOOD: We only have the partitioner in the Box to allow cloning
-    // Which is only really needed in the snapshot conroller
-    // Check if we can solve that another way
-    senders: Vec<mpsc::Sender<MessageWrapper<K, V, T>>>,
+    // Each sender in this Vec is essentially one outgoing
+    // edge from the operator
+    senders: Vec<spsc::Sender<Message<K, V, T>>>,
     #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
-    /// uniqe id of this sender
-    id: usize,
     frontier: Option<T>,
 }
 
@@ -72,18 +76,18 @@ where
         Self {
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
-            id: get_id(),
             frontier: None,
         }
     }
 
     /// Send a value into this channel.
-    /// Data messages are distributed as per the partioning function
-    /// System messages are always broadcasted
+    /// Data messages are distributed as per the partioning function.
+    ///
+    /// System messages are always broadcasted.
     pub fn send(&mut self, msg: Message<K, V, T>) {
         if let Message::Epoch(e) = &msg {
             if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
-                let _ = self.frontier.replace(e.clone());
+                self.frontier = Some(e.clone());
             }
         }
 
@@ -91,27 +95,34 @@ where
             return;
         }
         let recipient_len = self.senders.len();
+        let recipient_len_u64: u64 = recipient_len
+            .try_into()
+            .expect("Too many message recipients");
         match msg {
             Message::Data(x) => {
-                let indices = (self.partitioner)(&x, recipient_len);
+                let indices = (self.partitioner)(&x, recipient_len_u64);
                 let l = indices.len();
                 for (i, msg) in indices
                     .into_iter()
                     .zip(itertools::repeat_n(Message::Data(x), l))
                 {
-                    let s = self.senders.get(i).expect("Partitioner index out of range");
-                    let _ = s.send(MessageWrapper::Message(self.id, msg));
+                    let idx: usize = i.try_into().expect("Too many recipients");
+                    let s = self
+                        .senders
+                        .get(idx)
+                        .expect("Partitioner index out of range");
+                    s.send(msg);
                 }
             }
-            _ => {
+            x => {
                 // repeat_n will clone for every iteration except the last
                 // this gives us a small optimization on the common "1 receiver" case :)
-                for (sender, elem) in self
+                let messages = self
                     .senders
                     .iter_mut()
-                    .zip(itertools::repeat_n(msg, recipient_len))
-                {
-                    let _ = sender.send(MessageWrapper::Message(self.id, elem));
+                    .zip(itertools::repeat_n(x, recipient_len));
+                for (sender, elem) in messages {
+                    sender.send(elem);
                 }
             }
         };
@@ -123,85 +134,46 @@ where
     pub fn get_frontier(&self) -> &Option<T> {
         &self.frontier
     }
-}
 
-impl<K, V, T> Clone for Sender<K, V, T>
-where
-    T: Clone,
-{
-    fn clone(&self) -> Self {
-        let id = get_id();
-        for s in &self.senders {
-            let _ = s.send(MessageWrapper::Register(id));
-        }
-        Self {
-            senders: self.senders.clone(),
-            partitioner: self.partitioner.clone(),
-            id,
-            frontier: self.frontier.clone(),
-        }
+    pub(crate) fn receiver_count(&self) -> usize {
+        self.senders.len()
     }
 }
 
-impl<K, V, T> Drop for Sender<K, V, T> {
-    fn drop(&mut self) {
-        for s in self.senders.iter() {
-            let _ = s.send(MessageWrapper::Deregister(self.id));
-        }
-    }
-}
-
-struct UpstreamState<T> {
-    barrier: Option<Barrier>,
+struct UpstreamState<K, V, T> {
     epoch: Option<T>,
-    shutdown_marker: Option<SuspendMarker>,
+    receiver: spsc::Receiver<Message<K, V, T>>,
 }
-impl<T> UpstreamState<T> {
-    /// Upstreams need alignment if the they hav a barrier or shutdownmarker pending
-    fn needs_alignement(&self) -> bool {
-        self.barrier.is_some() || self.shutdown_marker.is_some()
-    }
-}
-impl<T> Default for UpstreamState<T> {
-    fn default() -> Self {
+impl<K, V, T> UpstreamState<K, V, T> {
+    fn new(receiver: spsc::Receiver<Message<K, V, T>>) -> Self {
         Self {
-            barrier: None,
             epoch: None,
-            shutdown_marker: None,
+            receiver,
         }
     }
 }
+
 /// Selective Broadcast Receiver
 pub struct Receiver<K, V, T> {
-    /// this sender can be cloned to send messages to this receiver
-    sender: mpsc::Sender<MessageWrapper<K, V, T>>,
-    receiver: mpsc::Receiver<MessageWrapper<K, V, T>>,
-    states: IndexMap<usize, UpstreamState<T>>,
-    // messages we are buffering, because we need alignement
-    // from upstream to issue them
-    buffered: VecDeque<Message<K, V, T>>,
+    /// Each receiver in this Vec is an inbound edge to the
+    /// operator
+    receivers: Vec<UpstreamState<K, V, T>>,
     // largest observed Epoch
     frontier: Option<T>,
 }
 
 impl<K, V, T> Receiver<K, V, T> {
     pub fn new_unlinked() -> Self {
-        let (sender, receiver) = mpsc::unbounded();
         Self {
-            sender,
-            receiver,
-            states: IndexMap::new(),
-            buffered: VecDeque::new(),
+            receivers: Vec::new(),
             frontier: None,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.receiver.is_empty()
-    }
-
-    fn get_sender(&self) -> mpsc::Sender<MessageWrapper<K, V, T>> {
-        self.sender.clone()
+    pub fn can_progress(&self) -> bool {
+        self.receivers
+            .iter()
+            .any(|x| x.receiver.can_recv_unaligned())
     }
 
     #[inline]
@@ -225,6 +197,17 @@ fn merge_timestamps<'a, T: MaybeTime>(
     merged
 }
 
+pub(crate) fn merge_receiver_groups<K, V, T: MaybeTime>(
+    groups: Vec<Receiver<K, V, T>>,
+) -> Receiver<K, V, T> {
+    let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
+    let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
+    Receiver {
+        receivers,
+        frontier,
+    }
+}
+
 impl<K, V, T> Receiver<K, V, T>
 where
     T: MaybeTime,
@@ -235,81 +218,90 @@ where
     /// not receive any messages from that channel until all channels are barred.
     /// Once all channels are barred, a single barrier will be emitted
     pub fn recv(&mut self) -> Option<Message<K, V, T>> {
-        // there are messages in the buffer, but no state needs alignemnet
-        // i.e. any alignement was resolved on the previous call
-        if !self.buffered.is_empty() && self.states.values().all(|x| !x.needs_alignement()) {
-            return self.buffered.pop_front();
-        }
+        // TODO: This is left biased
+        let next = self
+            .receivers
+            .iter()
+            .enumerate()
+            .find_map(|(i, x)| x.receiver.recv_unaligned().map(|msg| (msg, i)));
+        match next {
+            Some((msg, sender_idx)) => match msg {
+                Message::Epoch(e) => {
+                    // PANIC: We can unwrap because we got the idx from the iterator above
+                    self.receivers.get_mut(sender_idx).unwrap().epoch = Some(e);
+                    let merged = merge_timestamps(self.receivers.iter().map(|x| &x.epoch));
+                    if let Some(m) = merged.as_ref() {
+                        if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
+                            self.frontier = Some(m.clone());
+                        }
+                    }
+                    merged.map(|x| Message::Epoch(x.clone()))
+                }
+                x => Some(x),
+            },
+            None => {
+                // there are multiple possibilities on why we did not get a next msg
+                // 1. all messages are barriers, suspend markers or none
+                // 2. self.receivers is empty
+                // 3. all channels have barrier upcoming
+                // 4. all channels have a suspend upcoming
 
-        while let Some(msg_wrapper) = self.receiver.recv() {
-            let out = match msg_wrapper {
-                MessageWrapper::Message(i, msg) => self.handle_received(i, msg),
-                MessageWrapper::Register(i) => {
-                    self.states.insert(i, UpstreamState::default());
-                    None
+                // 1 is most common so we check it first
+                if self.receivers.iter().any(|x| x.receiver.is_empty()) {
+                    return None;
                 }
-                MessageWrapper::Deregister(i) => {
-                    self.states.swap_remove(&i);
-                    None
+                // 2
+                if self.receivers.len() == 0 {
+                    return None;
                 }
-            };
-            if out.is_some() {
-                return out;
+                // 3. all channels have barrier upcoming
+                if self.receivers.iter().all(|x| {
+                    x.receiver
+                        .peek_apply(|y| matches!(y, Message::AbsBarrier(_)))
+                        .unwrap_or(false)
+                }) {
+                    // take .last() to clear the barriers from all receivers
+                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
+                }
+                // 4. all channels have a suspend upcoming
+                if self.receivers.iter().all(|x| {
+                    x.receiver
+                        .peek_apply(|y| matches!(y, Message::SuspendMarker(_)))
+                        .unwrap_or(false)
+                }) {
+                    // take .last() to clear the marker from all receivers
+                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
+                }
+                // This could only be reached if there where mixed messages requiring alignement
+                // like some receivers had a barrier and others a suspend marker which should
+                // never happen
+                unreachable!()
             }
         }
-        None
+    }
+}
+
+trait RecvUnaligned<K, V, T> {
+    /// Peek only those message types which do not
+    /// require alignement, i.e. no barriers and suspend markers
+    fn can_recv_unaligned(&self) -> bool;
+    /// Receive only those message types which do not
+    /// require alignement, i.e. no barriers and suspend markers
+    fn recv_unaligned(&self) -> Option<Message<K, V, T>>;
+}
+
+impl<K, V, T> RecvUnaligned<K, V, T> for spsc::Receiver<Message<K, V, T>> {
+    fn recv_unaligned(&self) -> Option<Message<K, V, T>> {
+        self.can_recv_unaligned().then(|| self.recv()).flatten()
     }
 
-    fn handle_received(
-        &mut self,
-        sender: usize,
-        msg: Message<K, V, T>,
-    ) -> Option<Message<K, V, T>> {
-        // PANIC: Caller guarantees valid index
-        let state = self.states.get_mut(&sender).unwrap();
-        if state.needs_alignement() {
-            self.buffered.push_back(msg);
-            return None;
-        }
-        match msg {
-            Message::Epoch(e) => {
-                state.epoch = Some(e);
-                let merged = merge_timestamps(self.states.values().map(|x| &x.epoch));
-                if let Some(m) = merged.as_ref() {
-                    if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
-                        self.frontier = Some(m.clone());
-                    }
-                }
-                merged.map(|x| Message::Epoch(x.clone()))
-            }
-            Message::AbsBarrier(b) => {
-                state.barrier = Some(b);
-                if self.states.values().all(|x| x.barrier.is_some()) {
-                    self.states
-                        .values_mut()
-                        .map(|x| x.barrier.take())
-                        .last()
-                        .flatten()
-                        .map(|x| Message::AbsBarrier(x))
-                } else {
-                    None
-                }
-            }
-            Message::SuspendMarker(s) => {
-                state.shutdown_marker = Some(s);
-                if self.states.values().all(|x| x.shutdown_marker.is_some()) {
-                    self.states
-                        .values_mut()
-                        .map(|x| x.shutdown_marker.take())
-                        .last()
-                        .flatten()
-                        .map(|x| Message::SuspendMarker(x))
-                } else {
-                    None
-                }
-            }
-            x => Some(x),
-        }
+    fn can_recv_unaligned(&self) -> bool {
+        self.peek_apply(|next| match next {
+            Message::AbsBarrier(_) => false,
+            Message::SuspendMarker(_) => false,
+            _ => true,
+        })
+        .unwrap_or(false)
     }
 }
 
@@ -322,49 +314,50 @@ mod test {
 
     use super::*;
 
-    /// Check we can clone a sender
-    #[test]
-    fn clone_sender() {
-        let mut sender = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
-        link(&mut sender, &mut receiver);
+    // /// Check we can clone a sender
+    // #[test]
+    // fn clone_sender() {
+    //     let mut sender = Sender::new_unlinked(full_broadcast);
+    //     let mut receiver = Receiver::new_unlinked();
+    //     link(&mut sender, &mut receiver);
 
-        let mut cloned = sender.clone();
-        let msg = Message::Data(DataMessage {
-            key: NoKey,
-            value: "Hello",
-            timestamp: NoTime,
-        });
-        cloned.send(msg.clone());
+    //     let mut cloned = sender.clone();
+    //     let msg = Message::Data(DataMessage {
+    //         key: NoKey,
+    //         value: "Hello",
+    //         timestamp: NoTime,
+    //     });
+    //     cloned.send(msg.clone());
 
-        assert!(matches!(
-            receiver.recv(),
-            Some(Message::Data(DataMessage {
-                key: NoKey,
-                value: "Hello",
-                timestamp: NoTime
-            }))
-        ));
+    //     assert!(matches!(
+    //         receiver.recv(),
+    //         Some(Message::Data(DataMessage {
+    //             key: NoKey,
+    //             value: "Hello",
+    //             timestamp: NoTime
+    //         }))
+    //     ));
 
-        sender.send(msg);
-        assert!(matches!(
-            receiver.recv(),
-            Some(Message::Data(DataMessage {
-                key: NoKey,
-                value: "Hello",
-                timestamp: NoTime
-            }))
-        ));
-        assert_eq!(receiver.states.len(), 2);
-    }
+    //     sender.send(msg);
+    //     assert!(matches!(
+    //         receiver.recv(),
+    //         Some(Message::Data(DataMessage {
+    //             key: NoKey,
+    //             value: "Hello",
+    //             timestamp: NoTime
+    //         }))
+    //     ));
+    //     assert_eq!(receiver.states.len(), 2);
+    // }
 
     /// Check we only emit an epoch when it changes
     #[test]
     fn emit_epoch_on_change() {
         let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
         let mut receiver = Receiver::new_unlinked();
         link(&mut sender, &mut receiver);
-        let mut sender2 = sender.clone();
+        link(&mut sender2, &mut receiver);
 
         sender.send(Message::Epoch(42));
 
@@ -377,9 +370,10 @@ mod test {
     #[test]
     fn aligns_barriers() {
         let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
         let mut receiver = Receiver::new_unlinked();
         link(&mut sender, &mut receiver);
-        let mut sender2 = sender.clone();
+        link(&mut sender2, &mut receiver);
 
         sender.send(Message::AbsBarrier(Barrier::new(
             Box::<NoPersistence>::default(),
@@ -398,9 +392,10 @@ mod test {
     #[test]
     fn buffer_on_barriers() {
         let mut sender: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
+        let mut sender2: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
         let mut receiver = Receiver::new_unlinked();
         link(&mut sender, &mut receiver);
-        let mut sender2 = sender.clone();
+        link(&mut sender2, &mut receiver);
 
         sender.send(Message::AbsBarrier(Barrier::new(
             Box::<NoPersistence>::default(),
@@ -413,14 +408,19 @@ mod test {
             Box::<NoPersistence>::default(),
         )));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
-        assert!(matches!(
-            receiver.recv(),
-            Some(Message::Data(DataMessage {
-                key: _,
-                value: 42,
-                timestamp: _
-            }))
-        ));
+
+        let msg = receiver.recv();
+        assert!(
+            matches!(
+                msg,
+                Some(Message::Data(DataMessage {
+                    key: _,
+                    value: 42,
+                    timestamp: _
+                }))
+            ),
+            "{msg:?}"
+        );
         assert!(matches!(
             receiver.recv(),
             Some(Message::Data(DataMessage {
@@ -435,9 +435,10 @@ mod test {
     #[test]
     fn aligns_shutdowns() {
         let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
+        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
         let mut receiver = Receiver::new_unlinked();
         link(&mut sender, &mut receiver);
-        let mut sender2 = sender.clone();
+        link(&mut sender2, &mut receiver);
 
         sender.send(Message::SuspendMarker(SuspendMarker::default()));
 
@@ -449,34 +450,34 @@ mod test {
     }
 
     /// Dropping a sender should remove its state from the receiver
-    #[test]
-    fn drop_sender() {
-        let mut sender: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
-        link(&mut sender, &mut receiver);
-        sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
-        sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
-        drop(sender);
+    // #[test]
+    // fn drop_sender() {
+    //     let mut sender: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
+    //     let mut receiver = Receiver::new_unlinked();
+    //     link(&mut sender, &mut receiver);
+    //     sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
+    //     sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
+    //     drop(sender);
 
-        assert!(matches!(
-            receiver.recv(),
-            Some(Message::Data(DataMessage {
-                key: _,
-                value: 42,
-                timestamp: _
-            }))
-        ));
-        assert!(matches!(
-            receiver.recv(),
-            Some(Message::Data(DataMessage {
-                key: _,
-                value: 177,
-                timestamp: _
-            }))
-        ));
-        receiver.recv();
-        assert!(matches!(receiver.states.len(), 0));
-    }
+    //     assert!(matches!(
+    //         receiver.recv(),
+    //         Some(Message::Data(DataMessage {
+    //             key: _,
+    //             value: 42,
+    //             timestamp: _
+    //         }))
+    //     ));
+    //     assert!(matches!(
+    //         receiver.recv(),
+    //         Some(Message::Data(DataMessage {
+    //             key: _,
+    //             value: 177,
+    //             timestamp: _
+    //         }))
+    //     ));
+    //     receiver.recv();
+    //     assert!(matches!(receiver.receivers.len(), 0));
+    // }
 
     /// Check the accessor for the largest sent epoch (frontier)
     #[test]
@@ -543,4 +544,19 @@ mod test {
         // if the sender had kept or sent the message somewhere this should panic
         Rc::try_unwrap(elem).unwrap();
     }
+
+    //Test linking a cloned sender works
+    // #[test]
+    // fn link_cloned_sender() {
+    //     let mut sender = Sender::new_unlinked(full_broadcast);
+    //     let mut sender2 = sender.clone();
+    //     let mut receiver = Receiver::new_unlinked();
+    //     link(&mut sender2, &mut receiver);
+    //     let msg = Message::Data(DataMessage::new("Beeble", 123, 42));
+
+    //     // should have linked both the original and cloned sender
+    //     sender.send(msg);
+    //     let result = receiver.recv();
+    //     assert!(result.is_some())
+    // }
 }

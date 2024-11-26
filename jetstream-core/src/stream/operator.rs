@@ -9,8 +9,8 @@ mod standard;
 mod traits;
 
 pub use builder::{Logic, OperatorBuilder};
-pub use logic::LogicWrapper;
 pub use context::{BuildContext, OperatorContext};
+pub use logic::LogicWrapper;
 pub use runnable::RunnableOperator;
 pub use traits::{AppendableOperator, BuildableOperator};
 
@@ -28,6 +28,8 @@ pub(crate) fn pass_through_operator<K: MaybeKey, V: Data, T: MaybeTime>(
 
 #[cfg(test)]
 mod test {
+    use std::rc::Rc;
+
     use super::{pass_through_operator, AppendableOperator, OperatorBuilder};
     use crate::{
         channels::selective_broadcast::{full_broadcast, link, Sender},
@@ -51,9 +53,9 @@ mod test {
             0,
             0,
             "".to_owned(),
-            Box::<NoPersistence>::default(),
+            Rc::<NoPersistence>::default(),
             &mut comm,
-            0..1,
+            vec![0],
         );
         let mut op = Box::new(buildable).into_runnable(&mut ctx);
 

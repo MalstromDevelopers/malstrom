@@ -15,8 +15,7 @@ impl CommunicationBackend for NoCommunication {
     fn new_connection(
         &mut self,
         _to_worker: WorkerId,
-        _to_operator: OperatorId,
-        _from_operator: OperatorId,
+        _operator: OperatorId,
     ) -> Result<
         Box<dyn crate::runtime::communication::Transport>,
         crate::runtime::communication::CommunicationBackendError,

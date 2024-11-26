@@ -12,13 +12,22 @@ pub trait RuntimeFlavor {
     /// at the time this method is called.
     /// The number returned should **include** the worker from which this
     /// method was called
-    fn runtime_size(&self) -> usize;
+    fn runtime_size(&self) -> u64;
 
     /// Return the ID of the worker where this method was called
-    fn this_worker_id(&self) -> usize;
+    fn this_worker_id(&self) -> u64;
 }
 
 /// Error to be returned if a communication could not be established
 #[derive(thiserror::Error, Debug)]
 #[error(transparent)]
 pub struct CommunicationError(#[from] Box<dyn std::error::Error>);
+
+impl CommunicationError {
+    pub fn from_error<E>(err: E) -> Self
+    where
+        E: std::error::Error + 'static,
+    {
+        Self(Box::new(err))
+    }
+}

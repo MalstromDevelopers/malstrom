@@ -36,20 +36,17 @@ where
     let mut this_frontier: Option<T> = None;
     let mut other_frontiers: IndexMap<WorkerId, Option<T>> = build_ctx
         .get_worker_ids()
-        .filter(|wid| *wid != build_ctx.worker_id)
-        .map(|wid| (wid, None))
+        .iter()
+        .filter(|wid| **wid != build_ctx.worker_id)
+        .map(|wid| (*wid, None))
         .collect();
 
     let this_id = build_ctx.worker_id;
-    let clients: IndexMap<WorkerId, CommunicationClient<T>> = build_ctx
-        .get_worker_ids()
+    let worker_ids: Vec<WorkerId> = build_ctx.get_worker_ids().iter().map(|x| *x).collect();
+    let clients: IndexMap<WorkerId, CommunicationClient<T>> = worker_ids
+        .into_iter()
         .filter(|wid| *wid != this_id)
-        .map(|wid| {
-            (
-                wid,
-                build_ctx.create_communication_client(wid, build_ctx.operator_id),
-            )
-        })
+        .map(|wid| (wid, build_ctx.create_communication_client(wid)))
         .collect();
 
     move |input, output, _| {

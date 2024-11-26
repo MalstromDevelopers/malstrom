@@ -44,7 +44,7 @@ where
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
         worker_id: WorkerId,
         operator_id: OperatorId,
-        worker_ids: Range<usize>,
+        worker_ids: Range<u64>,
     ) -> Self {
         assert!(worker_ids.contains(&worker_id));
         let mut input_handle = Sender::new_unlinked(full_broadcast);
@@ -60,9 +60,9 @@ where
             worker_id,
             operator_id,
             "test".to_owned(),
-            Box::new(NoPersistence::default()),
+            Rc::new(NoPersistence::default()),
             &mut comm_shim,
-            worker_ids,
+            worker_ids.collect(),
         );
         let logic = Box::new(logic_builder(&mut build_ctx));
 
@@ -170,15 +170,14 @@ where
     fn new_connection(
         &mut self,
         to_worker: WorkerId,
-        to_operator: OperatorId,
-        _from_operator: OperatorId,
+        operator: OperatorId,
     ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
         let transport = FakeCommunicationTransport {
             sent_by_operator: Rc::clone(&self.sent_by_operator),
             sent_to_operator: Rc::clone(&self.sent_to_operator),
             impersonate: ImpersonatedSender {
                 worker_id: to_worker,
-                operator_id: to_operator,
+                operator_id: operator,
             },
         };
         Ok(Box::new(transport))
@@ -237,7 +236,7 @@ mod tests {
     fn test_fake_comm_send_to_operator() {
         let mut fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
-        let client = fake_comm.new_connection(1, 0, 0).unwrap();
+        let client = fake_comm.new_connection(1, 0).unwrap();
 
         // impersonate worker 1 and operator 0
         fake_comm.send_to_operator(42, 1, 0);
@@ -252,7 +251,7 @@ mod tests {
     fn test_fake_comm_receive() {
         let mut fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
-        let client = fake_comm.new_connection(1, 0, 0).unwrap();
+        let client = fake_comm.new_connection(1, 0).unwrap();
         client.send(CommunicationClient::encode(42)).unwrap();
 
         let msg = fake_comm.recv_from_operator().unwrap();

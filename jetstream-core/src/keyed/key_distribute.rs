@@ -39,9 +39,7 @@ where
         // TODO: The communication between upstream and downstream exchanger effectively
         // creates a loop in th dataflow graph. This is not good, because potentially the
         // cluster could deadlock in (most likely rare) edge cases
-        let keyed = self
-            .key_local(key_func)
-            .label("jetstream::key_distribute::key_local");
+        let keyed = self.key_local(key_func);
         keyed.then(OperatorBuilder::built_by(move |ctx| {
             let mut dist = Distributor::new(partitioner, ctx);
             move |input, output, op_ctx| dist.run(input, output, op_ctx)

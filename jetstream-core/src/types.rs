@@ -12,4 +12,4 @@ pub use operator_partitioner::{OperatorId, OperatorPartitioner};
 pub use time::{MaybeTime, NoTime, Timestamp};
 
 /// Uniquely identifies a worker in a JetStream cluster
-pub type WorkerId = usize;
+pub type WorkerId = u64;
