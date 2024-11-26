@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use jetstream::keyed::partitioners::{index_select, rendezvous_select};
+use jetstream::keyed::partitioners::rendezvous_select;
 use jetstream::operators::*;
-use jetstream::runtime::threaded::{MultiThreadRuntime, SingleThreadRuntime};
+use jetstream::runtime::threaded::SingleThreadRuntime;
 use jetstream::runtime::{RuntimeFlavor, WorkerBuilder, SnapshotTrigger};
 use jetstream::snapshot::{SlateDbBackend, SlateDbClient};
 use jetstream::sources::SingleIteratorSource;

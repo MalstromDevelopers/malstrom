@@ -2,7 +2,7 @@
 //! Inspiration taken from https://docs.rs/local-channel
 
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     collections::LinkedList,
     rc::Rc,
 };

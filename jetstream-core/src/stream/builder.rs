@@ -4,7 +4,7 @@ use std::{iter, rc::Rc, sync::Mutex};
 
 use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
-    channels::selective_broadcast::{self, link, Receiver, Sender},
+    channels::selective_broadcast::{link, Receiver},
     runtime::{split_n, union, InnerRuntimeBuilder},
     types::{Data, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner},
 };

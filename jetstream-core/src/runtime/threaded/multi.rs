@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     runtime::{RuntimeFlavor, WorkerBuilder},
-    snapshot::{PersistenceBackend, PersistenceClient},
+    snapshot::PersistenceClient,
     types::WorkerId,
 };
 

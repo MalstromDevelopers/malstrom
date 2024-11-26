@@ -1,6 +1,6 @@
 use crate::{
     runtime::{builder::BuildError, RuntimeFlavor, WorkerBuilder},
-    snapshot::{PersistenceBackend, PersistenceClient},
+    snapshot::PersistenceClient,
 };
 
 use super::{communication::InterThreadCommunication, Shared};

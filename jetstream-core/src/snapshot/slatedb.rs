@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn last_committed_client() {
         let store = InMemory::new();
-        let mut backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
+        let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         backend.commit_version(&42);
         let client = backend.last_commited(0);
         assert_eq!(client.version, 42);
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn last_committed_not_highest_client() {
         let store = InMemory::new();
-        let mut backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
+        let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         backend.commit_version(&42);
         backend.commit_version(&3);
         let client = backend.last_commited(0);
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn for_specific_version() {
         let store = InMemory::new();
-        let mut backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
+        let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         let client = backend.for_version(0, &7);
         assert_eq!(client.version, 7);
     }
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn store_and_retrieve() {
         let store = InMemory::new();
-        let mut backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
+        let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         let mut client = backend.last_commited(0);
         let state = b"HelloWorld";
         client.persist(state, &1337);

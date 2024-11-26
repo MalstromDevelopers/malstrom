@@ -6,19 +6,13 @@
 //! NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 //! big queues with this channel.
 use std::{
-    cell::{Ref, RefCell},
-    collections::{LinkedList, VecDeque},
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 use super::spsc;
-use indexmap::IndexMap;
 
-use crate::{
-    snapshot::Barrier,
-    types::{MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker},
-};
+use crate::types::{MaybeTime, Message, OperatorId, OperatorPartitioner};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// This is a somewhat hacky we to get a unique id for each sender, which we
@@ -308,8 +302,8 @@ impl<K, V, T> RecvUnaligned<K, V, T> for spsc::Receiver<Message<K, V, T>> {
 #[cfg(test)]
 mod test {
     use crate::{
-        snapshot::NoPersistence,
-        types::{DataMessage, NoData, NoKey, NoTime},
+        snapshot::{Barrier, NoPersistence},
+        types::{DataMessage, NoData, NoKey, NoTime, SuspendMarker},
     };
 
     use super::*;

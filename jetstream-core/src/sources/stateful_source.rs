@@ -4,8 +4,6 @@
 use std::{hash::Hash, marker::PhantomData};
 
 use indexmap::IndexMap;
-use opentelemetry_sdk::metrics::data;
-use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::selective_broadcast::Sender,
@@ -14,12 +12,12 @@ use crate::{
         partitioners::rendezvous_select,
         KeyDistribute,
     },
-    operators::{Map, Source, StatefulLogic, StreamSource},
+    operators::{Map, Source, StreamSource},
     runtime::communication::Distributable,
     snapshot::Barrier,
     stream::{JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, Key, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime,
+        Data, DataMessage, NoData, NoKey, NoTime,
         RescaleMessage, SuspendMarker, Timestamp,
     },
 };

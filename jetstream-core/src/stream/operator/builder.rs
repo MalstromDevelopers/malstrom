@@ -2,11 +2,8 @@
 
 use crate::{
     channels::selective_broadcast::{full_broadcast, Receiver, Sender},
-    keyed::distributed::{Acquire, Collect, Interrogate},
-    snapshot::Barrier,
     types::{
-        Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, OperatorPartitioner,
-        RescaleMessage, SuspendMarker,
+        Data, MaybeKey, MaybeTime, OperatorPartitioner,
     },
 };
 

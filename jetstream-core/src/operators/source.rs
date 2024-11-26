@@ -1,5 +1,5 @@
 use crate::{
-    stream::{JetStreamBuilder, OperatorBuilder},
+    stream::JetStreamBuilder,
     types::{Data, MaybeKey, NoData, NoKey, NoTime, Timestamp},
 };
 
