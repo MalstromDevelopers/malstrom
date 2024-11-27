@@ -1,136 +1,56 @@
 use std::time::Duration;
-
-use jetstream::sources::StatefulSourcePartition;
-
-use jetstream::sources::StatefulSourceImpl;
+use jetstream::sinks::StatelessSinkImpl;
+use jetstream::types::DataMessage;
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::DefaultConsumerContext;
-use rdkafka::consumer::{BaseConsumer, Consumer};
-use rdkafka::message::OwnedMessage;
+use rdkafka::producer::BaseProducer;
 
+use bon::bon;
 use bon::Builder;
-use rdkafka::Message as _;
-use rdkafka::TopicPartitionList;
+use rdkafka::producer::BaseRecord;
+use rdkafka::producer::DefaultProducerContext;
 
-type OffsetIndex = i64;
-type KafkaPartition = i32;
+pub struct KafkaProducer {
+    producer: BaseProducer<DefaultProducerContext>,
+}
+
+#[bon]
+impl KafkaProducer {
+    #[builder(on(String, into))]
+    fn new(brokers: Vec<String>, group_id: String, extra_config: Option<ClientConfig>) -> Self {
+        let mut kafka_conf = ClientConfig::new();
+        kafka_conf
+            .set("group.id", group_id)
+            .set("bootstrap.servers", brokers.join(","));
+        if let Some(extra) = extra_config.as_ref() {
+            for (k, v) in extra.config_map().iter() {
+                kafka_conf.set(k, v);
+            }
+        }
+        let producer = kafka_conf.create().unwrap();
+        Self { producer }
+    }
+}
 
 #[derive(Builder)]
-#[builder(on(String, into))]
-pub struct KafkaSource {
-    brokers: Vec<String>,
-    topic: String,
-    group_id: String,
-    auto_offset_reset: String,
-    /// Timeout for fetching Kafka Broker metadata
-    #[builder(default=Duration::from_secs(30))]
-    fetch_timeout: Duration,
-    extra_config: Option<ClientConfig>,
+pub struct KafkaRecord {
+    pub topic: String,
+    pub partition: Option<i32>,
+    pub payload: Vec<u8>,
+    pub key: Vec<u8>,
+    pub timestamp: Option<i64>,
 }
 
-impl StatefulSourceImpl<OwnedMessage, OffsetIndex> for KafkaSource {
-    type Part = KafkaPartition;
-    type PartitionState = Option<OffsetIndex>;
-    type SourcePartition = KafkaConsumer;
+impl<K, T> StatelessSinkImpl<K, KafkaRecord, T> for KafkaProducer {
+    fn sink_message(&mut self, msg: DataMessage<K, KafkaRecord, T>) -> () {
+        let record = msg.value;
 
-    fn list_parts(&self) -> impl IntoIterator<Item = Self::Part> + 'static {
-        let consumer: BaseConsumer = create_consumer(
-            &self.group_id,
-            &self.brokers,
-            &self.auto_offset_reset,
-            &self.extra_config,
-        );
-        let metadata = consumer
-            .fetch_metadata(Some(&self.topic), self.fetch_timeout)
-            .expect("Can fetch metadata");
-        // idx 0 since we selected a single topic beforehand
-        let partitions: Vec<_> = metadata.topics()[0]
-            .partitions()
-            .iter()
-            .map(|x| x.id())
-            .collect();
-        partitions
-    }
+        let mut base_record = BaseRecord::to(&record.topic)
+            .payload(&record.payload)
+            .key(&record.key);
+        base_record.partition = record.partition;
+        base_record.timestamp = record.timestamp;
 
-    fn build_part(
-        &self,
-        part: &Self::Part,
-        part_state: Option<Self::PartitionState>,
-    ) -> Self::SourcePartition {
-        let consumer: BaseConsumer = create_consumer(
-            &self.group_id,
-            &self.brokers,
-            &self.auto_offset_reset,
-            &self.extra_config,
-        );
-        let mut topic_partitions = TopicPartitionList::with_capacity(1);
-        topic_partitions.add_partition(&self.topic, *part);
-        consumer
-            .assign(&topic_partitions)
-            .expect("Can assign topic-partition");
-        KafkaConsumer::new(consumer, part_state.flatten())
-    }
-}
-
-fn create_consumer(
-    group_id: &str,
-    brokers: &[String],
-    auto_offset_reset: &str,
-    extra_config: &Option<ClientConfig>,
-) -> BaseConsumer {
-    let mut kafka_conf = ClientConfig::new();
-    kafka_conf
-        .set("group.id", group_id)
-        .set("bootstrap.servers", brokers.join(","))
-        .set("auto.offset.reset", auto_offset_reset)
-        .set("enable.partition.eof", "false");
-
-    if let Some(extra) = extra_config.as_ref() {
-        for (k, v) in extra.config_map().iter() {
-            kafka_conf.set(k, v);
-        }
-    }
-    kafka_conf
-        .create()
-        .expect("Failed to create Kafka consumer")
-}
-
-type LastReceivedOffset = Option<i64>;
-pub struct KafkaConsumer {
-    // offset of the last received record
-    consumer: BaseConsumer<DefaultConsumerContext>,
-    last_recvd_offset: LastReceivedOffset,
-}
-
-impl KafkaConsumer {
-    fn new(
-        consumer: BaseConsumer<DefaultConsumerContext>,
-        last_recvd_offset: LastReceivedOffset,
-    ) -> Self {
-        Self {
-            consumer,
-            last_recvd_offset,
-        }
-    }
-}
-
-impl StatefulSourcePartition<OwnedMessage, i64> for KafkaConsumer {
-    type PartitionState = LastReceivedOffset;
-
-    fn poll(&mut self) -> Option<(OwnedMessage, i64)> {
-        let msg = self
-            .consumer
-            .poll(Duration::default())?
-            .expect("Can poll Kafka");
-        self.last_recvd_offset = Some(msg.offset());
-        Some((msg.detach(), msg.offset()))
-    }
-
-    fn snapshot(&self) -> Self::PartitionState {
-        self.last_recvd_offset
-    }
-
-    fn collect(self) -> Self::PartitionState {
-        self.last_recvd_offset
+        self.producer.send(base_record).unwrap();
+        self.producer.poll(Duration::default());
     }
 }
