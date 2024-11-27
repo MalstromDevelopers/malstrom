@@ -199,7 +199,14 @@ impl Drop for SlateDbClient {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
+
+    use crate::{
+        keyed::KeyLocal,
+        prelude::{SingleIteratorSource, Sink, Source, StatefulMap, WorkerBuilder},
+        runtime::threaded::SingleThreadRuntime,
+        testing::VecSink,
+    };
 
     use super::*;
     use object_store::{memory::InMemory, path::Path};
@@ -271,5 +278,33 @@ mod tests {
         let load_client = backend.last_commited(0);
         let restored = load_client.load(&1337);
         assert!(restored.is_none())
+    }
+
+    /// A full dataflow test
+    #[test]
+    fn full_test() {
+        let fs = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
+        let capture = VecSink::new();
+        for _ in 0..2 {
+            let backend = SlateDbBackend::new(Arc::clone(&fs), Path::from("/snapshots")).unwrap();
+            let rt = SingleThreadRuntime::new(|flavor| {
+                let mut worker = WorkerBuilder::new(flavor, || true, backend);
+                worker
+                    .new_stream()
+                    .source(SingleIteratorSource::new(0..2))
+                    .key_local(|_| 0)
+                    .stateful_map(|_, val, state: i32| {
+                        let sum = val + state;
+                        (sum, Some(sum))
+                    })
+                    .sink(capture.clone())
+                    .finish();
+                worker
+            });
+            rt.execute().unwrap();
+        }
+        let expected = vec![0, 1, 1, 2];
+        let result: Vec<i32> = capture.into_iter().map(|x| x.value).collect();
+        assert_eq!(result, expected);
     }
 }

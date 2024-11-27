@@ -17,7 +17,7 @@ where
 {
     /// Create a new runtime for running on a single thread
     pub fn new(
-        builder_func: fn(SingleThreadRuntimeFlavor) -> WorkerBuilder<SingleThreadRuntimeFlavor, P>,
+        builder_func: impl FnOnce(SingleThreadRuntimeFlavor) -> WorkerBuilder<SingleThreadRuntimeFlavor, P>,
     ) -> Self {
         Self {
             worker_builder: builder_func(SingleThreadRuntimeFlavor::default()),
