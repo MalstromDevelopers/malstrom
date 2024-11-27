@@ -5,6 +5,7 @@ pub mod prelude;
 pub mod runtime;
 pub mod snapshot;
 pub mod sources;
+pub mod sinks;
 pub mod stream;
 pub mod testing;
 pub mod types;
