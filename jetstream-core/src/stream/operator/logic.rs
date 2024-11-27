@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::Sender,
+    channels::selective_broadcast::Output,
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::Barrier,
     types::{
@@ -21,61 +21,61 @@ pub trait LogicWrapper<K: MaybeKey, VI: MaybeData, TI: MaybeTime, VO: MaybeData,
     Sized + 'static
 {
     #[allow(unused)]
-    fn on_schedule(&mut self, output: &mut Sender<K, VO, TO>, ctx: &mut OperatorContext) -> ();
+    fn on_schedule(&mut self, output: &mut Output<K, VO, TO>, ctx: &mut OperatorContext) -> ();
 
     fn on_data(
         &mut self,
         data_message: DataMessage<K, VI, TI>,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_epoch(
         &mut self,
         epoch: TI,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_barrier(
         &mut self,
         barrier: &mut Barrier,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_rescale(
         &mut self,
         rescale_message: &mut RescaleMessage,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_suspend(
         &mut self,
         suspend_marker: &mut SuspendMarker,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_interrogate(
         &mut self,
         interrogate: &mut Interrogate<K>,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_collect(
         &mut self,
         collect: &mut Collect<K>,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 
     fn on_acquire(
         &mut self,
         acquire: &mut Acquire<K>,
-        output: &mut Sender<K, VO, TO>,
+        output: &mut Output<K, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> ();
 

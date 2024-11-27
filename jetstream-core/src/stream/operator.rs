@@ -32,7 +32,7 @@ mod test {
 
     use super::{pass_through_operator, AppendableOperator, OperatorBuilder};
     use crate::{
-        channels::selective_broadcast::{full_broadcast, link, Sender},
+        channels::selective_broadcast::{full_broadcast, link, Output},
         snapshot::NoPersistence,
         stream::operator::BuildContext,
         testing::NoCommunication,
@@ -44,7 +44,7 @@ mod test {
     fn becomes_finished() {
         let mut builder: OperatorBuilder<NoKey, NoData, i32, NoKey, NoData, i32> =
             pass_through_operator();
-        let mut sender = Sender::new_unlinked(full_broadcast);
+        let mut sender = Output::new_unlinked(full_broadcast);
         link(&mut sender, builder.get_input_mut());
 
         let buildable = Box::new(builder).into_buildable();

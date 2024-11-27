@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     stream::{JetStreamBuilder, OperatorBuilder, OperatorContext},
     types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
 };
@@ -25,8 +25,8 @@ where
 }
 
 fn void<K: MaybeKey, V: MaybeData, T: MaybeTime>(
-    input: &mut Receiver<K, V, T>,
-    _output: &mut Sender<NoKey, NoData, NoTime>,
+    input: &mut Input<K, V, T>,
+    _output: &mut Output<NoKey, NoData, NoTime>,
     _out: &mut OperatorContext,
 ) {
     input.recv();

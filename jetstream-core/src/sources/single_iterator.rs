@@ -1,7 +1,7 @@
 use std::iter;
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     operators::StreamSource,
     stream::{JetStreamBuilder, OperatorBuilder},
     types::{Data, DataMessage, Message, NoData, NoKey, NoTime},
@@ -71,8 +71,8 @@ where
             };
             let mut final_emitted = false;
 
-            move |input: &mut Receiver<NoKey, NoData, NoTime>,
-                  output: &mut Sender<NoKey, V, usize>,
+            move |input: &mut Input<NoKey, NoData, NoTime>,
+                  output: &mut Output<NoKey, V, usize>,
                   _ctx| {
                 if !final_emitted {
                     if let Some(x) = inner.next() {

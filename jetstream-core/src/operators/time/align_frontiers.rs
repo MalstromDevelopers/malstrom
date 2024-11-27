@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::channels::selective_broadcast::{Receiver, Sender};
+use crate::channels::selective_broadcast::{Input, Output};
 
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
@@ -87,8 +87,8 @@ fn advance_input<
     V: MaybeData,
     T: Timestamp + std::ops::Sub<Output = T> + Serialize + DeserializeOwned,
 >(
-    input: &mut Receiver<K, V, T>,
-    output: &mut Sender<K, V, T>,
+    input: &mut Input<K, V, T>,
+    output: &mut Output<K, V, T>,
     clients: &IndexMap<WorkerId, CommunicationClient<T>>,
 ) -> Option<T> {
     let msg = input.recv()?;

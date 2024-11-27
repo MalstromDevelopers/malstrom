@@ -2,7 +2,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    channels::selective_broadcast::Sender,
+    channels::selective_broadcast::Output,
     stream::JetStreamBuilder,
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
@@ -82,7 +82,7 @@ where
         &mut self,
         msg: DataMessage<K, VI, T>,
         key_state: S,
-        output: &mut Sender<K, VO, T>,
+        output: &mut Output<K, VO, T>,
     ) -> Option<S> {
         let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state);
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);

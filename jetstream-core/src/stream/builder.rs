@@ -4,7 +4,7 @@ use std::{iter, rc::Rc, sync::Mutex};
 
 use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
-    channels::selective_broadcast::{link, Receiver},
+    channels::selective_broadcast::{link, Input},
     runtime::{split_n, union, InnerRuntimeBuilder},
     types::{Data, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner},
 };
@@ -12,7 +12,7 @@ use crate::{
 #[must_use = "Call .finish() on a stream to finalize it"]
 pub struct JetStreamBuilder<K, V, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
-    tail: Receiver<K, V, T>,
+    tail: Input<K, V, T>,
     // the runtime this stream is registered to
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
@@ -24,7 +24,7 @@ where
     T: MaybeTime,
 {
     pub(crate) fn from_receiver(
-        receiver: Receiver<K, V, T>,
+        receiver: Input<K, V, T>,
         runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     ) -> JetStreamBuilder<K, V, T> {
         JetStreamBuilder {
@@ -37,7 +37,7 @@ where
         mut operator: OperatorBuilder<KI, VI, TI, K, V, T>,
         runtime: Rc<Mutex<InnerRuntimeBuilder>>,
     ) -> JetStreamBuilder<K, V, T> {
-        let mut receiver = Receiver::new_unlinked();
+        let mut receiver = Input::new_unlinked();
         link(operator.get_output_mut(), &mut receiver);
         let operator = Box::new(operator).into_buildable();
         JetStreamBuilder {
@@ -63,7 +63,7 @@ where
     ) -> JetStreamBuilder<KO, VO, TO> {
         // TODO: kinda hacky
         std::mem::swap(&mut self.tail, operator.get_input_mut());
-        let mut new_tail = Receiver::new_unlinked();
+        let mut new_tail = Input::new_unlinked();
         link(operator.get_output_mut(), &mut new_tail);
         self.operators.push(Box::new(operator).into_buildable());
 
@@ -90,7 +90,7 @@ where
         rt.lock().unwrap().add_operators(self.operators);
     }
     
-    pub(crate) fn finish_pop_tail(self) -> Receiver<K, V, T> {
+    pub(crate) fn finish_pop_tail(self) -> Input<K, V, T> {
         let rt = self.runtime.clone();
         rt.lock().unwrap().add_operators(self.operators);
         self.tail

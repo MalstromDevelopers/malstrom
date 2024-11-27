@@ -4,7 +4,7 @@ use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
@@ -15,7 +15,7 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
         &mut self,
         msg: DataMessage<K, VI, T>,
         key_state: S,
-        output: &mut Sender<K, VO, T>,
+        output: &mut Output<K, VO, T>,
     ) -> Option<S>;
 
     #[allow(unused)]
@@ -23,16 +23,16 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
         &mut self,
         epoch: &T,
         state: &mut IndexMap<K, S>,
-        output: &mut Sender<K, VO, T>,
+        output: &mut Output<K, VO, T>,
     ) -> () {
     }
 
     #[allow(unused)]
-    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Sender<K, VO, T>) -> () {}
+    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) -> () {}
 }
 impl<X, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for X
 where
-    for<'a> X: FnMut(DataMessage<K, VI, T>, S, &'a mut Sender<K, VO, T>) -> Option<S> + 'static,
+    for<'a> X: FnMut(DataMessage<K, VI, T>, S, &'a mut Output<K, VO, T>) -> Option<S> + 'static,
     K: MaybeKey,
     VO: MaybeData,
     T: MaybeTime,
@@ -41,7 +41,7 @@ where
         &mut self,
         msg: DataMessage<K, VI, T>,
         key_state: S,
-        output: &mut Sender<K, VO, T>,
+        output: &mut Output<K, VO, T>,
     ) -> Option<S> {
         self(msg, key_state, output)
     }
@@ -78,10 +78,10 @@ fn build_stateful_logic<
 >(
     context: &BuildContext,
     mut logic: impl StatefulLogic<K, VI, T, VO, S>,
-) -> impl FnMut(&mut Receiver<K, VI, T>, &mut Sender<K, VO, T>, &mut OperatorContext) {
+) -> impl FnMut(&mut Input<K, VI, T>, &mut Output<K, VO, T>, &mut OperatorContext) {
     let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
 
-    move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, ctx| {
+    move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, ctx| {
         logic.on_schedule(&mut state, output);
         let msg = match input.recv() {
             Some(x) => x,
@@ -147,7 +147,7 @@ mod tests {
         // logic which always just sets the last value as state
         let logic = |msg: DataMessage<i32, String, NoTime>,
                      _state: String,
-                     _output: &mut Sender<i32, (), NoTime>| Some(msg.value);
+                     _output: &mut Output<i32, (), NoTime>| Some(msg.value);
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 0, 0..1);
@@ -183,7 +183,7 @@ mod tests {
         // logic which only returns state if the String len is <= 3
         let logic = |msg: DataMessage<i32, String, NoTime>,
                      _state: String,
-                     _output: &mut Sender<i32, (), NoTime>| {
+                     _output: &mut Output<i32, (), NoTime>| {
             if msg.value.len() > 3 {
                 None
             } else {
@@ -224,7 +224,7 @@ mod tests {
         // logic which always just sets the last value as state
         let logic = |msg: DataMessage<i32, String, NoTime>,
                      _state: String,
-                     _output: &mut Sender<i32, (), NoTime>| Some(msg.value);
+                     _output: &mut Output<i32, (), NoTime>| Some(msg.value);
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
@@ -261,7 +261,7 @@ mod tests {
         // logic which only returns state if the String len is <= 3
         let logic = |msg: DataMessage<i32, String, NoTime>,
                      _state: String,
-                     _output: &mut Sender<i32, (), NoTime>| {
+                     _output: &mut Output<i32, (), NoTime>| {
             if msg.value.len() > 3 {
                 None
             } else {
@@ -303,7 +303,7 @@ mod tests {
         // sets the message value as state
         let logic = |mut msg: DataMessage<i32, String, NoTime>,
                      mut state: String,
-                     output: &mut Sender<i32, String, NoTime>| {
+                     output: &mut Output<i32, String, NoTime>| {
             std::mem::swap(&mut state, &mut msg.value);
             output.send(Message::Data(msg));
             Some(state)
@@ -335,7 +335,7 @@ mod tests {
         // logic which keeps a total per key and emits it
         let logic = |msg: DataMessage<bool, i32, NoTime>,
                      state: i32,
-                     output: &mut Sender<bool, i32, NoTime>| {
+                     output: &mut Output<bool, i32, NoTime>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -377,7 +377,7 @@ mod tests {
         // logic which keeps a total per key and emits it
         let logic = |msg: DataMessage<bool, i32, NoTime>,
                      state: i32,
-                     output: &mut Sender<bool, i32, NoTime>| {
+                     output: &mut Output<bool, i32, NoTime>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -406,7 +406,7 @@ mod tests {
         // logic which does nothing
         let logic = |_msg: DataMessage<i32, String, NoTime>,
                      _state: String,
-                     _output: &mut Sender<i32, (), NoTime>| None;
+                     _output: &mut Output<i32, (), NoTime>| None;
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);

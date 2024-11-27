@@ -36,7 +36,7 @@ pub fn full_broadcast<T>(_: &T, scale: u64) -> Vec<OperatorId> {
 }
 
 /// Link a Sender and receiver together
-pub fn link<K, V, T>(sender: &mut Sender<K, V, T>, receiver: &mut Receiver<K, V, T>) {
+pub fn link<K, V, T>(sender: &mut Output<K, V, T>, receiver: &mut Input<K, V, T>) {
     let (tx, rx) = spsc::unbounded();
     sender.senders.push(tx);
     receiver.receivers.push(UpstreamState::new(rx));
@@ -48,8 +48,8 @@ pub fn link<K, V, T>(sender: &mut Sender<K, V, T>, receiver: &mut Receiver<K, V,
 // of mpmc while still allowing the receivers to select where they
 // read from
 
-/// Selective Broadcast Sender
-pub struct Sender<K, V, T> {
+/// Operator Output
+pub struct Output<K, V, T> {
     // Each sender in this Vec is essentially one outgoing
     // edge from the operator
     senders: Vec<spsc::Sender<Message<K, V, T>>>,
@@ -58,7 +58,7 @@ pub struct Sender<K, V, T> {
     frontier: Option<T>,
 }
 
-impl<K, V, T> Sender<K, V, T>
+impl<K, V, T> Output<K, V, T>
 where
     K: Clone,
     V: Clone,
@@ -147,8 +147,8 @@ impl<K, V, T> UpstreamState<K, V, T> {
     }
 }
 
-/// Selective Broadcast Receiver
-pub struct Receiver<K, V, T> {
+/// Operator Input
+pub struct Input<K, V, T> {
     /// Each receiver in this Vec is an inbound edge to the
     /// operator
     receivers: Vec<UpstreamState<K, V, T>>,
@@ -156,7 +156,7 @@ pub struct Receiver<K, V, T> {
     frontier: Option<T>,
 }
 
-impl<K, V, T> Receiver<K, V, T> {
+impl<K, V, T> Input<K, V, T> {
     pub fn new_unlinked() -> Self {
         Self {
             receivers: Vec::new(),
@@ -192,17 +192,17 @@ fn merge_timestamps<'a, T: MaybeTime>(
 }
 
 pub(crate) fn merge_receiver_groups<K, V, T: MaybeTime>(
-    groups: Vec<Receiver<K, V, T>>,
-) -> Receiver<K, V, T> {
+    groups: Vec<Input<K, V, T>>,
+) -> Input<K, V, T> {
     let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
     let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
-    Receiver {
+    Input {
         receivers,
         frontier,
     }
 }
 
-impl<K, V, T> Receiver<K, V, T>
+impl<K, V, T> Input<K, V, T>
 where
     T: MaybeTime,
 {
@@ -347,9 +347,9 @@ mod test {
     /// Check we only emit an epoch when it changes
     #[test]
     fn emit_epoch_on_change() {
-        let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
@@ -363,9 +363,9 @@ mod test {
     /// only issue a barrier once it is aligned
     #[test]
     fn aligns_barriers() {
-        let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
@@ -385,9 +385,9 @@ mod test {
     /// should buffer messages if the channels if barred
     #[test]
     fn buffer_on_barriers() {
-        let mut sender: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
-        let mut sender2: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender: Output<NoKey, i32, NoTime> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<NoKey, i32, NoTime> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
@@ -428,9 +428,9 @@ mod test {
     /// only issue shutdown markers once they are aligned
     #[test]
     fn aligns_shutdowns() {
-        let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
@@ -476,8 +476,8 @@ mod test {
     /// Check the accessor for the largest sent epoch (frontier)
     #[test]
     fn observe_frontier() {
-        let mut sender: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
 
         assert_eq!(*sender.get_frontier(), None);
@@ -495,9 +495,9 @@ mod test {
 
     #[test]
     fn receiver_observe_frontier() {
-        let mut sender1: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut sender2: Sender<NoKey, NoData, i32> = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+        let mut sender1: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender1, &mut receiver);
         link(&mut sender2, &mut receiver);
 
@@ -531,7 +531,7 @@ mod test {
     /// Should just discard messages
     #[test]
     fn sender_without_sink_discards() {
-        let mut sender = Sender::new_unlinked(full_broadcast);
+        let mut sender = Output::new_unlinked(full_broadcast);
         let elem = Rc::new("brox");
         // this should not panic
         sender.send(Message::Data(DataMessage::new("Beeble", elem.clone(), 42)));

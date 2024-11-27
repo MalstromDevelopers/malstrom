@@ -6,7 +6,7 @@ use std::{hash::Hash, marker::PhantomData};
 use indexmap::IndexMap;
 
 use crate::{
-    channels::selective_broadcast::Sender,
+    channels::selective_broadcast::Output,
     keyed::{
         distributed::{Acquire, Collect, DistKey, Interrogate},
         partitioners::rendezvous_select,
@@ -126,7 +126,7 @@ where
 {
     fn on_schedule(
         &mut self,
-        output: &mut Sender<Builder::Part, VO, TO>,
+        output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
         for (part, partition) in self.partitions.iter_mut() {
@@ -140,7 +140,7 @@ where
     fn on_data(
         &mut self,
         data_message: DataMessage<Builder::Part, Builder::Part, usize>,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
         let part = data_message.key;
@@ -151,7 +151,7 @@ where
     fn on_epoch(
         &mut self,
         _epoch: usize,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
     }
@@ -159,7 +159,7 @@ where
     fn on_barrier(
         &mut self,
         barrier: &mut Barrier,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> () {
         let state: Vec<_> = self
@@ -173,7 +173,7 @@ where
     fn on_rescale(
         &mut self,
         _rescale_message: &mut RescaleMessage,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
     }
@@ -181,7 +181,7 @@ where
     fn on_suspend(
         &mut self,
         _suspend_marker: &mut SuspendMarker,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
         for partition in self.partitions.values_mut() {
@@ -192,7 +192,7 @@ where
     fn on_interrogate(
         &mut self,
         interrogate: &mut Interrogate<Builder::Part>,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
     ) -> () {
         let keys = self.partitions.keys();
@@ -202,7 +202,7 @@ where
     fn on_collect(
         &mut self,
         collect: &mut Collect<Builder::Part>,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> () {
         let key_state = self.partitions.swap_remove(&collect.key);
@@ -214,7 +214,7 @@ where
     fn on_acquire(
         &mut self,
         acquire: &mut Acquire<Builder::Part>,
-        _output: &mut Sender<Builder::Part, VO, TO>,
+        _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> () {
         let partition_state = acquire.take_state(&ctx.operator_id);

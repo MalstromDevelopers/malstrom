@@ -125,7 +125,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        channels::selective_broadcast::Receiver,
+        channels::selective_broadcast::Input,
         operators::{sink::SinkFull, GenerateEpochs, Sink, Source},
         sources::SingleIteratorSource,
         stream::OperatorBuilder,
@@ -276,7 +276,7 @@ mod tests {
         let collector = VecSink::new();
         let collector_moved = collector.clone();
         let ontime = ontime.then(OperatorBuilder::direct(
-            move |input: &mut Receiver<NoKey, i32, i32>, out, _| {
+            move |input: &mut Input<NoKey, i32, i32>, out, _| {
                 match input.recv() {
                     // encode epoch to -T
                     Some(Message::Data(d)) => {

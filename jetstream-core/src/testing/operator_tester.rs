@@ -7,7 +7,7 @@ use std::{
 
 use crate::types::*;
 use crate::{
-    channels::selective_broadcast::{full_broadcast, link, Receiver, Sender},
+    channels::selective_broadcast::{full_broadcast, link, Input, Output},
     runtime::{
         communication::{CommunicationBackendError, Distributable, Transport, TransportError},
         CommunicationBackend, CommunicationClient,
@@ -18,11 +18,11 @@ use crate::{
 
 pub struct OperatorTester<KI, VI, TI, KO, VO, TO, R> {
     logic: Box<dyn Logic<KI, VI, TI, KO, VO, TO>>,
-    input: Receiver<KI, VI, TI>,
-    input_handle: Sender<KI, VI, TI>,
+    input: Input<KI, VI, TI>,
+    input_handle: Output<KI, VI, TI>,
 
-    output: Sender<KO, VO, TO>,
-    output_handle: Receiver<KO, VO, TO>,
+    output: Output<KO, VO, TO>,
+    output_handle: Input<KO, VO, TO>,
     comm_shim: FakeCommunication<R>,
 
     worker_id: WorkerId,
@@ -47,12 +47,12 @@ where
         worker_ids: Range<u64>,
     ) -> Self {
         assert!(worker_ids.contains(&worker_id));
-        let mut input_handle = Sender::new_unlinked(full_broadcast);
-        let mut input = Receiver::new_unlinked();
+        let mut input_handle = Output::new_unlinked(full_broadcast);
+        let mut input = Input::new_unlinked();
         link(&mut input_handle, &mut input);
 
-        let mut output = Sender::new_unlinked(full_broadcast);
-        let mut output_handle = Receiver::new_unlinked();
+        let mut output = Output::new_unlinked(full_broadcast);
+        let mut output_handle = Input::new_unlinked();
         link(&mut output, &mut output_handle);
 
         let mut comm_shim = FakeCommunication::default();

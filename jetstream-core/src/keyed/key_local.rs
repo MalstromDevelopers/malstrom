@@ -1,4 +1,4 @@
-use crate::channels::selective_broadcast::{Receiver, Sender};
+use crate::channels::selective_broadcast::{Input, Output};
 
 use crate::stream::{JetStreamBuilder, OperatorBuilder};
 use crate::types::{Data, DataMessage, Key, MaybeKey, Message, Timestamp};
@@ -30,7 +30,7 @@ where
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> JetStreamBuilder<K, V, T> {
         let op = OperatorBuilder::direct(
-            move |input: &mut Receiver<X, V, T>, output: &mut Sender<K, V, T>, _ctx| {
+            move |input: &mut Input<X, V, T>, output: &mut Output<K, V, T>, _ctx| {
                 match input.recv() {
                     Some(Message::Data(d)) => {
                         let new_key = key_func(&d);

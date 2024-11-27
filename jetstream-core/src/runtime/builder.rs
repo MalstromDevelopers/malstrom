@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use crate::channels::selective_broadcast::{link, merge_receiver_groups, Receiver};
+use crate::channels::selective_broadcast::{link, merge_receiver_groups, Input};
 use crate::snapshot::controller::make_snapshot_controller;
 pub use crate::snapshot::controller::SnapshotTrigger;
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
@@ -61,7 +61,7 @@ where
     pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
         // link our new stream to the root stream we will build later
         // so it can receive system messages
-        let mut receiver = Receiver::new_unlinked();
+        let mut receiver = Input::new_unlinked();
         link(self.root_operator.get_output_mut(), &mut receiver);
         JetStreamBuilder::from_receiver(
             receiver,
@@ -159,7 +159,7 @@ pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
     partitioner: impl OperatorPartitioner<K, V, T>,
 ) -> [JetStreamBuilder<K, V, T>; N] {
     let mut stream_receiver = input.finish_pop_tail();
-    let mut downstream_receivers: [Receiver<K, V, T>; N] = core::array::from_fn(|_| Receiver::new_unlinked());
+    let mut downstream_receivers: [Input<K, V, T>; N] = core::array::from_fn(|_| Input::new_unlinked());
     
     let mut partition_op = OperatorBuilder::new_with_output_partitioning(
         |_| {

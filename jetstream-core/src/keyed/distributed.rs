@@ -10,7 +10,7 @@ use message_router::{MessageRouter, NormalRouter};
 pub use types::*;
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     runtime::CommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
@@ -80,8 +80,8 @@ where
     /// Schedule this as an operator in the dataflow
     pub(super) fn run(
         &mut self,
-        input: &mut Receiver<K, V, T>,
-        output: &mut Sender<K, V, T>,
+        input: &mut Input<K, V, T>,
+        output: &mut Output<K, V, T>,
         ctx: &mut OperatorContext,
     ) {
         // HACK we collect messages into the vec because
@@ -164,7 +164,7 @@ where
     fn handle_local_data_message(
         &mut self,
         message: DataMessage<K, V, T>,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
         ctx: &OperatorContext,
     ) {
         let routing = {
@@ -185,7 +185,7 @@ where
         &mut self,
         message: NetworkDataMessage<K, V, T>,
         sent_by: &WorkerId,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
         ctx: &OperatorContext,
     ) {
         let routing = {
@@ -206,7 +206,7 @@ where
         &self,
         message: DataMessage<K, V, T>,
         target: WorkerId,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
 
         ctx: &OperatorContext,
     ) {
@@ -228,7 +228,7 @@ where
     }
 
     /// Handle an epoch we received from our local upstrea
-    fn handle_epoch(&self, output: &mut Sender<K, V, T>) {
+    fn handle_epoch(&self, output: &mut Output<K, V, T>) {
         let all_timestamps = self
             .remotes
             .values()
@@ -252,7 +252,7 @@ where
     fn handle_rescale_message(
         &mut self,
         message: RescaleMessage,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
         ctx: &mut OperatorContext,
     ) {
         match &message {
@@ -275,7 +275,7 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_barrier(&mut self, output: &mut Sender<K, V, T>) {
+    fn try_emit_barrier(&mut self, output: &mut Output<K, V, T>) {
         if self.local_barrier.is_some()
             && self
                 .remotes
@@ -295,7 +295,7 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_shutdown(&mut self, output: &mut Sender<K, V, T>) {
+    fn try_emit_shutdown(&mut self, output: &mut Output<K, V, T>) {
         if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
             let msg = Message::SuspendMarker(self.local_shutdown.take().unwrap());
             output.send(msg);

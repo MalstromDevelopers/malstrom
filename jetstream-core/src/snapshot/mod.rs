@@ -1,6 +1,7 @@
 pub mod controller;
 #[cfg(feature = "slatedb")]
 pub mod slatedb;
+#[cfg(feature = "slatedb")]
 pub use slatedb::{SlateDbBackend, SlateDbClient};
 
 use std::{fmt::Debug, rc::Rc, sync::Mutex};

@@ -1,5 +1,5 @@
 use super::stateless_op::StatelessOp;
-use crate::channels::selective_broadcast::Sender;
+use crate::channels::selective_broadcast::Output;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
@@ -51,7 +51,7 @@ where
 {
     fn flatten(self) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(
-            move |item: DataMessage<K, VI, T>, out: &mut Sender<K, VO, T>| {
+            move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
                 let key = item.key;
                 let timestamp = item.timestamp;
                 for x in item.value {

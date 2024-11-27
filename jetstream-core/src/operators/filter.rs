@@ -1,5 +1,5 @@
 use super::stateless_op::StatelessOp;
-use crate::channels::selective_broadcast::Sender;
+use crate::channels::selective_broadcast::Output;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey};
 use crate::types::{Message, Timestamp};
@@ -51,7 +51,7 @@ where
 {
     fn filter(self, mut filter: impl FnMut(&V) -> bool + 'static) -> JetStreamBuilder<K, V, T> {
         self.stateless_op(
-            move |item: DataMessage<K, V, T>, out: &mut Sender<K, V, T>| {
+            move |item: DataMessage<K, V, T>, out: &mut Output<K, V, T>| {
                 if filter(&item.value) {
                     out.send(Message::Data(item))
                 }

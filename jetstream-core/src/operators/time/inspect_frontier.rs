@@ -1,4 +1,4 @@
-use crate::channels::selective_broadcast::Receiver;
+use crate::channels::selective_broadcast::Input;
 use crate::stream::JetStreamBuilder;
 use crate::stream::OperatorBuilder;
 
@@ -28,7 +28,7 @@ where
         mut inspector: impl FnMut(&T, &OperatorContext) + 'static,
     ) -> JetStreamBuilder<K, V, T> {
         self.then(OperatorBuilder::direct(
-            move |input: &mut Receiver<K, V, T>, output, ctx| {
+            move |input: &mut Input<K, V, T>, output, ctx| {
                 if let Some(msg) = input.recv() {
                     match msg {
                         Message::Epoch(e) => {

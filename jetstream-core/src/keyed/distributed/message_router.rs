@@ -4,7 +4,7 @@ use indexmap::IndexSet;
 use interrogate::InterrogateRouter;
 
 use super::{types::*, Remotes};
-use crate::{channels::selective_broadcast::Sender, types::*};
+use crate::{channels::selective_broadcast::Output, types::*};
 
 mod collect;
 mod finished;
@@ -81,7 +81,7 @@ where
         self,
         message: RescaleMessage,
         partitioner: WorkerPartitioner<K>,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         match self {
             MessageRouter::Normal(normal_router) => {
@@ -112,7 +112,7 @@ where
     pub(super) fn lifecycle(
         self: MessageRouter<K, V, T>,
         partitioner: WorkerPartitioner<K>,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
         remotes: &Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         match self {

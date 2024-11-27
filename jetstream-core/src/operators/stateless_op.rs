@@ -1,24 +1,24 @@
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     stream::{JetStreamBuilder, OperatorBuilder},
     types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
 
 pub trait StatelessLogic<K, VI, T, VO>: 'static {
     /// Return Some to retain the key-state and None to discard it
-    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Sender<K, VO, T>) -> ();
+    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Output<K, VO, T>) -> ();
 
-    fn on_epoch(&mut self, _epoch: &T, _output: &mut Sender<K, VO, T>) -> () {}
+    fn on_epoch(&mut self, _epoch: &T, _output: &mut Output<K, VO, T>) -> () {}
 }
 
 impl<X, K, VI, T, VO> StatelessLogic<K, VI, T, VO> for X
 where
-    X: FnMut(DataMessage<K, VI, T>, &mut Sender<K, VO, T>) -> () + 'static,
+    X: FnMut(DataMessage<K, VI, T>, &mut Output<K, VO, T>) -> () + 'static,
     K: MaybeKey,
     VO: MaybeData,
     T: MaybeTime,
 {
-    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Sender<K, VO, T>) -> () {
+    fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Output<K, VO, T>) -> () {
         self(msg, output);
     }
 }
@@ -46,7 +46,7 @@ where
         mut logic: impl StatelessLogic<K, VI, T, VO>,
     ) -> JetStreamBuilder<K, VO, T> {
         let op = OperatorBuilder::direct(
-            move |input: &mut Receiver<K, VI, T>, output: &mut Sender<K, VO, T>, _ctx| {
+            move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, _ctx| {
                 let msg = match input.recv() {
                     Some(x) => x,
                     None => return,

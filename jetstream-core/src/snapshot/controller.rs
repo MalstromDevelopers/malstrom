@@ -4,14 +4,14 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::channels::selective_broadcast::Sender;
+use crate::channels::selective_broadcast::Output;
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::*;
 
-use crate::{channels::selective_broadcast::Receiver, stream::OperatorBuilder};
+use crate::{channels::selective_broadcast::Input, stream::OperatorBuilder};
 
 use super::{PersistenceBackend, SnapshotVersion};
 
@@ -54,8 +54,8 @@ fn build_controller_logic<P: PersistenceBackend>(
     }
 }
 fn pass_messages<K: Clone, V: Clone, T: MaybeTime>(
-    input: &mut Receiver<K, V, T>,
-    output: &mut Sender<K, V, T>,
+    input: &mut Input<K, V, T>,
+    output: &mut Output<K, V, T>,
 ) {
     match input.recv() {
         Some(Message::AbsBarrier(_)) => {
@@ -93,8 +93,8 @@ fn build_leader_controller_logic<P: PersistenceBackend>(
         .map(|i| (i, build_context.create_communication_client(i)))
         .collect();
 
-    move |input: &mut Receiver<NoKey, NoData, NoTime>,
-          output: &mut Sender<NoKey, NoData, NoTime>,
+    move |input: &mut Input<NoKey, NoData, NoTime>,
+          output: &mut Output<NoKey, NoData, NoTime>,
           ctx: &mut OperatorContext| {
         pass_messages(input, output);
 
@@ -164,8 +164,8 @@ fn build_follower_controller_logic<P: PersistenceBackend>(
 
     let leader = build_context.create_communication_client(0);
 
-    move |input: &mut Receiver<NoKey, NoData, NoTime>,
-          output: &mut Sender<NoKey, NoData, NoTime>,
+    move |input: &mut Input<NoKey, NoData, NoTime>,
+          output: &mut Output<NoKey, NoData, NoTime>,
           ctx: &mut OperatorContext| {
         pass_messages(input, output);
 

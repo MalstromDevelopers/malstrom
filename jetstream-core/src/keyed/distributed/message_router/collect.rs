@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Sender,
+    channels::selective_broadcast::Output,
     keyed::distributed::{NetworkDataMessage, Remotes},
     runtime::communication::broadcast,
     types::*,
@@ -98,7 +98,7 @@ where
     pub(crate) fn lifecycle(
         mut self,
         partitioner: WorkerPartitioner<K>,
-        output: &mut Sender<K, V, T>,
+        output: &mut Output<K, V, T>,
         remotes: &Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         // try finishing the state collection
@@ -138,7 +138,7 @@ where
         }
     }
 
-    fn set_and_emit_collect(&mut self, output: &mut Sender<K, V, T>) {
+    fn set_and_emit_collect(&mut self, output: &mut Output<K, V, T>) {
         if self.current_collect.is_none() {
             self.current_collect = self.whitelist.pop().map(Collect::new).map(|collect| {
                 output.send(Message::Collect(collect.clone()));
@@ -152,7 +152,7 @@ where
 mod test {
 
     use crate::{
-        channels::selective_broadcast::{full_broadcast, link, Receiver},
+        channels::selective_broadcast::{full_broadcast, link, Input},
         runtime::CommunicationClient,
         testing::{FakeCommunication, SentMessage},
     };
@@ -165,9 +165,9 @@ mod test {
     }
 
     fn get_input_output<K: MaybeKey, V: MaybeData, T: MaybeTime>(
-    ) -> (Sender<K, V, T>, Receiver<K, V, T>) {
-        let mut sender = Sender::new_unlinked(full_broadcast);
-        let mut receiver = Receiver::new_unlinked();
+    ) -> (Output<K, V, T>, Input<K, V, T>) {
+        let mut sender = Output::new_unlinked(full_broadcast);
+        let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         (sender, receiver)
     }

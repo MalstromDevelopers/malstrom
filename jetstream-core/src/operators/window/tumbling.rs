@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 
 use crate::{
-    channels::selective_broadcast::{Receiver, Sender},
+    channels::selective_broadcast::{Input, Output},
     stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
     types::{Data, DataMessage, Key, Message, Timestamp},
 };
@@ -85,8 +85,8 @@ where
 
     fn run(
         &mut self,
-        input: &mut Receiver<K, V, T>,
-        output: &mut Sender<K, S, T>,
+        input: &mut Input<K, V, T>,
+        output: &mut Output<K, S, T>,
         ctx: &OperatorContext,
     ) {
         let msg = match input.recv() {
@@ -152,7 +152,7 @@ where
     }
 
     /// returns and removes all window state where
-    fn handle_epoch(&mut self, epoch: T, output: &mut Sender<K, S, T>) {
+    fn handle_epoch(&mut self, epoch: T, output: &mut Output<K, S, T>) {
         // emit all windows where end_time <= epoch
         self.keyed_state.retain(|key, windows| {
             let to_emit_keys = windows

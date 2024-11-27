@@ -2,7 +2,7 @@
 //! These traits essentially exist to perform successive type erasure
 //! AppendableOperator -> BuildableOperator -> Operator
 
-use crate::channels::selective_broadcast::Sender;
+use crate::channels::selective_broadcast::Output;
 
 use super::{BuildContext, OperatorContext, RunnableOperator};
 
@@ -11,9 +11,9 @@ use super::{BuildContext, OperatorContext, RunnableOperator};
 /// This trait exists mainly for type erasure, so that the Jetstream
 /// need not know the input type of its last operator
 pub trait AppendableOperator<K, V, T> {
-    fn get_output_mut(&mut self) -> &mut Sender<K, V, T>;
+    fn get_output_mut(&mut self) -> &mut Output<K, V, T>;
 
-    fn get_output(&self) -> &Sender<K, V, T>;
+    fn get_output(&self) -> &Output<K, V, T>;
 
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
 

@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::Sender,
+    channels::selective_broadcast::Output,
     operators::map::Map,
     stream::JetStreamBuilder,
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
@@ -11,7 +11,7 @@ use super::timed_stream::OnTimeLate;
 pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
     prev_epoch: Option<&T>,
     d: DataMessage<K, V, T>,
-    output: &mut Sender<K, OnTimeLate<V>, T>,
+    output: &mut Output<K, OnTimeLate<V>, T>,
 ) {
     let wrapped = if let Some(prev) = prev_epoch.as_ref() {
         if **prev < d.timestamp {

@@ -1,7 +1,7 @@
 //! A builder to build JetStream operators
 
 use crate::{
-    channels::selective_broadcast::{full_broadcast, Receiver, Sender},
+    channels::selective_broadcast::{full_broadcast, Input, Output},
     types::{
         Data, MaybeKey, MaybeTime, OperatorPartitioner,
     },
@@ -17,15 +17,15 @@ type LogicBuilder<KI, VI, TI, KO, VO, TO> =
 
 /// A builder type to build generic operators
 pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
-    input: Receiver<KI, VI, TI>,
+    input: Input<KI, VI, TI>,
     // TODO: get rid of the dynamic dispatch here
     logic_builder: Box<LogicBuilder<KI, VI, TI, KO, VO, TO>>,
-    output: Sender<KO, VO, TO>,
+    output: Output<KO, VO, TO>,
     label: Option<String>,
 }
 
 pub trait Logic<KI, VI, TI, KO, VO, TO>:
-    FnMut(&mut Receiver<KI, VI, TI>, &mut Sender<KO, VO, TO>, &mut OperatorContext) + 'static
+    FnMut(&mut Input<KI, VI, TI>, &mut Output<KO, VO, TO>, &mut OperatorContext) + 'static
 {
 }
 impl<
@@ -35,7 +35,7 @@ impl<
         VO,
         TI,
         TO,
-        X: FnMut(&mut Receiver<KI, VI, TI>, &mut Sender<KO, VO, TO>, &mut OperatorContext) + 'static,
+        X: FnMut(&mut Input<KI, VI, TI>, &mut Output<KO, VO, TO>, &mut OperatorContext) + 'static,
     > Logic<KI, VI, TI, KO, VO, TO> for X
 {
 }
@@ -56,8 +56,8 @@ where
     pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
-        let input = Receiver::new_unlinked();
-        let output = Sender::new_unlinked(full_broadcast);
+        let input = Input::new_unlinked();
+        let output = Output::new_unlinked(full_broadcast);
         Self {
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
@@ -70,8 +70,8 @@ where
         logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
         partitioner: impl OperatorPartitioner<KO, VO, TO>,
     ) -> Self {
-        let input = Receiver::new_unlinked();
-        let output = Sender::new_unlinked(partitioner);
+        let input = Input::new_unlinked();
+        let output = Output::new_unlinked(partitioner);
         Self {
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
@@ -80,7 +80,7 @@ where
         }
     }
 
-    pub fn get_input_mut(&mut self) -> &mut Receiver<KI, VI, TI> {
+    pub fn get_input_mut(&mut self) -> &mut Input<KI, VI, TI> {
         &mut self.input
     }
 }
@@ -95,11 +95,11 @@ where
     VO: Data,
     TO: MaybeTime,
 {
-    fn get_output_mut(&mut self) -> &mut Sender<KO, VO, TO> {
+    fn get_output_mut(&mut self) -> &mut Output<KO, VO, TO> {
         &mut self.output
     }
 
-    fn get_output(&self) -> &Sender<KO, VO, TO> {
+    fn get_output(&self) -> &Output<KO, VO, TO> {
         &self.output
     }
 
