@@ -10,6 +10,7 @@ mod stateful_map;
 mod stateful_op;
 mod time;
 mod window;
+mod split;
 
 // Public Api operators reexported for convenience
 pub use crate::keyed::KeyDistribute;

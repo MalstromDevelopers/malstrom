@@ -153,37 +153,6 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     JetStreamBuilder::from_receiver(merged, runtime)
 }
 
-pub(crate) fn split_n<const N: usize, K: MaybeKey, V: MaybeData, T: MaybeTime>(
-    runtime: Rc<Mutex<InnerRuntimeBuilder>>,
-    input: JetStreamBuilder<K, V, T>,
-    partitioner: impl OperatorPartitioner<K, V, T>,
-) -> [JetStreamBuilder<K, V, T>; N] {
-    let mut stream_receiver = input.finish_pop_tail();
-    let mut downstream_receivers: [Input<K, V, T>; N] = core::array::from_fn(|_| Input::new_unlinked());
-    
-    let mut partition_op = OperatorBuilder::new_with_output_partitioning(
-        |_| {
-            |input, output, _ctx| {
-                if let Some(x) = input.recv() {
-                    output.send(x)
-                }
-            }
-        },
-        partitioner,
-    );
-    // we perform a swap so our new operator will get the messages
-    // which come out of the input stream
-    std::mem::swap(partition_op.get_input_mut(), &mut stream_receiver);
-    
-    // link all downstream receivers to our partition op
-    for dr in downstream_receivers.iter_mut() {
-        link(partition_op.get_output_mut(), dr);
-    }
-    runtime.lock().unwrap().add_operators([Box::new(partition_op).into_buildable()]);
-    
-    downstream_receivers.map(|x| JetStreamBuilder::from_receiver(x, Rc::clone(&runtime)))
-}
-
 pub struct Worker<C> {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,

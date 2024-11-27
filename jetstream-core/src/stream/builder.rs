@@ -17,6 +17,13 @@ pub struct JetStreamBuilder<K, V, T> {
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 
+impl<K, V, T> JetStreamBuilder<K, V, T> {
+    /// Get a reference to the runtime this stream belongs to
+    pub(crate) fn get_runtime(&self) -> Rc<Mutex<InnerRuntimeBuilder>> {
+        Rc::clone(&self.runtime)
+    }
+}
+
 impl<K, V, T> JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
@@ -104,11 +111,4 @@ where
         union(runtime, iter::once(self).chain(others))
     }
 
-    pub fn split_n<const N: usize>(
-        self,
-        partitioner: impl OperatorPartitioner<K, V, T>,
-    ) -> [JetStreamBuilder<K, V, T>; N] {
-        let runtime = self.runtime.clone();
-        split_n(runtime, self, partitioner)
-    }
 }
