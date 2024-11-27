@@ -35,7 +35,7 @@ pub trait Split<K, V, T> {
     /// let odd_result: Vec<u64> = odd_sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(odd_expected, odd_result);
     /// ```
-    fn split_n<const N: usize>(
+    fn const_split<const N: usize>(
         self,
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T>; N];
@@ -47,7 +47,7 @@ where
     V: MaybeData,
     T: MaybeTime,
 {
-    fn split_n<const N: usize>(
+    fn const_split<const N: usize>(
         self,
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T>; N] {
@@ -103,7 +103,7 @@ mod tests {
             let stream = worker
                 .new_stream()
                 .source(SingleIteratorSource::new(0..10u64));
-            let [even, odd] = stream.split_n(|msg, i| vec![msg.value % i]);
+            let [even, odd] = stream.const_split(|msg, i| vec![msg.value % i]);
             even.sink(even_sink.clone()).finish();
             odd.sink(odd_sink.clone()).finish();
             worker
