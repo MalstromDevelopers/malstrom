@@ -9,7 +9,7 @@ use crate::{
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
-pub trait StatefulMap<K, VI, T> {
+pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
     /// Transforms data utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.

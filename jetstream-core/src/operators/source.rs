@@ -12,7 +12,7 @@ pub trait StreamSource<K, V, T> {
     ) -> JetStreamBuilder<K, V, T>;
 }
 
-pub trait Source<K, V, T, S> {
+pub trait Source<K, V, T, S>: super::sealed::Sealed {
     fn source(self, 
         name: &str,
         

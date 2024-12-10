@@ -7,7 +7,7 @@ pub trait IntoSink<K, V, T> {
     fn into_sink(self, name: &str) -> OperatorBuilder<K, V, T, K, NoData, T>;
 }
 
-pub trait Sink<K, V, T> {
+pub trait Sink<K, V, T>: super::sealed::Sealed {
     fn sink(self, name: &str, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T>;
 }
 
@@ -26,7 +26,7 @@ pub trait IntoSinkFull<K, V, T> {
     fn into_sink_full(self, name: &str) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime>;
 }
 
-pub trait SinkFull<K, V, T> {
+pub trait SinkFull<K, V, T>: super::sealed::Sealed {
     fn sink_full(self, name: &str, sink: impl IntoSinkFull<K, V, T>)
         -> JetStreamBuilder<NoKey, NoData, NoTime>;
 }

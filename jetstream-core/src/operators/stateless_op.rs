@@ -23,7 +23,7 @@ where
     }
 }
 
-pub trait StatelessOp<K, VI, T> {
+pub trait StatelessOp<K, VI, T>: super::sealed::Sealed {
     /// A small wrapper around StandardOperator to make allow simpler
     /// implementations of stateless, time-unaware operators like map or filter
     ///

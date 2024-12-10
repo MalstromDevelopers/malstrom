@@ -3,7 +3,7 @@ use crate::channels::operator_io::Output;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
-pub trait FilterMap<K, VI, T> {
+pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
     /// Applies a function to every element of the stream.
     /// All elements for which the function returns `Some(x)` are emitted downstream
     /// as `x`, all elements for which the function returns `None` are removed from

@@ -3,7 +3,7 @@ use crate::stream::{AppendableOperator, JetStreamBuilder, OperatorBuilder};
 use crate::types::{MaybeData, MaybeKey, MaybeTime, OperatorPartitioner};
 use std::rc::Rc;
 
-pub trait Split<K, V, T> {
+pub trait Split<K, V, T>: super::sealed::Sealed {
     /// Split a stream into const N streams.
     /// Messages will be distributed according to the given partitioning function.
     ///

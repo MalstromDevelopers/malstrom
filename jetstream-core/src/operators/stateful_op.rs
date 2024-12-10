@@ -47,7 +47,7 @@ where
     }
 }
 
-pub trait StatefulOp<K, VI, T> {
+pub trait StatefulOp<K, VI, T>: super::sealed::Sealed {
     fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
         name: &str,

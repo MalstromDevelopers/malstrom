@@ -10,8 +10,7 @@ use crate::{
 };
 
 use super::{
-    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator,
-    OperatorContext, RunnableOperator,
+    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, LogicWrapper, OperatorContext, RunnableOperator
 };
 
 type LogicBuilder<KI, VI, TI, KO, VO, TO> =
@@ -42,6 +41,7 @@ impl<
     > Logic<KI, VI, TI, KO, VO, TO> for X
 {
 }
+
 
 impl<KI, VI, TI, KO, VO, TO> OperatorBuilder<KI, VI, TI, KO, VO, TO>
 where
@@ -150,10 +150,14 @@ fn hash_op_name(name: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::hash_op_name;
 
     /// this test should break if we somehow break hash stability between versions
+    /// Breaking hash stability would be bad, as keying of messages would change otherwise.
+    /// When you are doing stateful upgrades the state would then be in the wrong place.
     #[test]
     fn hash_is_stable() {
-        todo!()
+        let h = hash_op_name("The ships hung in the sky in much the same way that bricks don't.");
+        assert_eq!(h, 16283470273735909098); // unfortunately it is not 42 :(
     }
 }

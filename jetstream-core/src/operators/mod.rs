@@ -30,3 +30,12 @@ pub use cloned::Cloned;
 
 // These are only to be used internally in jetstream
 pub(crate) mod stateless_op;
+
+// marker used to seal the traits implementing operators
+// on JetStreamBuilder
+mod sealed {
+    use crate::stream::JetStreamBuilder;
+    pub trait Sealed {}
+
+    impl<K, V, T> Sealed for JetStreamBuilder<K, V, T> {}
+}

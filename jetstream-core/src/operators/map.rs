@@ -4,7 +4,7 @@ use crate::stream::JetStreamBuilder;
 
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
-pub trait Map<K, V, T, VO> {
+pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
     ///

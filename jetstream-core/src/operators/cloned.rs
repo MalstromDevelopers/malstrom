@@ -2,7 +2,7 @@ use crate::{stream::JetStreamBuilder, types::{MaybeData, MaybeKey, MaybeTime}};
 
 use super::split::Split;
 
-pub trait Cloned<K, V, T> {
+pub trait Cloned<K, V, T>: super::sealed::Sealed {
     /// Create N new streams by copying all messages into every created stream.
     /// To partition the stream instead see [super::split::Split].
     fn const_cloned<const N: usize>(

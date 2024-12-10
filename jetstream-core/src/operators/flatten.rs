@@ -3,7 +3,7 @@ use crate::channels::operator_io::Output;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
-pub trait Flatten<K, VI, T, VO, I> {
+pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// Flatten a datastream. Given a stream of some iterables, this function consumes
     /// each iterable and emits each of its elements downstream.
     ///

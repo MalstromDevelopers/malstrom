@@ -3,7 +3,7 @@ use crate::{
     types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
-pub trait Inspect<K, V, T> {
+pub trait Inspect<K, V, T>: super::sealed::Sealed {
     /// Observe values in a stream without modifying them.
     /// This is often done for debugging purposes or to record metrics.
     ///

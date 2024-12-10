@@ -4,7 +4,7 @@ use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey};
 use crate::types::{Message, Timestamp};
 
-pub trait Filter<K, V, T> {
+pub trait Filter<K, V, T>: super::sealed::Sealed {
     /// Filters the datastream based on a given predicate.
     ///
     /// The given function receives an immutable reference to the value
