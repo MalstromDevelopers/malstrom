@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::{prelude::IntoSink, stream::OperatorBuilder, types::{Data, DataMessage, MaybeKey, MaybeTime, Message, NoData}};
+use crate::{operators::IntoSink, stream::OperatorBuilder, types::{Data, DataMessage, MaybeKey, MaybeTime, Message, NoData}};
 
 pub struct StatelessSink<K, V, T, S: StatelessSinkImpl<K, V, T>>(S, PhantomData<(K, V, T)>);
 

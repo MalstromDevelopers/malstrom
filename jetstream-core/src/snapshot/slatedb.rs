@@ -215,9 +215,8 @@ mod tests {
 
     use crate::{
         keyed::KeyLocal,
-        prelude::{SingleIteratorSource, Sink, Source, StatefulMap, WorkerBuilder},
-        runtime::threaded::SingleThreadRuntime,
-        testing::VecSink,
+        runtime::{threaded::SingleThreadRuntime, WorkerBuilder}, sources::SingleIteratorSource, testing::VecSink,
+        operators::*
     };
 
     use super::*;

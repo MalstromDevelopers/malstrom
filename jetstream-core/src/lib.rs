@@ -1,7 +1,7 @@
+//! Malstrom is a framework for building distributed, stateful stream processors.
 pub mod channels;
 pub mod keyed;
 pub mod operators;
-pub mod prelude;
 pub mod runtime;
 pub mod snapshot;
 pub mod sources;

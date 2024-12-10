@@ -101,10 +101,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        prelude::{SingleIteratorSource, Sink, Source, WorkerBuilder},
-        runtime::threaded::SingleThreadRuntime,
-        snapshot::NoPersistence,
-        testing::VecSink,
+        operators::*,
+        runtime::{threaded::SingleThreadRuntime, WorkerBuilder}, snapshot::NoPersistence, sources::SingleIteratorSource, testing::VecSink
     };
 
     /// Test const split

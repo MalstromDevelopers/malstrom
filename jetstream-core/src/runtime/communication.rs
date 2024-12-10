@@ -45,7 +45,6 @@ pub trait Transport {
     }
 }
 
-pub(crate) const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
 
 /// A Client for point to point communication between operators
 /// on different workers and possibly different machines

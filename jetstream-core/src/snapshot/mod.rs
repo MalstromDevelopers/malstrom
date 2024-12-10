@@ -13,16 +13,12 @@ use crate::types::{OperatorId, WorkerId};
 
 pub type SnapshotVersion = u64;
 
-const BINCODE_CONFIG: bincode::config::Configuration = bincode::config::standard();
-
 pub(crate) fn serialize_state<S: Serialize>(state: &S) -> Vec<u8> {
-    bincode::serde::encode_to_vec(state, BINCODE_CONFIG).expect("Error serializing state")
+    rmp_serde::to_vec(state).expect("Error serializing state")
 }
 
 pub(crate) fn deserialize_state<S: DeserializeOwned>(state: Vec<u8>) -> S {
-    bincode::serde::decode_from_slice(&state, BINCODE_CONFIG)
-        .expect("Error deserializing state")
-        .0
+    rmp_serde::from_slice(&state).expect("Error deserializing state")
 }
 
 pub trait PersistenceBackend: 'static {
