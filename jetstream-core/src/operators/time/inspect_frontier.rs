@@ -1,4 +1,4 @@
-use crate::channels::selective_broadcast::Input;
+use crate::channels::operator_io::Input;
 use crate::stream::JetStreamBuilder;
 use crate::stream::OperatorBuilder;
 
@@ -13,6 +13,7 @@ pub trait InspectFrontier<K, V, T> {
     /// * `inspector` - A function which gets called with a reference to the timestamp of any Epoch encountered
     fn inspect_frontier(
         self,
+        name: &str,
         inspector: impl FnMut(&T, &OperatorContext) + 'static,
     ) -> JetStreamBuilder<K, V, T>;
 }
@@ -25,9 +26,11 @@ where
 {
     fn inspect_frontier(
         self,
+        name: &str,
         mut inspector: impl FnMut(&T, &OperatorContext) + 'static,
     ) -> JetStreamBuilder<K, V, T> {
         self.then(OperatorBuilder::direct(
+            name,
             move |input: &mut Input<K, V, T>, output, ctx| {
                 if let Some(msg) = input.recv() {
                     match msg {

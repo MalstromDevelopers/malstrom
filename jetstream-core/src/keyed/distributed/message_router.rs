@@ -4,7 +4,7 @@ use indexmap::IndexSet;
 use interrogate::InterrogateRouter;
 
 use super::{types::*, Remotes};
-use crate::{channels::selective_broadcast::Output, types::*};
+use crate::{channels::operator_io::Output, types::*};
 
 mod collect;
 mod finished;

@@ -4,11 +4,11 @@ use crate::{
 };
 
 pub trait IntoSink<K, V, T> {
-    fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T>;
+    fn into_sink(self, name: &str) -> OperatorBuilder<K, V, T, K, NoData, T>;
 }
 
 pub trait Sink<K, V, T> {
-    fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T>;
+    fn sink(self, name: &str, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T>;
 }
 
 impl<K, V, T> Sink<K, V, T> for JetStreamBuilder<K, V, T>
@@ -17,17 +17,17 @@ where
     V: Data,
     T: MaybeTime,
 {
-    fn sink(self, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
-        self.then(sink.into_sink())
+    fn sink(self, name: &str, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
+        self.then(sink.into_sink(name))
     }
 }
 
 pub trait IntoSinkFull<K, V, T> {
-    fn into_sink_full(self) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime>;
+    fn into_sink_full(self, name: &str) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime>;
 }
 
 pub trait SinkFull<K, V, T> {
-    fn sink_full(self, sink: impl IntoSinkFull<K, V, T>)
+    fn sink_full(self, name: &str, sink: impl IntoSinkFull<K, V, T>)
         -> JetStreamBuilder<NoKey, NoData, NoTime>;
 }
 
@@ -39,8 +39,9 @@ where
 {
     fn sink_full(
         self,
+        name: &str,
         sink: impl IntoSinkFull<K, V, T>,
     ) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        self.then(sink.into_sink_full())
+        self.then(sink.into_sink_full(name))
     }
 }

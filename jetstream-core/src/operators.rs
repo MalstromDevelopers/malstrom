@@ -9,7 +9,6 @@ mod source;
 mod stateful_map;
 mod stateful_op;
 mod time;
-mod window;
 mod split;
 mod cloned;
 
@@ -26,10 +25,8 @@ pub use source::{Source, StreamSource};
 pub use stateful_map::StatefulMap;
 pub use stateful_op::{StatefulLogic, StatefulOp};
 pub use time::*;
-pub use window::*;
 pub use split::Split;
 pub use cloned::Cloned;
 
 // These are only to be used internally in jetstream
 pub(crate) mod stateless_op;
-pub(crate) mod void;

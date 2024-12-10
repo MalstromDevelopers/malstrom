@@ -1,4 +1,4 @@
-use crate::channels::selective_broadcast::{link, Input};
+use crate::channels::operator_io::{link, Input};
 use crate::stream::{AppendableOperator, JetStreamBuilder, OperatorBuilder};
 use crate::types::{MaybeData, MaybeKey, MaybeTime, OperatorPartitioner};
 use std::rc::Rc;
@@ -37,11 +37,14 @@ pub trait Split<K, V, T> {
     /// ```
     fn const_split<const N: usize>(
         self,
+        name: &str,
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T>; N];
 
     /// Split a stream into multiple streams
-    fn split( self, partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>>;
+    fn split( self, 
+        name: &str,
+        partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>>;
 }
 
 impl<K, V, T> Split<K, V, T> for JetStreamBuilder<K, V, T>
@@ -52,21 +55,23 @@ where
 {
     fn const_split<const N: usize>(
         self,
+        name: &str,
         partitioner: impl OperatorPartitioner<K, V, T>,
     ) -> [JetStreamBuilder<K, V, T>; N] {
-        let streams = self.split(partitioner, N);
+        let streams = self.split(name, partitioner, N);
         assert_eq!(streams.len(), N);
         // We need unwrap_unchecked because the stream builder does not implement Debug
         // SAFETY: We just asserted it fits
         unsafe {streams.try_into().unwrap_unchecked()}
     }
 
-    fn split(self, partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>> {
+    fn split(self, name:&str, partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>> {
         let rt = self.get_runtime();
         let mut stream_receiver = self.finish_pop_tail();
         let mut downstream_receivers: Vec<Input<K, V, T>>  = (0..outputs).map(|_| Input::new_unlinked()).collect();
 
         let mut partition_op = OperatorBuilder::new_with_output_partitioning(
+            name,
             |_| {
                 |input, output, _ctx| {
                     if let Some(x) = input.recv() {
@@ -112,10 +117,10 @@ mod tests {
             let mut worker = WorkerBuilder::new(flavor, || false, NoPersistence::default());
             let stream = worker
                 .new_stream()
-                .source(SingleIteratorSource::new(0..10u64));
-            let [even, odd] = stream.const_split(|msg, i| vec![msg.value % i]);
-            even.sink(even_sink.clone()).finish();
-            odd.sink(odd_sink.clone()).finish();
+                .source("source", SingleIteratorSource::new(0..10u64));
+            let [even, odd] = stream.const_split("const-split",|msg, i| vec![msg.value % i]);
+            even.sink("sink-even", even_sink.clone()).finish();
+            odd.sink("sink-odd", odd_sink.clone()).finish();
             worker
         });
         rt.execute().unwrap();
@@ -139,12 +144,12 @@ mod tests {
             let mut worker = WorkerBuilder::new(flavor, || false, NoPersistence::default());
             let stream = worker
                 .new_stream()
-                .source(SingleIteratorSource::new(0..10u64));
-            let mut streams = stream.split(|msg, i| vec![msg.value % i], 2);
+                .source("source", SingleIteratorSource::new(0..10u64));
+            let mut streams = stream.split("split", |msg, i| vec![msg.value % i], 2);
             let odd = streams.pop().unwrap();
             let even = streams.pop().unwrap();
-            even.sink(even_sink.clone()).finish();
-            odd.sink(odd_sink.clone()).finish();
+            even.sink("sink-even", even_sink.clone()).finish();
+            odd.sink("sink-odd", odd_sink.clone()).finish();
             worker
         });
         rt.execute().unwrap();

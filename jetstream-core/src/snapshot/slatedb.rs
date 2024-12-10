@@ -1,9 +1,13 @@
+use std::cell::RefCell;
+use std::time::Duration;
 use std::{pin::pin, sync::Arc};
 
 use super::{PersistenceBackend, PersistenceClient, SnapshotVersion};
 use crate::types::WorkerId;
 use bytes::Buf;
+use object_store::PutPayload;
 use object_store::{path::Path, ObjectStore};
+use slatedb::config::DbOptions;
 use slatedb::db::Db;
 use slatedb::error::SlateDBError;
 use thiserror::Error;
@@ -16,7 +20,7 @@ use tracing::debug;
 pub struct SlateDbBackend {
     base_path: Path,
     object_store: Arc<dyn ObjectStore>,
-    commit_db: Db,
+    commits: Commits,
     rt: Runtime,
 }
 
@@ -24,19 +28,12 @@ impl PersistenceBackend for SlateDbBackend {
     type Client = SlateDbClient;
 
     fn last_commited(&self, worker_id: WorkerId) -> Self::Client {
-        let last_commit = self
-            .rt
-            .block_on(get_latest_committed(&self.commit_db))
-            .expect("Can get latest commit")
-            .unwrap_or(0);
+        let last_commit = self.commits.get_last_commited().unwrap_or(0);
         self.for_version(worker_id, &last_commit)
     }
 
     fn for_version(&self, worker_id: WorkerId, snapshot_version: &SnapshotVersion) -> Self::Client {
-        let version_is_committed = self
-            .rt
-            .block_on(check_if_committed(&self.commit_db, snapshot_version))
-            .expect("Expect to get commit information");
+        let version_is_committed = self.commits.is_commited(snapshot_version);
 
         let db_path = self
             .base_path
@@ -57,13 +54,11 @@ impl PersistenceBackend for SlateDbBackend {
             .rt
             .block_on(db_open)
             .expect("Expected to open snapshot db");
-        SlateDbClient::new(snapshot_db, *snapshot_version, self.rt.handle().to_owned())
+        SlateDbClient::new(snapshot_db, *snapshot_version, self.rt.handle().clone().to_owned())
     }
 
     fn commit_version(&self, snapshot_version: &SnapshotVersion) {
-        self.rt
-            .block_on(commit_version(&self.commit_db, snapshot_version))
-            .unwrap()
+        self.commits.commit(*snapshot_version).expect("Commit new version");
     }
 }
 
@@ -76,51 +71,76 @@ impl SlateDbBackend {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let commit_db_open = Db::open(base_path.child("commits"), Arc::clone(&object_store));
-        let commit_db = rt.block_on(commit_db_open)?;
+        let commit_db = Commits::open(&base_path, Arc::clone(&object_store), rt.handle().clone())?;
         Ok(Self {
             base_path,
             object_store,
-            commit_db,
+            commits: commit_db,
             rt,
         })
     }
 }
 
-/// get the last committed version or none if no version has been
-/// committed yet
-async fn get_latest_committed(
-    commit_db: &Db,
-) -> Result<Option<SnapshotVersion>, GetCommitedVersionsError> {
-    let latest = commit_db.get(b"latest").await?;
-    match latest {
-        Some(mut x) => {
-            if x.len() != 8 {
-                Err(GetCommitedVersionsError::CorruptKey(x.len()))
-            } else {
-                Ok(Some(x.get_u64()))
-            }
+struct Commits {
+    commits: RefCell<Vec<SnapshotVersion>>,
+    commits_path: Path,
+    object_store: Arc<dyn ObjectStore>,
+    rt: Handle,
+}
+
+impl Commits {
+    /// Loads the commits from disk or an empty commit vector if no commits
+    /// on disk exists
+    fn open(base_path: &Path, object_store: Arc<dyn ObjectStore>, rt: Handle) -> Result<Self, OpenCommitsError> {
+        let commits_path = base_path.child("commits");
+        let file = rt.block_on(object_store.get(&commits_path));
+        match file {
+            Ok(x) => {
+                let content = rt.block_on(x.bytes())?;
+                let commits: Vec<SnapshotVersion> = rmp_serde::from_slice(&content.to_vec())?;
+                Ok(Self{commits: RefCell::new(commits), commits_path, object_store, rt})
+            },
+            Err(object_store::Error::NotFound{..}) => Ok(Self{commits: Default::default(), commits_path, object_store, rt}),
+            Err(e) => Err(OpenCommitsError::ObjectStore(e))
         }
-        None => Ok(None),
+    }
+
+    /// Check if a specific version has been committed
+    fn is_commited(&self, version: &SnapshotVersion) -> bool {
+        self.commits.borrow().contains(version)
+    }
+
+    /// Get the last commited version or None if there have not been
+    /// any commits
+    fn get_last_commited(&self) -> Option<SnapshotVersion> {
+        self.commits.borrow().last().cloned()
+    }
+
+    /// Commit a version to persistent storage
+    fn commit(&self, version: SnapshotVersion) -> Result<(), CommitError> {
+        // PANIC: I think this can not reasonably fail
+        self.commits.borrow_mut().push(version);
+        let encoded = rmp_serde::to_vec(&self.commits).expect("Encode vec");
+        let payload = PutPayload::from(encoded);
+        self.rt.block_on(self.object_store.put(&self.commits_path, payload))?;
+        Ok(())
     }
 }
 
-/// commit a new snapshot version
-async fn commit_version(commit_db: &Db, version: &SnapshotVersion) -> Result<(), SlateDBError> {
-    commit_db.put(b"latest", &version.to_be_bytes()).await?;
-    commit_db.put(&version.to_be_bytes(), &[]).await?;
-    commit_db.flush().await
+#[derive(Debug, Error)]
+pub enum OpenCommitsError {
+    #[error(transparent)]
+    ObjectStore(#[from] object_store::Error),
+    #[error("DecodingError: Commit file is corrupt or incompatible {0}")]
+    Decoding(#[from] rmp_serde::decode::Error)
 }
 
-/// Check if the given version was committed
-async fn check_if_committed(
-    commit_db: &Db,
-    version: &SnapshotVersion,
-) -> Result<bool, SlateDBError> {
-    commit_db
-        .get(&version.to_be_bytes())
-        .await
-        .map(|x| x.is_some())
+#[derive(Debug, Error)]
+enum CommitError {
+    #[error(transparent)]
+    ObjectStore(#[from] object_store::Error),
+    #[error("DecodingError: Commit file is corrupt or incompatible {0}")]
+    Decoding(#[from] rmp_serde::decode::Error)
 }
 
 /// Deletes an entire directory/prefix from the object store
@@ -146,16 +166,8 @@ async fn delete<S: ObjectStore>(
 pub enum BackendInitError {
     #[error("Error starting Tokio runtime: {0}")]
     TokioRuntime(#[from] std::io::Error),
-    #[error("Error creating commit database")]
-    CreateCommitDb(#[from] SlateDBError),
-}
-
-#[derive(Debug, Error)]
-pub enum GetCommitedVersionsError {
-    #[error("Error retrieving latest commit: {0}")]
-    RetrieveLatest(#[from] SlateDBError),
-    #[error("Latest Commit key is corrupted. Unexpected length (expected 8): {0}")]
-    CorruptKey(usize),
+    #[error("Error opening commits")]
+    OpenCommits(#[from] OpenCommitsError),
 }
 
 pub struct SlateDbClient {
@@ -291,13 +303,13 @@ mod tests {
                 let mut worker = WorkerBuilder::new(flavor, || true, backend);
                 worker
                     .new_stream()
-                    .source(SingleIteratorSource::new(0..2))
-                    .key_local(|_| 0)
-                    .stateful_map(|_, val, state: i32| {
+                    .source("source", SingleIteratorSource::new(0..2))
+                    .key_local("key-local", |_| 0)
+                    .stateful_map("sum", |_, val, state: i32| {
                         let sum = val + state;
                         (sum, Some(sum))
                     })
-                    .sink(capture.clone())
+                    .sink("sink", capture.clone())
                     .finish();
                 worker
             });

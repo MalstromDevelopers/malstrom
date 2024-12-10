@@ -7,12 +7,16 @@ use crate::{
 pub trait StreamSource<K, V, T> {
     fn into_stream(
         self,
+        name: &str,
         builder: JetStreamBuilder<NoKey, NoData, NoTime>,
     ) -> JetStreamBuilder<K, V, T>;
 }
 
 pub trait Source<K, V, T, S> {
-    fn source(self, source: S) -> JetStreamBuilder<K, V, T>;
+    fn source(self, 
+        name: &str,
+        
+        source: S) -> JetStreamBuilder<K, V, T>;
 }
 
 impl<K, V, T, S> Source<K, V, T, S> for JetStreamBuilder<NoKey, NoData, NoTime>
@@ -22,7 +26,7 @@ where
     T: Timestamp,
     S: StreamSource<K, V, T>,
 {
-    fn source(self, source: S) -> JetStreamBuilder<K, V, T> {
-        source.into_stream(self)
+    fn source(self, name: &str, source: S) -> JetStreamBuilder<K, V, T> {
+        source.into_stream(name, self)
     }
 }

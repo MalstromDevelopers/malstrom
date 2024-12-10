@@ -43,7 +43,7 @@ impl<'a> OperatorContext<'a> {
 pub struct BuildContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
-    pub label: String,
+    pub operator_name: String,
     persistence_backend: Rc<dyn PersistenceClient>,
     // HACK: We need this in the ica tests
     pub(crate) communication: &'a mut dyn CommunicationBackend,
@@ -53,7 +53,7 @@ impl<'a> BuildContext<'a> {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
-        label: String,
+        name: String,
         persistence_backend: Rc<dyn PersistenceClient>,
         communication: &'a mut dyn CommunicationBackend,
         worker_ids: Vec<WorkerId>,
@@ -61,7 +61,7 @@ impl<'a> BuildContext<'a> {
         Self {
             worker_id,
             operator_id,
-            label,
+            operator_name: name,
             persistence_backend,
             communication,
             worker_ids,

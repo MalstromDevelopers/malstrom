@@ -23,7 +23,8 @@ pub trait GenerateEpochs<K, V, T> {
     /// - If the returned epoch is smaller than the previous epoch, it is ignored
     fn generate_epochs(
         self,
-        // previously issued epoch and sys time elapsed since last epoch
+        name: &str,
+        // previously issued epoch and time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>);
 }
@@ -36,9 +37,10 @@ where
 {
     fn generate_epochs(
         self,
+        name: &str,
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
-        self.0.generate_epochs(gen)
+        self.0.generate_epochs(name, gen)
     }
 }
 
@@ -50,9 +52,10 @@ where
 {
     fn generate_epochs(
         self,
+        name: &str,
         mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
-        let operator = OperatorBuilder::built_by(|build_context| {
+        let operator = OperatorBuilder::built_by(name, |build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
 
             move |input, output, ctx| {

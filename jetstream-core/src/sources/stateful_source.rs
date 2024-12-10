@@ -6,7 +6,7 @@ use std::{hash::Hash, marker::PhantomData};
 use indexmap::IndexMap;
 
 use crate::{
-    channels::selective_broadcast::Output,
+    channels::operator_io::Output,
     keyed::{
         distributed::{Acquire, Collect, DistKey, Interrogate},
         partitioners::rendezvous_select,
@@ -77,14 +77,15 @@ where
 {
     fn into_stream(
         self,
+        name: &str,
         builder: JetStreamBuilder<NoKey, NoData, NoTime>,
     ) -> JetStreamBuilder<S::Part, V, T> {
         let part_lister = SingleIteratorSource::new(self.0.list_parts());
         let partition_op = StatefulSourcePartitionOp::new(self.0);
         let keyed_stream = builder
-            .source(part_lister)
-            .key_distribute(|msg| msg.value.clone(), rendezvous_select);
-        keyed_stream.then(OperatorBuilder::direct(partition_op.into_logic()))
+            .source(&format!("{name}-source"), part_lister)
+            .key_distribute(&format!("{name}-key-distribute"), |msg| msg.value.clone(), rendezvous_select);
+        keyed_stream.then(OperatorBuilder::direct(&format!("{name}-partition"), partition_op.into_logic()))
     }
 }
 

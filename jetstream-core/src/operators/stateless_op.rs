@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::{Input, Output},
+    channels::operator_io::{Input, Output},
     stream::{JetStreamBuilder, OperatorBuilder},
     types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
@@ -31,6 +31,7 @@ pub trait StatelessOp<K, VI, T> {
     /// along as they are.
     fn stateless_op<VO: Data>(
         self,
+        name: &str,
         logic: impl StatelessLogic<K, VI, T, VO>,
     ) -> JetStreamBuilder<K, VO, T>;
 }
@@ -43,9 +44,11 @@ where
 {
     fn stateless_op<VO: Data>(
         self,
+        name: &str,
         mut logic: impl StatelessLogic<K, VI, T, VO>,
     ) -> JetStreamBuilder<K, VO, T> {
         let op = OperatorBuilder::direct(
+            name,
             move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, _ctx| {
                 let msg = match input.recv() {
                     Some(x) => x,

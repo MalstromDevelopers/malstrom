@@ -4,14 +4,14 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::channels::selective_broadcast::Output;
+use crate::channels::operator_io::Output;
 use crate::runtime::communication::broadcast;
 use crate::runtime::CommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::*;
 
-use crate::{channels::selective_broadcast::Input, stream::OperatorBuilder};
+use crate::{channels::operator_io::Input, stream::OperatorBuilder};
 
 use super::{PersistenceBackend, SnapshotVersion};
 
@@ -202,7 +202,9 @@ pub fn make_snapshot_controller<P: PersistenceBackend>(
     backend: P,
     trigger: impl SnapshotTrigger,
 ) -> OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime> {
-    let op = OperatorBuilder::built_by(|ctx| build_controller_logic(ctx, backend, trigger));
+    // we can just use a static name here since we know there will only ever
+    // be one snapshot controller
+    let op = OperatorBuilder::built_by("malstrom::snapshot-controller", |ctx| build_controller_logic(ctx, backend, trigger));
     // indicate we will never emit data records
     // op.get_output_mut().send(crate::Message::Epoch(NoTime::MAX));
     op

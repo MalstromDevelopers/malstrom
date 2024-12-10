@@ -1,7 +1,7 @@
 use std::iter;
 
 use crate::{
-    channels::selective_broadcast::{Input, Output},
+    channels::operator_io::{Input, Output},
     operators::StreamSource,
     stream::{JetStreamBuilder, OperatorBuilder},
     types::{Data, DataMessage, Message, NoData, NoKey, NoTime},
@@ -60,9 +60,10 @@ where
 {
     fn into_stream(
         self,
+        name: &str,
         builder: JetStreamBuilder<NoKey, NoData, NoTime>,
     ) -> JetStreamBuilder<NoKey, V, usize> {
-        let operator = OperatorBuilder::built_by(|build_context| {
+        let operator = OperatorBuilder::built_by(name, |build_context| {
             let mut inner = if build_context.worker_id == 0 {
                 self.iterator.enumerate()
             } else {
@@ -125,8 +126,8 @@ mod tests {
         let collector = VecSink::new();
 
         let stream = stream
-            .source(SingleIteratorSource::new(in_data))
-            .sink(collector.clone());
+            .source("source", SingleIteratorSource::new(in_data))
+            .sink("sink", collector.clone());
 
         stream.finish();
         builder.build().unwrap().execute();
@@ -148,8 +149,8 @@ mod tests {
                     WorkerBuilder::new(flavor, no_snapshots, NoPersistence::default());
                 builder
                     .new_stream()
-                    .source(SingleIteratorSource::new(0..10))
-                    .sink(this_sink)
+                    .source("source", SingleIteratorSource::new(0..10))
+                    .sink("sink", this_sink)
                     .finish();
                 builder
             },
@@ -167,8 +168,8 @@ mod tests {
         let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
         stream
-            .source(SingleIteratorSource::new(42..52))
-            .sink(sink.clone())
+            .source("source", SingleIteratorSource::new(42..52))
+            .sink("sink", sink.clone())
             .finish();
         builder.build().unwrap().execute();
 
@@ -184,8 +185,8 @@ mod tests {
         let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
         stream
-            .source(SingleIteratorSource::new(0..10))
-            .sink_full(sink.clone())
+            .source("source", SingleIteratorSource::new(0..10))
+            .sink_full("sink", sink.clone())
             .finish();
         builder.build().unwrap().execute();
 

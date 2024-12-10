@@ -2,7 +2,7 @@
 //! These traits essentially exist to perform successive type erasure
 //! AppendableOperator -> BuildableOperator -> Operator
 
-use crate::channels::selective_broadcast::Output;
+use crate::channels::operator_io::Output;
 
 use super::{BuildContext, OperatorContext, RunnableOperator};
 
@@ -16,15 +16,13 @@ pub trait AppendableOperator<K, V, T> {
     fn get_output(&self) -> &Output<K, V, T>;
 
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
-
-    /// Add a label to this operator which will show up in traces
-    fn label(&mut self, label: String);
 }
 
 /// An operator which can be turned into a runnable operator, by supplying a BuildContext
 pub trait BuildableOperator {
     fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator;
-    fn get_label(&self) -> Option<String>;
+    fn get_name(&self) -> &str;
+    fn get_id(&self) -> u64;
 }
 
 /// Each runnable operator contains an object of this trait which is the actual logic that will get executed

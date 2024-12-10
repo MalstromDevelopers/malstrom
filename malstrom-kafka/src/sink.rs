@@ -9,12 +9,12 @@ use bon::Builder;
 use rdkafka::producer::BaseRecord;
 use rdkafka::producer::DefaultProducerContext;
 
-pub struct KafkaProducer {
+pub struct KafkaSink {
     producer: BaseProducer<DefaultProducerContext>,
 }
 
 #[bon]
-impl KafkaProducer {
+impl KafkaSink {
     #[builder(on(String, into))]
     fn new(brokers: Vec<String>, group_id: String, extra_config: Option<ClientConfig>) -> Self {
         let mut kafka_conf = ClientConfig::new();
@@ -40,7 +40,7 @@ pub struct KafkaRecord {
     pub timestamp: Option<i64>,
 }
 
-impl<K, T> StatelessSinkImpl<K, KafkaRecord, T> for KafkaProducer {
+impl<K, T> StatelessSinkImpl<K, KafkaRecord, T> for KafkaSink {
     fn sink_message(&mut self, msg: DataMessage<K, KafkaRecord, T>) -> () {
         let record = msg.value;
 

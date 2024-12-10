@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use crate::channels::selective_broadcast::{link, merge_receiver_groups, Input};
+use crate::channels::operator_io::{link, merge_receiver_groups, Input};
 use crate::snapshot::controller::make_snapshot_controller;
 pub use crate::snapshot::controller::SnapshotTrigger;
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
@@ -82,22 +83,28 @@ where
 
         let cluster_size: u64 = self.flavor.runtime_size().try_into().unwrap();
         let mut communication_backend = self.flavor.establish_communication()?;
+
+        let mut seen_ids = HashSet::new();
         let operators: Vec<RunnableOperator> = operators
             .into_iter()
             .enumerate()
             .map(|(i, x)| {
-                let label = x.get_label().unwrap_or(format!("operator_id_{}", i));
+                let operator_name = x.get_name().to_string();
+                let operator_id = x.get_id();
+                if !seen_ids.insert(operator_id) {
+                    Err(BuildError::NonUniqueName(operator_name.clone()))?
+                }
                 let mut ctx = BuildContext::new(
                     this_worker,
-                    i.try_into().expect("Too many operators"),
-                    label,
+                    operator_id,
+                    operator_name,
                     Rc::clone(&state_client),
                     &mut communication_backend,
                     (0..cluster_size).collect(),
                 );
-                x.into_runnable(&mut ctx)
+                Result::<RunnableOperator, BuildError>::Ok(x.into_runnable(&mut ctx))
             })
-            .collect();
+            .collect::<Result<Vec<RunnableOperator>, BuildError>>()?;
         let worker = Worker {
             worker_id: this_worker,
             operators,
@@ -118,6 +125,8 @@ pub enum BuildError {
     or drop them before building the Runtime"
     )]
     UnfinishedStreams(usize),
+    #[error("Operator name '{0}' is not unique. Rename this operator.")]
+    NonUniqueName(String),
 }
 
 #[derive(Default)]

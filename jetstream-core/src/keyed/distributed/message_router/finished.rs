@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 
 use super::{super::types::*, interrogate::InterrogateRouter, MessageRouter, NormalRouter};
-use crate::{channels::selective_broadcast::Output, keyed::distributed::Remotes, types::*};
+use crate::{channels::operator_io::Output, keyed::distributed::Remotes, types::*};
 /// A collect route which has finished its local collection cycles
 /// and is now just waiting for all remotes to finish
 #[derive(Debug)]

@@ -1,2 +1,3 @@
+//! Contains channels for exchanging data betwee
 mod spsc;
-pub mod selective_broadcast;
+pub mod operator_io;

@@ -1,5 +1,5 @@
 use super::stateless_op::StatelessOp;
-use crate::channels::selective_broadcast::Output;
+use crate::channels::operator_io::Output;
 use crate::stream::JetStreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
@@ -38,6 +38,8 @@ pub trait FilterMap<K, VI, T> {
     /// ```
     fn filter_map<VO: Data>(
         self,
+        name: &str,
+        
         mapper: impl FnMut(VI) -> Option<VO> + 'static,
     ) -> JetStreamBuilder<K, VO, T>;
 }
@@ -50,9 +52,12 @@ where
 {
     fn filter_map<VO: Data>(
         self,
+        name: &str,
+    
         mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
     ) -> JetStreamBuilder<K, VO, T> {
         self.stateless_op(
+            name,
             move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
                 if let Some(x) = mapper(item.value) {
                     out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
@@ -76,9 +81,9 @@ mod tests {
         let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
         let stream = stream
-            .source(SingleIteratorSource::new(0..100))
-            .filter_map(|x| if x < 42 { Some(x * 2) } else { None })
-            .sink(collector.clone());
+            .source("source", SingleIteratorSource::new(0..100))
+            .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
+            .sink("sink", collector.clone());
         stream.finish();
         let mut worker = builder.build().unwrap();
 

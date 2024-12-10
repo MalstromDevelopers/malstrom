@@ -19,6 +19,7 @@ pub trait KeyDistribute<X, K: Key, V, T> {
     /// with no downtime.
     fn key_distribute(
         self,
+        name: &str,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
         partitioner: WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T>;
@@ -33,14 +34,18 @@ where
 {
     fn key_distribute(
         self,
+        name: &str,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
         partitioner: WorkerPartitioner<K>,
     ) -> JetStreamBuilder<K, V, T> {
         // TODO: The communication between upstream and downstream exchanger effectively
         // creates a loop in th dataflow graph. This is not good, because potentially the
         // cluster could deadlock in (most likely rare) edge cases
-        let keyed = self.key_local(key_func);
-        keyed.then(OperatorBuilder::built_by(move |ctx| {
+        let keyed = self.key_local(name, key_func);
+        keyed.then(OperatorBuilder::built_by(
+        name,
+            
+            move |ctx| {
             let mut dist = Distributor::new(partitioner, ctx);
             move |input, output, op_ctx| dist.run(input, output, op_ctx)
         }))

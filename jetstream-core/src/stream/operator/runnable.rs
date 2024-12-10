@@ -9,20 +9,19 @@ pub struct RunnableOperator {
     worker_id: WorkerId,
     operator_id: OperatorId,
     operator: Box<dyn Operator>,
-    label: String,
+    name: String,
 }
 
 impl RunnableOperator {
     pub fn new(
         operator: impl Operator + 'static,
-        label: Option<String>,
         context: &mut BuildContext,
     ) -> Self {
         RunnableOperator {
             worker_id: context.worker_id,
             operator_id: context.operator_id,
             operator: Box::new(operator),
-            label: label.unwrap_or("NO_LABEL".into()),
+            name: context.operator_name.clone()
         }
     }
 
@@ -45,6 +44,6 @@ impl RunnableOperator {
     }
 
     pub(crate) fn get_label(&self) -> &str {
-        &self.label
+        &self.name
     }
 }

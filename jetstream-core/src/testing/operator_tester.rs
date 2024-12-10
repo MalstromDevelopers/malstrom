@@ -7,7 +7,7 @@ use std::{
 
 use crate::types::*;
 use crate::{
-    channels::selective_broadcast::{full_broadcast, link, Input, Output},
+    channels::operator_io::{full_broadcast, link, Input, Output},
     runtime::{
         communication::{CommunicationBackendError, Distributable, Transport, TransportError},
         CommunicationBackend, CommunicationClient,

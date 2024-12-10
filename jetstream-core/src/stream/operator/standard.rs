@@ -1,7 +1,7 @@
 //! The standard do-it-all baseline operator used for everything.
 
 use crate::{
-    channels::selective_broadcast::{Input, Output},
+    channels::operator_io::{Input, Output},
     types::MaybeTime,
 };
 

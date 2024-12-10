@@ -1,4 +1,4 @@
-use std::{error::Error, marker::PhantomData};
+use std::{any::type_name, error::Error, marker::PhantomData};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -75,9 +75,9 @@ where
 
     pub fn recv(&self) -> Option<T> {
         let encoded = self.transport.recv().unwrap()?;
-        let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
-            .expect("Received message is deserializable");
-        Some(decoded)
+        // let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
+        //     .expect(&format!("Deserialize message, type: {typ}"));
+        Some(Self::decode(&encoded))
     }
 
     pub fn recv_all(&self) -> RecvAllIterator<'_, T> {
@@ -85,12 +85,10 @@ where
     }
 
     pub(crate) fn encode(msg: T) -> Vec<u8> {
-        bincode::serde::encode_to_vec(msg, BINCODE_CONFIG).expect("Serialization successfull")
+        rmp_serde::encode::to_vec(&msg).unwrap()
     }
     pub(crate) fn decode(msg: &[u8]) -> T {
-        bincode::serde::decode_from_slice(msg, BINCODE_CONFIG)
-            .expect("Deserialization successfull")
-            .0
+        rmp_serde::decode::from_slice(msg).unwrap()
     }
 }
 
@@ -109,17 +107,13 @@ impl<'a, T> RecvAllIterator<'a, T> {
 }
 impl<'a, T> Iterator for RecvAllIterator<'a, T>
 where
-    T: DeserializeOwned,
+    T: Serialize + DeserializeOwned,
 {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.inner.next()?.unwrap();
-        Some(
-            bincode::serde::decode_from_slice(&item, BINCODE_CONFIG)
-                .unwrap()
-                .0,
-        )
+        CommunicationClient::decode(&item)
     }
 }
 

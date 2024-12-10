@@ -23,8 +23,8 @@ where
     T: MaybeTime,
     S: StatelessSinkImpl<K, V, T>
 {
-    fn into_sink(mut self) -> OperatorBuilder<K, V, T, K, NoData, T> {
-        OperatorBuilder::direct( move |input, _out, _ctx| {
+    fn into_sink(mut self, name: &str) -> OperatorBuilder<K, V, T, K, NoData, T> {
+        OperatorBuilder::direct( name, move |input, _out, _ctx| {
             if let Some(Message::Data(msg)) = input.recv() {
                 self.0.sink_message(msg);
             }

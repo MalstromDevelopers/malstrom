@@ -4,7 +4,7 @@ use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    channels::selective_broadcast::{Input, Output},
+    channels::operator_io::{Input, Output},
     stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
@@ -50,6 +50,7 @@ where
 pub trait StatefulOp<K, VI, T> {
     fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
+        name: &str,
         logic: impl StatefulLogic<K, VI, T, VO, S>,
     ) -> JetStreamBuilder<K, VO, T>;
 }
@@ -62,9 +63,12 @@ where
 {
     fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
+        name: &str,
         logic: impl StatefulLogic<K, VI, T, VO, S>,
     ) -> JetStreamBuilder<K, VO, T> {
-        let op = OperatorBuilder::built_by(move |ctx| build_stateful_logic(ctx, logic));
+        let op = OperatorBuilder::built_by(
+            name,
+            move |ctx| build_stateful_logic(ctx, logic));
         self.then(op)
     }
 }
@@ -249,7 +253,7 @@ mod tests {
         // so we can unwrap it
         while tester.recv_local().is_some() {}
 
-        let foo_enc = bincode::serde::encode_to_vec("foo", bincode::config::standard()).unwrap();
+        let foo_enc = CommunicationClient::encode("foo".to_string());
         let (_key, result) = collector.try_unwrap().unwrap();
         // 42 is the operator id
         assert_eq!(IndexMap::from([(42, foo_enc)]), result)

@@ -3,7 +3,7 @@
 
 use std::{
     cell::RefCell,
-    collections::LinkedList,
+    collections::VecDeque,
     rc::Rc,
 };
 
@@ -11,7 +11,7 @@ type Shared<T> = Rc<RefCell<SharedInner<T>>>;
 
 #[derive(Debug)]
 struct SharedInner<T> {
-    buffer: LinkedList<T>,
+    buffer: VecDeque<T>,
     has_receiver: bool,
 }
 impl<T> SharedInner<T> {

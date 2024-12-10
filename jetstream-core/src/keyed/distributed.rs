@@ -10,7 +10,7 @@ use message_router::{MessageRouter, NormalRouter};
 pub use types::*;
 
 use crate::{
-    channels::selective_broadcast::{Input, Output},
+    channels::operator_io::{Input, Output},
     runtime::CommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},

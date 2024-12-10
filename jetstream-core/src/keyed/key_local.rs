@@ -1,4 +1,4 @@
-use crate::channels::selective_broadcast::{Input, Output};
+use crate::channels::operator_io::{Input, Output};
 
 use crate::stream::{JetStreamBuilder, OperatorBuilder};
 use crate::types::{Data, DataMessage, Key, MaybeKey, Message, Timestamp};
@@ -14,6 +14,8 @@ pub trait KeyLocal<X, K: Key, V, T> {
     /// `key_distribute`.
     fn key_local(
         self,
+        name: &str,
+
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> JetStreamBuilder<K, V, T>;
 }
@@ -27,9 +29,12 @@ where
 {
     fn key_local(
         self,
+        name: &str,
+
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> JetStreamBuilder<K, V, T> {
         let op = OperatorBuilder::direct(
+            name,
             move |input: &mut Input<X, V, T>, output: &mut Output<K, V, T>, _ctx| {
                 match input.recv() {
                     Some(Message::Data(d)) => {

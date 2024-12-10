@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::Output,
+    channels::operator_io::Output,
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::Barrier,
     types::{

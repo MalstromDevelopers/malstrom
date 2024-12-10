@@ -1,2 +1,2 @@
-pub mod consumer;
-pub mod producer;
+pub mod sink;
+pub mod source;

@@ -1,5 +1,5 @@
 use crate::{
-    channels::selective_broadcast::Output,
+    channels::operator_io::Output,
     operators::{map::Map, split::Split},
     stream::JetStreamBuilder,
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
@@ -29,17 +29,20 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
 pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
     mixed: JetStreamBuilder<K, OnTimeLate<V>, T>,
 ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
-    let [ontime, late] = mixed.const_split(|x, _| match x.value {
+    // create a randint so we do not get name collisions.
+    // u32 because unlick u64 it works well when displayed in a
+    // browser (floats only)
+    let randint = rand::random::<u32>();
+    let [ontime, late] = mixed.const_split(&format!("malstrom::time-split-{randint}"),|x, _| match x.value {
         OnTimeLate::OnTime(_) => [0].into_iter().collect(),
         OnTimeLate::Late(_) => [1].into_iter().collect(),
     });
-
-    let ontime = ontime.map(|x| match x {
+    let ontime = ontime.map(&format!("malstrom::ontime-{randint}"), |x| match x {
         OnTimeLate::OnTime(y) => y,
         OnTimeLate::Late(_) => unreachable!("ontime"),
     });
 
-    let late = late.map(|x| match x {
+    let late = late.map(&format!("malstrom::late-{randint}"), |x| match x {
         OnTimeLate::OnTime(_) => unreachable!("late"),
         OnTimeLate::Late(y) => y,
     });

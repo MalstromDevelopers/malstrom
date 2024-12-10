@@ -2,7 +2,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    channels::selective_broadcast::Output,
+    channels::operator_io::Output,
     stream::JetStreamBuilder,
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
@@ -57,6 +57,7 @@ pub trait StatefulMap<K, VI, T> {
     /// ```
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
+        name: &str,
         mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
     ) -> JetStreamBuilder<K, VO, T>;
 }
@@ -99,9 +100,10 @@ where
 {
     fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
+        name: &str,
         mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
     ) -> JetStreamBuilder<K, VO, T> {
-        self.stateful_op(MapperOp::new(mapper))
+        self.stateful_op(name, MapperOp::new(mapper))
     }
 }
 
@@ -134,11 +136,11 @@ mod test {
         let collector = VecSink::new();
 
         stream
-            .source(SingleIteratorSource::new(0..100))
+            .source("source", SingleIteratorSource::new(0..100))
             // calculate a running total split by odd and even numbers
-            .key_local(|x| (x.value & 1) == 1)
-            .stateful_map(|_, i, s: i32| (s + i, Some(s + i)))
-            .sink(collector.clone())
+            .key_local("key-local", |x| (x.value & 1) == 1)
+            .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
+            .sink("sink", collector.clone())
             .finish();
 
         builder.build().unwrap().execute();
@@ -163,12 +165,12 @@ mod test {
         let collector = VecSink::new();
 
         stream
-            .source(SingleIteratorSource::new(
+            .source("source", SingleIteratorSource::new(
                 ["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()),
             ))
             // concat the words
-            .key_local(|x| x.value.len())
-            .stateful_map(|_, x, mut s: String| {
+            .key_local("key-local", |x| x.value.len())
+            .stateful_map("concat", |_, x, mut s: String| {
                 s.push_str(&x);
                 if s.len() >= 6 {
                     (s, None)
@@ -176,7 +178,7 @@ mod test {
                     (s.clone(), Some(s))
                 }
             })
-            .sink(collector.clone())
+            .sink("sink",collector.clone())
             .finish();
         builder.build().unwrap().execute();
 

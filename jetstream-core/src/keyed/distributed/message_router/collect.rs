@@ -1,7 +1,7 @@
 use indexmap::IndexSet;
 
 use crate::{
-    channels::selective_broadcast::Output,
+    channels::operator_io::Output,
     keyed::distributed::{NetworkDataMessage, Remotes},
     runtime::communication::broadcast,
     types::*,
@@ -152,7 +152,7 @@ where
 mod test {
 
     use crate::{
-        channels::selective_broadcast::{full_broadcast, link, Input},
+        channels::operator_io::{full_broadcast, link, Input},
         runtime::CommunicationClient,
         testing::{FakeCommunication, SentMessage},
     };

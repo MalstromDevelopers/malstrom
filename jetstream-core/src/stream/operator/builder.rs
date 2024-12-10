@@ -1,7 +1,9 @@
 //! A builder to build JetStream operators
 
+use std::hash::{Hash, Hasher};
+
 use crate::{
-    channels::selective_broadcast::{full_broadcast, Input, Output},
+    channels::operator_io::{full_broadcast, Input, Output},
     types::{
         Data, MaybeKey, MaybeTime, OperatorPartitioner,
     },
@@ -21,7 +23,8 @@ pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     // TODO: get rid of the dynamic dispatch here
     logic_builder: Box<LogicBuilder<KI, VI, TI, KO, VO, TO>>,
     output: Output<KO, VO, TO>,
-    label: Option<String>,
+    operator_id: u64,
+    name: String // human readable name for debugging
 }
 
 pub trait Logic<KI, VI, TI, KO, VO, TO>:
@@ -49,11 +52,12 @@ where
     TI: MaybeTime,
     TO: MaybeTime,
 {
-    pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO>>(logic: M) -> Self {
-        Self::built_by(|_| Box::new(logic))
+    pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO>>(name: &str, logic: M) -> Self {
+        Self::built_by(name, |_| Box::new(logic),)
     }
 
     pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
+        name: &str,
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
     ) -> Self {
         let input = Input::new_unlinked();
@@ -62,11 +66,13 @@ where
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
-            label: None,
+            operator_id: hash_op_name(name),
+            name: name.to_owned()
         }
     }
 
     pub fn new_with_output_partitioning<M: Logic<KI, VI, TI, KO, VO, TO>>(
+        name: &str,
         logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
         partitioner: impl OperatorPartitioner<KO, VO, TO>,
     ) -> Self {
@@ -76,7 +82,8 @@ where
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),
             output,
-            label: None,
+            operator_id: hash_op_name(name),
+            name: name.to_owned()
         }
     }
 
@@ -106,10 +113,6 @@ where
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {
         self
     }
-
-    fn label(&mut self, label: String) {
-        self.label = Some(label)
-    }
 }
 
 impl<KI, VI, TI, KO, VO, TO> BuildableOperator for OperatorBuilder<KI, VI, TI, KO, VO, TO>
@@ -127,10 +130,30 @@ where
             logic: (self.logic_builder)(context),
             output: self.output,
         };
-        RunnableOperator::new(operator, self.label, context)
+        RunnableOperator::new(operator, context)
     }
 
-    fn get_label(&self) -> Option<String> {
-        self.label.clone()
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+    
+    fn get_id(&self) -> u64 {
+        self.operator_id
+    }
+}
+
+fn hash_op_name(name: &str) -> u64 {
+    let mut hasher = seahash::SeaHasher::new();
+    name.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+
+    /// this test should break if we somehow break hash stability between versions
+    #[test]
+    fn hash_is_stable() {
+        todo!()
     }
 }

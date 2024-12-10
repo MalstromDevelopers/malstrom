@@ -37,6 +37,8 @@ pub trait Inspect<K, V, T> {
     /// ```
     fn inspect(
         self,
+        name: &str,
+
         inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
     ) -> JetStreamBuilder<K, V, T>;
 }
@@ -49,9 +51,11 @@ where
 {
     fn inspect(
         self,
+        name: &str,
+        
         mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
     ) -> JetStreamBuilder<K, V, T> {
-        let operator = OperatorBuilder::direct(move |input, output, ctx| match input.recv() {
+        let operator = OperatorBuilder::direct(name, move |input, output, ctx| match input.recv() {
             Some(Message::Data(d)) => {
                 inspector(&d, ctx);
                 output.send(Message::Data(d));
@@ -86,9 +90,9 @@ mod tests {
         let input = vec!["hello", "world", "foo", "bar"];
         let expected = input.clone();
         stream
-            .source(SingleIteratorSource::new(input))
-            .inspect(move |x, _ctx| inspect_collector_moved.give(x.value.to_owned()))
-            .sink(output_collector.clone())
+            .source("source", SingleIteratorSource::new(input))
+            .inspect("inspect", move |x, _ctx| inspect_collector_moved.give(x.value.to_owned()))
+            .sink("sink",output_collector.clone())
             .finish();
         builder.build().unwrap().execute();
 

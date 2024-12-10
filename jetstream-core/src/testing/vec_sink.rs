@@ -62,8 +62,8 @@ where
     V: Data,
     T: MaybeTime,
 {
-    fn into_sink(self) -> OperatorBuilder<K, V, T, K, NoData, T> {
-        OperatorBuilder::direct(move |input, output, _ctx| {
+    fn into_sink(self, name: &str) -> OperatorBuilder<K, V, T, K, NoData, T> {
+        OperatorBuilder::direct(name, move |input, output, _ctx| {
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Data(x) => self.give(x),
@@ -86,8 +86,8 @@ where
     V: MaybeData,
     T: MaybeTime,
 {
-    fn into_sink_full(self) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime> {
-        OperatorBuilder::direct(move |input, _, _ctx| {
+    fn into_sink_full(self, name: &str) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime> {
+        OperatorBuilder::direct(name, move |input, _, _ctx| {
             if let Some(msg) = input.recv() {
                 self.give(msg)
             }
