@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import footnote from 'markdown-it-footnote'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
@@ -20,6 +21,7 @@ export default defineConfig({
           { text: 'Joining and Splitting Streams', link: '/guide/JoiningSplitting' },
           { text: 'Timely Processing', link: '/guide/TimelyProcessing' },
           { text: 'Deploying to Kubernetes', link: '/guide/Kubernetes' },
+          { text: 'Malstrom compared to other frameworks', link: '/MalstromCompared' },
         ]
       }
     ],
@@ -27,5 +29,10 @@ export default defineConfig({
     socialLinks: [
       { icon: 'github', link: 'https://github.com/MalstromDevelopers/jetstream' }
     ]
+  },
+  markdown: {
+    config: (md) => {
+      md.use(footnote)
+    }
   }
 })
