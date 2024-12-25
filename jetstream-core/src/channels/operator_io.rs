@@ -10,6 +10,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use itertools::Itertools;
+
 use super::spsc;
 
 use crate::types::{MaybeTime, Message, OperatorId, OperatorPartitioner};
@@ -31,8 +33,9 @@ enum MessageWrapper<K, V, T> {
 }
 
 // /// A simple partitioner, which will broadcast a value to all receivers
-pub fn full_broadcast<T>(_: &T, scale: u64) -> Vec<OperatorId> {
-    (0..scale).collect()
+#[inline(always)]
+pub fn full_broadcast<T>(_: &T, outputs: &mut [bool]) -> () {
+    outputs.fill(true);
 }
 
 /// Link a Sender and receiver together
@@ -89,23 +92,20 @@ where
             return;
         }
         let recipient_len = self.senders.len();
-        let recipient_len_u64: u64 = recipient_len
-            .try_into()
-            .expect("Too many message recipients");
+        let mut output_flags = vec![false; recipient_len];
         match msg {
             Message::Data(x) => {
-                let indices = (self.partitioner)(&x, recipient_len_u64);
-                let l = indices.len();
-                for (i, msg) in indices
-                    .into_iter()
-                    .zip(itertools::repeat_n(Message::Data(x), l))
+                (self.partitioner)(&x, &mut output_flags);
+                let msg_count = output_flags.iter().map(|x| if *x {1} else {0}).sum();
+                let mut messages = itertools::repeat_n(Message::Data(x), msg_count);
+                for (enabled, sender) in output_flags.into_iter().zip_eq(self.senders.iter())
                 {
-                    let idx: usize = i.try_into().expect("Too many recipients");
-                    let s = self
-                        .senders
-                        .get(idx)
-                        .expect("Partitioner index out of range");
-                    s.send(msg);
+                    if enabled {
+                        // PANIC: we know next will work because we called repeat_n with
+                        // the sum of all `true` vals
+                        let msg = messages.next().unwrap();
+                        sender.send(msg);
+                    }
                 }
             }
             x => {

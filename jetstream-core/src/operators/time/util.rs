@@ -33,9 +33,11 @@ pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
     // u32 because unlick u64 it works well when displayed in a
     // browser (floats only)
     let randint = rand::random::<u32>();
-    let [ontime, late] = mixed.const_split(&format!("malstrom::time-split-{randint}"),|x, _| match x.value {
-        OnTimeLate::OnTime(_) => [0].into_iter().collect(),
-        OnTimeLate::Late(_) => [1].into_iter().collect(),
+    let [ontime, late] = mixed.const_split::<2>(
+        &format!("malstrom::time-split-{randint}"),
+        |x, outs| match x.value {
+        OnTimeLate::OnTime(_) => {outs[0] = true;},
+        OnTimeLate::Late(_) => {outs[1] = true;},
     });
     let ontime = ontime.map(&format!("malstrom::ontime-{randint}"), |x| match x {
         OnTimeLate::OnTime(y) => y,

@@ -12,10 +12,10 @@ pub type OperatorId = u64;
 ///
 /// And should emit the **indices** of the receivers, which should receive this message
 pub trait OperatorPartitioner<K, V, T>:
-    Fn(&DataMessage<K, V, T>, u64) -> Vec<OperatorId> + 'static
+    Fn(&DataMessage<K, V, T>, &mut [bool]) -> () + 'static
 {
 }
-impl<K, V, T, U: Fn(&DataMessage<K, V, T>, u64) -> Vec<OperatorId> + 'static>
-    OperatorPartitioner<K, V, T> for U
+impl<K, V, T, U> OperatorPartitioner<K, V, T> for U where
+    U: Fn(&DataMessage<K, V, T>, &mut [bool]) -> () + 'static
 {
 }

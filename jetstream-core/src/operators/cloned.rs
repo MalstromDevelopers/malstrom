@@ -26,12 +26,14 @@ T: MaybeTime {
         self,
         name: &str,
     ) -> [JetStreamBuilder<K, V, T>; N] {
-        self.const_split(name, |_, i| (0..i).collect())
+        self.const_split(name, |_, outputs: &mut [bool; N]| {
+            *outputs = [true; N];
+        })
     }
 
     fn cloned( self, 
         name: &str,
         outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>> {
-        self.split(name, |_, i| (0..i).collect(), outputs)
+        self.split(name, |_, outs: &mut [bool]| outs.fill(true), outputs)
     }
 }

@@ -8,14 +8,17 @@ hero:
   tagline: Stateful, Reliable, Efficient
   actions:
     - theme: brand
-      text: Quickstart
-      link: /guide/quickstart
+      text: About Malstrom
+      link: WhatIsMalstrom.md
     - theme: alt
-      text: Learn about Stream Processing
-      link: /guid/what-is-stream-processing.md
+      text: Getting Started
+      link: /guide/GettingStarted.md
     - theme: alt
       text: API Documentation
       link: docs.rs/malstrom
+    - theme: alt
+      text: What is Stream Processing?
+      link: https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=0s
 
 features:
   - title: Distributed
@@ -50,5 +53,4 @@ features:
     details: >
       No proprietary SQL dialect, no bindings: Malstrom offers a native Rust API, finally
       write data pipelines in everyones favourite programming language.
-
 ---

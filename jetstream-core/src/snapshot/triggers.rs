@@ -5,13 +5,16 @@ use crate::runtime::SnapshotTrigger;
 /// A simple trigger which fires at constant interval based on system time
 pub struct IntervalSnapshots {
     interval: Duration,
-    last_trigger: Instant
+    last_trigger: Instant,
 }
 
 impl IntervalSnapshots {
     /// Create a new trigger of the given interval
     pub fn new(interval: Duration) -> Self {
-        IntervalSnapshots { interval, last_trigger: Instant::now() }
+        IntervalSnapshots {
+            interval,
+            last_trigger: Instant::now(),
+        }
     }
 }
 impl SnapshotTrigger for IntervalSnapshots {

@@ -71,13 +71,12 @@ where
         }
     }
 
-    pub fn new_with_output_partitioning<M: Logic<KI, VI, TI, KO, VO, TO>>(
+    pub(crate) fn new_with_output<M: Logic<KI, VI, TI, KO, VO, TO>>(
         name: &str,
         logic_builder: impl FnOnce(&BuildContext) -> M + 'static,
-        partitioner: impl OperatorPartitioner<KO, VO, TO>,
+        output: Output<KO, VO, TO>,
     ) -> Self {
         let input = Input::new_unlinked();
-        let output = Output::new_unlinked(partitioner);
         Self {
             input,
             logic_builder: Box::new(|ctx| Box::new(logic_builder(ctx))),

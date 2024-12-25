@@ -1,6 +1,6 @@
-use crate::channels::operator_io::{link, Input};
+use crate::channels::operator_io::{link, Input, Output};
 use crate::stream::{AppendableOperator, JetStreamBuilder, OperatorBuilder};
-use crate::types::{MaybeData, MaybeKey, MaybeTime, OperatorPartitioner};
+use crate::types::{DataMessage, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner};
 use std::rc::Rc;
 
 pub trait Split<K, V, T>: super::sealed::Sealed {
@@ -38,13 +38,13 @@ pub trait Split<K, V, T>: super::sealed::Sealed {
     fn const_split<const N: usize>(
         self,
         name: &str,
-        partitioner: impl OperatorPartitioner<K, V, T>,
+        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool; N]) -> () + 'static,
     ) -> [JetStreamBuilder<K, V, T>; N];
 
     /// Split a stream into multiple streams
     fn split( self, 
         name: &str,
-        partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>>;
+        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool]) -> () + 'static, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>>;
 }
 
 impl<K, V, T> Split<K, V, T> for JetStreamBuilder<K, V, T>
@@ -56,8 +56,15 @@ where
     fn const_split<const N: usize>(
         self,
         name: &str,
-        partitioner: impl OperatorPartitioner<K, V, T>,
+        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool; N]) -> () + 'static,
     ) -> [JetStreamBuilder<K, V, T>; N] {
+        let partitioner = move |msg: &DataMessage<K, V, T>, outputs: &mut [bool]| {
+            // PANIC: Safe to unwrap as long as the impl of `split` is correct
+            let outputs: &mut [bool; N] = outputs.try_into().expect(
+                "Expected array size to match. This is a bug."
+            );
+            partitioner(msg, outputs)
+        };
         let streams = self.split(name, partitioner, N);
         assert_eq!(streams.len(), N);
         // We need unwrap_unchecked because the stream builder does not implement Debug
@@ -65,12 +72,14 @@ where
         unsafe {streams.try_into().unwrap_unchecked()}
     }
 
-    fn split(self, name:&str, partitioner: impl OperatorPartitioner<K, V, T>, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>> {
+    fn split(self, name:&str, partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool]) -> () + 'static, outputs: usize ) -> Vec<JetStreamBuilder<K, V, T>> {
         let rt = self.get_runtime();
         let mut stream_receiver = self.finish_pop_tail();
         let mut downstream_receivers: Vec<Input<K, V, T>>  = (0..outputs).map(|_| Input::new_unlinked()).collect();
 
-        let mut partition_op = OperatorBuilder::new_with_output_partitioning(
+        let output = Output::new_unlinked(partitioner);
+
+        let mut partition_op = OperatorBuilder::new_with_output(
             name,
             |_| {
                 |input, output, _ctx| {
@@ -79,7 +88,7 @@ where
                     }
                 }
             },
-            partitioner,
+            output,
         );
         // we perform a swap so our new operator will get the messages
         // which come out of the input stream
@@ -116,7 +125,14 @@ mod tests {
             let stream = worker
                 .new_stream()
                 .source("source", SingleIteratorSource::new(0..10u64));
-            let [even, odd] = stream.const_split("const-split",|msg, i| vec![msg.value % i]);
+            let [even, odd] = stream.const_split(
+                "const-split",
+                |msg, outputs| {
+                    let is_even = msg.value & 1 == 0;
+                    *outputs = [is_even, !is_even];
+                }
+            
+            );
             even.sink("sink-even", even_sink.clone()).finish();
             odd.sink("sink-odd", odd_sink.clone()).finish();
             worker
@@ -143,7 +159,17 @@ mod tests {
             let stream = worker
                 .new_stream()
                 .source("source", SingleIteratorSource::new(0..10u64));
-            let mut streams = stream.split("split", |msg, i| vec![msg.value % i], 2);
+            let mut streams = stream.split(
+                "split", 
+                |msg, outputs| {
+                    if msg.value & 1 == 0 {
+                        // even
+                        outputs[0] = true;
+                    } else {
+                        outputs[1] = true;
+                    }
+                }, 
+                2);
             let odd = streams.pop().unwrap();
             let even = streams.pop().unwrap();
             even.sink("sink-even", even_sink.clone()).finish();
