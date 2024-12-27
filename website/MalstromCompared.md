@@ -24,6 +24,7 @@ Both Flink and Malstrom
 - are capable of persistent stateful computations
 - allow exactly-once processing
 - use the ABS algorithm for snapshotting
+- can store snapshots to cloud storage
 - use a very similar event time system
 
 Malstrom draws a lot of inspiration from the many things Flink does well, while at the same time
@@ -47,9 +48,33 @@ Flink supports larger than memory state, while Malstrom does not (yet!).
 
 Flink favors higher level APIs while Malstrom exposes both high and low level APIs.
 
-Flink can not rescale without downtime, Malstrom can.
+Flink clusters can not rescale without downtime, Malstrom can.
+
+Malstrom can be extended with custom runtimes and snapshot storage
 
 ## Bytewax
+
+Bytewax is a stream processing system for Python built on a Rust core using Timely Dataflow.
+Bytewax is an excellent choice for Python based streaming systems.
+
+### Similarities
+
+Both Bytewax and Malstrom
+
+- use the dataflow programming model
+- use a data-parallel architecture
+- support exactly-once processing
+- support snapshotting
+- both have high- and low-level APIs
+
+### Differences
+
+Bytewax's API language is Python, Malstrom's API language is Rust.
+
+While both have an event-time system, Malstrom exposes more direct control over timestamps and
+epochs to the user.
+
+Malstrom clusters can rescale without downtime, Bytewax clusters can not.
 
 ## Fluvio
 
