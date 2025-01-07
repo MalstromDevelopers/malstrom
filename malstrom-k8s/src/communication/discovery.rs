@@ -1,4 +1,4 @@
-use jetstream::types::WorkerId;
+use malstrom::types::WorkerId;
 use tonic::transport::Endpoint;
 
 use crate::config::CONFIG;

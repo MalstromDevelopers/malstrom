@@ -13,7 +13,7 @@ flume = "0.11.1"
 futures = "0.3.31"
 futures-core = "0.3.31"
 hickory-resolver = "0.24.1"
-jetstream = { path = "../jetstream-core" }
+malstrom = { path = "../malstrom-core" }
 kameo = { version = "0.12.2", features = ["remote"] }
 kanal = "0.1.0-pre8"
 log = "0.4.22"

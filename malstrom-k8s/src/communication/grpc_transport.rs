@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use crate::config::CONFIG;
 use flume::{Receiver, Sender};
-use jetstream::runtime::communication::{Transport, TransportError};
-use jetstream::types::{OperatorId, WorkerId};
+use malstrom::runtime::communication::{Transport, TransportError};
+use malstrom::types::{OperatorId, WorkerId};
 use log::{debug, warn};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
@@ -43,11 +43,11 @@ impl GrpcTransport {
 }
 
 impl Transport for GrpcTransport {
-    fn send(&self, msg: Vec<u8>) -> Result<(), jetstream::runtime::communication::TransportError> {
+    fn send(&self, msg: Vec<u8>) -> Result<(), malstrom::runtime::communication::TransportError> {
         self.outgoing.send(msg).map_err(TransportError::send_error)
     }
 
-    fn recv(&self) -> Result<Option<Vec<u8>>, jetstream::runtime::communication::TransportError> {
+    fn recv(&self) -> Result<Option<Vec<u8>>, malstrom::runtime::communication::TransportError> {
         match self.inbound_rx.try_recv() {
             Ok(x) => Ok(Some(x)),
             // Err is returned if no data or the sender was dropped

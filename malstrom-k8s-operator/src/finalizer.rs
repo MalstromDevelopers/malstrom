@@ -13,7 +13,7 @@ pub async fn add(
     let api: Api<MalstromJob> = Api::namespaced(client, namespace);
     let finalizer: Value = json!({
         "metadata": {
-            "finalizers": ["jetstream/finalizer"]
+            "finalizers": ["malstrom/finalizer"]
         }
     });
 

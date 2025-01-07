@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use jetstream::sources::StatefulSourcePartition;
+use malstrom::sources::StatefulSourcePartition;
 
-use jetstream::sources::StatefulSourceImpl;
+use malstrom::sources::StatefulSourceImpl;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::DefaultConsumerContext;
 use rdkafka::consumer::{BaseConsumer, Consumer};

@@ -1,6 +1,6 @@
 use std::time::Duration;
-use jetstream::sinks::StatelessSinkImpl;
-use jetstream::types::DataMessage;
+use malstrom::sinks::StatelessSinkImpl;
+use malstrom::types::DataMessage;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::BaseProducer;
 

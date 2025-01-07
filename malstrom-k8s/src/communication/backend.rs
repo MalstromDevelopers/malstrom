@@ -1,7 +1,7 @@
 use flume::{Receiver, Sender, TryRecvError};
-use jetstream::runtime::communication::Transport;
-use jetstream::runtime::CommunicationBackend;
-use jetstream::types::{OperatorId, WorkerId};
+use malstrom::runtime::communication::Transport;
+use malstrom::runtime::CommunicationBackend;
+use malstrom::types::{OperatorId, WorkerId};
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ impl CommunicationBackend for GrpcBackend {
         &mut self,
         to_worker: WorkerId,
         operator: OperatorId,
-    ) -> Result<Box<dyn Transport>, jetstream::runtime::communication::CommunicationBackendError>
+    ) -> Result<Box<dyn Transport>, malstrom::runtime::communication::CommunicationBackendError>
     {
         let remote_addr = lookup_worker_addr(to_worker);
         let outgoing = self.get_or_create_outgoing_send(to_worker, operator);

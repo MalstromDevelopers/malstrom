@@ -1,5 +1,5 @@
 use config::CONFIG;
-use jetstream::{runtime::{CommunicationError, RuntimeFlavor, WorkerBuilder}, snapshot::PersistenceBackend, types::WorkerId};
+use malstrom::{runtime::{CommunicationError, RuntimeFlavor, WorkerBuilder}, snapshot::PersistenceBackend, types::WorkerId};
 
 mod communication;
 mod config;

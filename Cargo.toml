@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [ "dirty-tests",
-    "jetstream-core", "k8s-app", "malstrom-k8s", "malstrom-k8s-operator",
+    "malstrom-core", "k8s-app", "malstrom-k8s", "malstrom-k8s-operator",
     "malstrom-kafka",
 ]
 

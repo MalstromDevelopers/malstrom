@@ -1,7 +1,7 @@
 use std::{net::{IpAddr, SocketAddr}, ops::Deref, str::FromStr, time::Duration};
 
 use backon::ConstantBuilder;
-use jetstream::types::WorkerId;
+use malstrom::types::WorkerId;
 use once_cell::sync::Lazy;
 use thiserror::Error;
 

@@ -6,6 +6,6 @@ edition = "2021"
 [dependencies]
 env_logger = "0.11.5"
 flume = "0.11.1"
-jetstream = { path = "../jetstream-core" }
+malstrom = { path = "../malstrom-core" }
 malstrom-k8s = { path = "../malstrom-k8s" }
 quinn = "0.11.5"

@@ -48,10 +48,10 @@ pub async fn reconcile(
 }
 
 /// Decide what action to perform depending on the currently and desired states
-fn make_decision(jetstream_job: &MalstromJob) -> DecisionAction {
-    if jetstream_job.meta().deletion_timestamp.is_some() {
+fn make_decision(malstrom_job: &MalstromJob) -> DecisionAction {
+    if malstrom_job.meta().deletion_timestamp.is_some() {
         DecisionAction::Delete
-    } else if jetstream_job
+    } else if malstrom_job
         .meta()
         .finalizers
         .as_ref()

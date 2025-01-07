@@ -1,4 +1,4 @@
-use jetstream::{keyed::{partitioners::rendezvous_select, KeyDistribute}, prelude::{Inspect, Source}, runtime::{RuntimeFlavor, WorkerBuilder}, snapshot::NoPersistence, sources::SingleIteratorSource};
+use malstrom::{keyed::{partitioners::rendezvous_select, KeyDistribute}, prelude::{Inspect, Source}, runtime::{RuntimeFlavor, WorkerBuilder}, snapshot::NoPersistence, sources::SingleIteratorSource};
 use malstrom_k8s::KubernetesRuntime;
 
 fn main() {
