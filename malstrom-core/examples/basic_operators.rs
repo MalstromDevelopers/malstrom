@@ -1,4 +1,4 @@
-// main.rs
+/// A very basic example which uses stream operators
 use malstrom::operators::*;
 use malstrom::runtime::{SingleThreadRuntime, SingleThreadRuntimeFlavor, WorkerBuilder};
 use malstrom::snapshot::{NoPersistence, NoSnapshots};
