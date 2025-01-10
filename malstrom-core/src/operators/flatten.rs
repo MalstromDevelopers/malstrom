@@ -73,6 +73,7 @@ mod tests {
 
     use crate::{
         operators::{source::Source, KeyLocal, Sink},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_stream, VecSink},
     };
@@ -89,8 +90,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
             )
             .flatten("flatten")
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
         builder.build().unwrap().execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
@@ -109,8 +109,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
             )
             .flatten("flatten")
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
 
         builder.build().unwrap().execute();
         let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
@@ -137,8 +136,7 @@ mod tests {
             )
             .key_local("key-local", |x| x.value.len())
             .flatten("flatten")
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
         builder.build().unwrap().execute();
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
         let result = collector

@@ -74,6 +74,7 @@ mod tests {
 
     use crate::{
         operators::{inspect::Inspect, source::Source, Sink},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_stream, VecSink},
     };
@@ -97,8 +98,7 @@ mod tests {
             .inspect("inspect", move |x, _ctx| {
                 inspect_collector_moved.give(x.value.to_owned())
             })
-            .sink("sink", output_collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(output_collector.clone()));
         builder.build().unwrap().execute();
 
         assert_eq!(inspect_collector.drain_vec(..), expected);

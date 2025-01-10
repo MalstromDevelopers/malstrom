@@ -238,6 +238,7 @@ mod tests {
         keyed::KeyLocal,
         operators::*,
         runtime::{threaded::SingleThreadRuntime, WorkerBuilder},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::VecSink,
     };
@@ -334,8 +335,7 @@ mod tests {
                         let sum = val + state;
                         (sum, Some(sum))
                     })
-                    .sink("sink", capture.clone())
-                    .finish();
+                    .sink("sink", StatelessSink::new(capture.clone()));
                 worker
             });
             rt.execute().unwrap();

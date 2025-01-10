@@ -1,7 +1,7 @@
 mod single_iterator;
-mod stateful_source;
-mod stateless_source;
+mod stateful;
+mod stateless;
 
 pub use single_iterator::SingleIteratorSource;
-pub use stateful_source::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
-pub use stateless_source::{StatelessSource, StatelessSourceImpl, StatelessSourcePartition};
+pub use stateful::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
+pub use stateless::{StatelessSource, StatelessSourceImpl, StatelessSourcePartition};

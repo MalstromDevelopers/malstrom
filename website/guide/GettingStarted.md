@@ -19,23 +19,7 @@ In our `main.rs` file we will want to create two functions:
 
 Lets look at the code and then go through it step-by-step
 
-```rust
-// main.rs
-use malstrom::runtime::{WorkerBuilder, SingleThreadRuntime, SingleThreadRuntimeFlavor};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-
-fn main() {
-	SingleThreadRuntime::new(build_dataflow).execute().unwrap()
-}
-
-fn build_dataflow(flavor: SingleThreadRuntimeFlavor) -> WorkerBuilder {
-	let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);
-	worker
-		.new_stream()
-		.finish();
-	worker
-}
-```
+<<< @../../malstrom-core/examples/basic_noop.rs
 
 Feel free to copy and run this snippet, it does absolutely nothing! Let's go through it:
 
@@ -54,31 +38,7 @@ Finally we return the `WorkerBuilder`.
 
 A core concept of Malstrom are [[Operators]]. Operators are the nodes of our execution graph and in the most general sense they do ✨something✨ with our data. Malstrom comes with many pre-built operators (though you can create your [own](CustomOperators)). Let's import them and use the `.source` operator to add some data to our program.
 
-```rust
-// main.rs
-use malstrom::runtime::{WorkerBuilder, SingleThreadRuntime, SingleThreadRuntimeFlavor};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-use malstrom::operators::*;
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-
-fn main() {
-	SingleThreadRuntime::new(build_dataflow).execute().unwrap()
-}
-
-fn build_dataflow(flavor: SingleThreadRuntimeFlavor) -> WorkerBuilder {
-	let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);
-	worker
-		.new_stream()
-		.source( // <-- this is an operator
-			"iter-source",
-			StatelessSource::new(SingleIteratorSource::new(0.=100))
-		)
-		.map("double", |x| x * 2)
-		.inspect("print", |x, _| println!("{x}")) // <-- and this too
-		.finish();
-	worker
-}
-```
+<<< @../../malstrom-core/examples/basic_operators.rs
 
 If you now run this code you'll see every second number from 0 to 200 printed to the console. Let's look at what we did:
 
@@ -94,33 +54,7 @@ As you can see, all operators must have a **unique** name. Choosing a good name 
 
 What if we want to do something more complex than doubling numbers? We will need more power! Luckily going from a single to multiple threads ([or machines](Kubernetes)) is super easy:
 
-```rust
-// main.rs
-use malstrom::runtime::{WorkerBuilder, MultiThreadRuntime, RuntimeFlavor};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-use malstrom::operators::*;
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-use malstrom::distributed::rendezvous_select;
-
-fn main() {
-	MultiThreadRuntime::new::<4>(build_dataflow).execute().unwrap()
-}
-
-fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder {
-	let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);
-	worker
-		.new_stream()
-		.source(
-			"iter-source",
-			StatelessSource::new(SingleIteratorSource::new(0.=100))
-		)
-		.key_by("key-by-value", |x| x.value, rendezvous_select)
-		.map("double", |x| x * 2)
-		.inspect("print", |x, ctx| println!("{x} @ Thread {}", ctx.worker_id))
-		.finish();
-	worker
-}
-```
+<<< @../../malstrom-core/examples/multithreading.rs
 
 You will again see all numbers printed, along with the ID of the thread where they where processed (a number between 0 and 3).
 Let's reflect on the changes we made:

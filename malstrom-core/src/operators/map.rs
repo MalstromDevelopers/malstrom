@@ -66,6 +66,7 @@ mod tests {
 
     use crate::{
         operators::{map::Map, source::Source, Sink},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_stream, VecSink},
     };
@@ -83,8 +84,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new(input)),
             )
             .map("get-len", |x| x.len())
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
         builder.build().unwrap().execute();
 
         assert_eq!(

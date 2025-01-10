@@ -1,50 +1,54 @@
 use crate::{
+    channels::operator_io::{Input, Output},
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{Data, MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
+    types::{Data, MaybeKey, Message, NoData, NoKey, NoTime, Timestamp},
 };
 
-pub trait IntoSink<K, V, T> {
-    fn into_sink(self, name: &str) -> OperatorBuilder<K, V, T, K, NoData, T>;
+#[diagnostic::on_unimplemented(message = "Not a Sink: 
+    You might need to wrap this in `StatefulSink::new` or `StatelessSink::new`")]
+pub trait StreamSink<K, V, T> {
+    fn consume_stream(self, name: &str, builder: JetStreamBuilder<K, V, T>) -> ();
 }
 
-pub trait Sink<K, V, T>: super::sealed::Sealed {
-    fn sink(self, name: &str, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T>;
+pub trait Sink<K, V, T, S>: super::sealed::Sealed {
+    fn sink(self, name: &str, sink: S) -> ();
 }
 
-impl<K, V, T> Sink<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, V, T, S> Sink<K, V, T, S> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
+    S: StreamSink<K, V, T>,
 {
-    fn sink(self, name: &str, sink: impl IntoSink<K, V, T>) -> JetStreamBuilder<K, NoData, T> {
-        self.then(sink.into_sink(name))
+    fn sink(self, name: &str, sink: S) -> () {
+        sink.consume_stream(name, self)
     }
 }
 
-pub trait IntoSinkFull<K, V, T> {
-    fn into_sink_full(self, name: &str) -> OperatorBuilder<K, V, T, NoKey, NoData, NoTime>;
+pub(crate) trait SinkFull<K, V, T, S> {
+    fn sink_full(self, name: &str, sink: S) -> ();
+}
+pub(crate) trait SinkFullImpl<K, V, T>: 'static {
+    fn sink_full(&mut self, msg: Message<K, V, T>);
 }
 
-pub trait SinkFull<K, V, T>: super::sealed::Sealed {
-    fn sink_full(
-        self,
-        name: &str,
-        sink: impl IntoSinkFull<K, V, T>,
-    ) -> JetStreamBuilder<NoKey, NoData, NoTime>;
-}
-
-impl<K, V, T> SinkFull<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, V, T, S> SinkFull<K, V, T, S> for JetStreamBuilder<K, V, T>
 where
     K: MaybeKey,
-    V: MaybeData,
-    T: MaybeTime,
+    V: Data,
+    T: Timestamp,
+    S: SinkFullImpl<K, V, T>,
 {
-    fn sink_full(
-        self,
-        name: &str,
-        sink: impl IntoSinkFull<K, V, T>,
-    ) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        self.then(sink.into_sink_full(name))
+    fn sink_full(self, name: &str, mut sink: S) -> () {
+        self.then(OperatorBuilder::direct(
+            name,
+            move |input: &mut Input<K, V, T>, _output: &mut Output<NoKey, NoData, NoTime>, _ctx| {
+                if let Some(msg) = input.recv() {
+                    sink.sink_full(msg);
+                }
+            },
+        ))
+        .finish();
     }
 }

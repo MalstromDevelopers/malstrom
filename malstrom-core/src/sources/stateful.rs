@@ -230,8 +230,10 @@ where
         _ctx: &mut OperatorContext,
     ) -> () {
         let part = data_message.key;
-        let partition = self.part_builder.build_part(&part, None);
-        self.partitions.insert(part, partition);
+        if !self.partitions.contains_key(&part) {
+            let partition = self.part_builder.build_part(&part, None);
+            self.partitions.insert(part, partition);
+        }
     }
 
     fn on_epoch(

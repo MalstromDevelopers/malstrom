@@ -64,6 +64,7 @@ mod tests {
     use crate::{
         channels::operator_io::Input,
         operators::{sink::SinkFull, GenerateEpochs, Sink, Source},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::{get_test_stream, VecSink},
@@ -86,9 +87,7 @@ mod tests {
             )
             .assign_timestamps("ts-double-value", |x| x.value * 2)
             .generate_epochs("no-epochs", |_x, _y| None);
-        let ontime = ontime.sink("sink", collector.clone());
-
-        ontime.finish();
+        ontime.sink("sink", StatelessSink::new(collector.clone()));
         late.finish();
 
         builder.build().unwrap().execute();
@@ -115,8 +114,8 @@ mod tests {
                 Some(msg.timestamp + epoch.unwrap_or(0))
             });
 
-        stream.sink_full("sink-ontime", collector.clone()).finish();
-        late.sink("sink", late_collector.clone()).finish();
+        stream.sink_full("sink-ontime", collector.clone());
+        late.sink_full("sink", late_collector.clone());
 
         builder.build().unwrap().execute();
 
@@ -155,7 +154,7 @@ mod tests {
 
         let time_collector = VecSink::new();
 
-        stream.sink_full("sink", time_collector.clone()).finish();
+        stream.sink_full("sink", time_collector.clone());
         late.finish();
         worker.build().unwrap().execute();
 
@@ -231,10 +230,8 @@ mod tests {
             .assign_timestamps("value-ts", |x| x.value)
             .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
 
-        ontime
-            .sink("sink-ontime", collector_ontime.clone())
-            .finish();
-        late.sink("sink-late", collector_late.clone()).finish();
+        ontime.sink("sink-ontime", StatelessSink::new(collector_ontime.clone()));
+        late.sink("sink-late", StatelessSink::new(collector_late.clone()));
         builder.build().unwrap().execute();
 
         assert_eq!(
@@ -269,9 +266,7 @@ mod tests {
                     x => Some(x),
                 }
             });
-        ontime
-            .sink_full("sink-ontime", collector_ontime.clone())
-            .finish();
+        ontime.sink_full("sink-ontime", collector_ontime.clone());
         builder.build().unwrap().execute();
         let epochs = collector_ontime
             .into_iter()

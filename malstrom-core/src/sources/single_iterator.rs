@@ -144,6 +144,7 @@ mod tests {
     use crate::{
         operators::*,
         runtime::{threaded::MultiThreadRuntime, WorkerBuilder},
+        sinks::StatelessSink,
         snapshot::{NoPersistence, NoSnapshots},
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_stream, VecSink},
@@ -163,9 +164,7 @@ mod tests {
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(in_data)),
             )
-            .sink("sink", collector.clone());
-
-        stream.finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
         builder.build().unwrap().execute();
 
         let c = collector.into_iter().map(|x| x.value).collect_vec();
@@ -188,8 +187,7 @@ mod tests {
                         "source",
                         StatelessSource::new(SingleIteratorSource::new(0..10)),
                     )
-                    .sink("sink", this_sink)
-                    .finish();
+                    .sink("sink", StatelessSink::new(this_sink));
                 builder
             },
             args,
@@ -210,8 +208,7 @@ mod tests {
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(42..52)),
             )
-            .sink("sink", sink.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(sink.clone()));
         builder.build().unwrap().execute();
 
         let timestamps = sink.into_iter().map(|x| x.timestamp).collect_vec();
@@ -230,8 +227,7 @@ mod tests {
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(0..10)),
             )
-            .sink_full("sink", sink.clone())
-            .finish();
+            .sink_full("sink", sink.clone());
         builder.build().unwrap().execute();
 
         let messages = sink.drain_vec(..);

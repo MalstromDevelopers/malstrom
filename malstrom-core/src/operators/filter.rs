@@ -75,6 +75,7 @@ where
 mod tests {
     use crate::{
         operators::{sink::Sink, source::Source},
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_stream, VecSink},
     };
@@ -86,14 +87,13 @@ mod tests {
 
         let collector = VecSink::new();
 
-        let stream = stream
+        stream
             .source(
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(0..100)),
             )
             .filter("less-than-42", |x| *x < 42)
-            .sink("sink", collector.clone());
-        stream.finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
         let mut worker = builder.build().unwrap();
 
         worker.execute();

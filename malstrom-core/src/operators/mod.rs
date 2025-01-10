@@ -13,7 +13,6 @@ mod stateful_op;
 mod time;
 
 // Public Api operators reexported for convenience
-pub(crate) use crate::keyed::Distribute;
 pub use crate::keyed::KeyDistribute;
 pub use crate::keyed::KeyLocal;
 pub use cloned::Cloned;
@@ -22,7 +21,8 @@ pub use filter_map::FilterMap;
 pub use flatten::Flatten;
 pub use inspect::Inspect;
 pub use map::Map;
-pub use sink::{IntoSink, IntoSinkFull, Sink, SinkFull};
+pub use sink::{Sink, StreamSink};
+pub(crate) use sink::{SinkFull, SinkFullImpl};
 pub use source::{Source, StreamSource};
 pub use split::Split;
 pub use stateful_map::StatefulMap;

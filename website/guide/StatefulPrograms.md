@@ -8,48 +8,21 @@ The state may be very simple, like the total count of messages received, or very
 
 Let's see how we can make our program stateful.
 
-```rust{20-23}
-use malstrom::runtime::{WorkerBuilder, SingleThreadRuntime, RuntimeFlavor};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-use malstrom::operators::*;
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-use malstrom::distributed::rendezvous_select;
-
-fn main() {
-	SingleThreadRuntime::new(build_dataflow).execute().unwrap()
-}
-
-fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder {
-	let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);
-	worker
-		.new_stream()
-		.source(
-			"iter-source",
-			StatelessSource::new(SingleIteratorSource::new(0.=100))
-		)
-		.key_distribute("key-by-value", |_x| 0, rendezvous_select)
-		.stateful_map("sum", |msg, state| {
-			let state = state + msg.value;
-			(state.clone(), Some(state))
-		})
-		.inspect("print", |x, _ctx_| println!("{x}"))
-		.finish();
-	worker
-}
-```
+<<< @../../malstrom-core/examples/stateful_programs.rs{21-24}
 
 This program will print the running sum of all numbers from 0 to 100 added up.
 Let's dissect the `stateful_map` operator.
 
 ```rust
-.stateful_map("sum", |msg, state| {
+.stateful_map("sum", |_key, value, state: i32| {
 	let state = state + msg.value;
 	(state.clone(), Some(state))
 })
 ```
 
 - `"sum"` is the name of the operator
-- `msg` is the data message to be processed
+- `_key` is a reference to the key of the message
+- `msg` is the value of the message to be processed
 - `state` is the last emitted state of this operator or the default value for state type, if the last emitted state is `None`
 
 We return a tuple of two values here:

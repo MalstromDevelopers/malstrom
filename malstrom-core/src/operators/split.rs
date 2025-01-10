@@ -124,6 +124,7 @@ mod tests {
     use crate::{
         operators::*,
         runtime::{threaded::SingleThreadRuntime, WorkerBuilder},
+        sinks::{StatefulSink, StatelessSink},
         snapshot::NoPersistence,
         sources::{SingleIteratorSource, StatelessSource},
         testing::VecSink,
@@ -145,8 +146,8 @@ mod tests {
                 let is_even = msg.value & 1 == 0;
                 *outputs = [is_even, !is_even];
             });
-            even.sink("sink-even", even_sink.clone()).finish();
-            odd.sink("sink-odd", odd_sink.clone()).finish();
+            even.sink("sink-even", StatelessSink::new(even_sink.clone()));
+            odd.sink("sink-odd", StatelessSink::new(odd_sink.clone()));
             worker
         });
         rt.execute().unwrap();
@@ -186,8 +187,8 @@ mod tests {
             );
             let odd = streams.pop().unwrap();
             let even = streams.pop().unwrap();
-            even.sink("sink-even", even_sink.clone()).finish();
-            odd.sink("sink-odd", odd_sink.clone()).finish();
+            even.sink("sink-even", StatelessSink::new(even_sink.clone()));
+            odd.sink("sink-odd", StatelessSink::new(odd_sink.clone()));
             worker
         });
         rt.execute().unwrap();

@@ -114,6 +114,7 @@ mod test {
     use crate::operators::source::Source;
     use crate::operators::{KeyLocal, Sink};
 
+    use crate::sinks::{StatefulSink, StatelessSink};
     use crate::sources::{SingleIteratorSource, StatelessSource};
     use crate::testing::{get_test_stream, VecSink};
 
@@ -134,8 +135,7 @@ mod test {
             // calculate a running total split by odd and even numbers
             .key_local("key-local", |x| (x.value & 1) == 1)
             .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
 
         builder.build().unwrap().execute();
 
@@ -175,8 +175,8 @@ mod test {
                     (s.clone(), Some(s))
                 }
             })
-            .sink("sink", collector.clone())
-            .finish();
+            .sink("sink", StatelessSink::new(collector.clone()));
+
         builder.build().unwrap().execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();

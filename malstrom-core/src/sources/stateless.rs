@@ -2,7 +2,6 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 
 use crate::{
-    keyed::distributed::DistKey,
     operators::{Source, StreamSource},
     runtime::communication::Distributable,
     stream::JetStreamBuilder,

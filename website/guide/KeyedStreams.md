@@ -8,32 +8,7 @@ For example if we are tracking financial transactions, we may want to distribute
 
 Let's see how keying is performed in Malstrom. We will take a simple stream of numbers and key them by whether they are even or not.
 
-```rust{20}
-// main.rs
-use malstrom::runtime::{WorkerBuilder, SingleThreadRuntime, SingleThreadRuntimeFlavor};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-use malstrom::operators::*;
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-use malstrom::keyed::rendezvous_select;
-
-fn main() {
-	MultiThreadRuntime::new::<2>(build_dataflow).execute().unwrap()
-}
-
-fn build_dataflow(flavor: SingleThreadRuntimeFlavor) -> WorkerBuilder {
-	let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);
-	worker
-		.new_stream()
-		.source(
-			"iter-source",
-			StatelessSource::new(SingleIteratorSource::new(0.=100))
-		)
-		.key_distribute("key-odd-even", |x| (x.value & 1) == 0, rendezvous_select)
-		.inspect("print", |x, ctx| println!("{x} @ worker {}", ctx.worker_id))
-		.finish();
-	worker
-}
-```
+<<< @../../malstrom-core/examples/keyed_streams.rs
 
 In the output we will see, that all even numbers where processed at one worker, and all other numbers at the other.
 The distribution happens in the `key_distribute` operator. Let's examine it more closely:
