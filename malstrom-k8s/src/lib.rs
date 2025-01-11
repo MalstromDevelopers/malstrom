@@ -1,5 +1,5 @@
 use config::CONFIG;
-use malstrom::{runtime::{CommunicationError, RuntimeFlavor, WorkerBuilder}, snapshot::PersistenceBackend, types::WorkerId};
+use malstrom::{runtime::{CommunicationError, RuntimeFlavor, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}, types::WorkerId};
 
 mod communication;
 mod config;
@@ -10,7 +10,7 @@ pub struct KubernetesRuntime<P>{
 }
 
 
-impl<P> KubernetesRuntime<P> where P: PersistenceBackend{
+impl<P> KubernetesRuntime<P> where P: PersistenceClient {
     /// Create a new KubernetesRuntime
     /// Call this method inside every pod which should become a Worker pod
     pub fn new(
