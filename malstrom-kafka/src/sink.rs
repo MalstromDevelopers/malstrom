@@ -41,7 +41,7 @@ pub struct KafkaRecord {
 }
 
 impl<K, T> StatelessSinkImpl<K, KafkaRecord, T> for KafkaSink {
-    fn sink_message(&mut self, msg: DataMessage<K, KafkaRecord, T>) -> () {
+    fn sink(&mut self, msg: DataMessage<K, KafkaRecord, T>) -> () {
         let record = msg.value;
 
         let mut base_record = BaseRecord::to(&record.topic)

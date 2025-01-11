@@ -33,7 +33,7 @@ impl StatefulSourceImpl<OwnedMessage, OffsetIndex> for KafkaSource {
     type PartitionState = Option<OffsetIndex>;
     type SourcePartition = KafkaConsumer;
 
-    fn list_parts(&self) -> impl IntoIterator<Item = Self::Part> + 'static {
+    fn list_parts(&self) -> Vec<Self::Part> {
         let consumer: BaseConsumer = create_consumer(
             &self.group_id,
             &self.brokers,
@@ -53,7 +53,7 @@ impl StatefulSourceImpl<OwnedMessage, OffsetIndex> for KafkaSource {
     }
 
     fn build_part(
-        &self,
+        &mut self,
         part: &Self::Part,
         part_state: Option<Self::PartitionState>,
     ) -> Self::SourcePartition {
@@ -132,5 +132,9 @@ impl StatefulSourcePartition<OwnedMessage, i64> for KafkaConsumer {
 
     fn collect(self) -> Self::PartitionState {
         self.last_recvd_offset
+    }
+    
+    fn is_finished(&mut self) -> bool {
+        false // kafka is unbounded
     }
 }
