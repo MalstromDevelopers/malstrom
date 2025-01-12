@@ -9,11 +9,12 @@ pub(crate) struct FinishedRouter {
     pub(super) version: Version,
 
     old_worker_set: IndexSet<WorkerId>,
-    new_worker_set: IndexSet<WorkerId>,
+    pub(super) new_worker_set: IndexSet<WorkerId>,
 
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
     pub(super) queued_rescales: Vec<RescaleMessage>,
+    trigger: RescaleMessage,
 }
 
 impl FinishedRouter {
@@ -22,12 +23,14 @@ impl FinishedRouter {
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         queued_rescales: Vec<RescaleMessage>,
+        trigger: RescaleMessage,
     ) -> Self {
         Self {
             version,
             old_worker_set,
             new_worker_set,
             queued_rescales,
+            trigger
         }
     }
 
@@ -39,7 +42,6 @@ impl FinishedRouter {
         sender: WorkerId,
     ) -> WorkerId {
         let new_target = partitioner(key, &self.new_worker_set);
-
         if new_target == this_worker {
             let old_target = partitioner(key, &self.old_worker_set);
             // TODO: memoize these keys
@@ -77,16 +79,44 @@ impl FinishedRouter {
                         rescale,
                         partitioner,
                     );
+                    output.send(Message::Rescale(self.trigger));
                     output.send(Message::Interrogate(interrogate_msg));
                     MessageRouter::Interrogate(interrogate_router)
                 }
                 None => {
                     let normal_router = NormalRouter::new(self.new_worker_set, self.version);
+                    output.send(Message::Rescale(self.trigger));
                     MessageRouter::Normal(normal_router)
                 }
             }
         } else {
             MessageRouter::Finished(self)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use indexmap::IndexSet;
+
+    use crate::{channels::operator_io::{full_broadcast, link, Input, Output}, keyed::{distributed::Remotes, partitioners::rendezvous_select}, types::Message};
+
+    use super::{FinishedRouter, RescaleMessage};
+
+
+    /// It should emit the original rescale message upon returning to the normal state
+    #[test]
+    fn emit_original_rescale() {
+        let router = FinishedRouter::new(
+            1,
+            IndexSet::from([0]),
+            IndexSet::from([0, 1]), Vec::new(), RescaleMessage::new_add(IndexSet::from([1])));
+        let mut output: Output<usize, usize, usize> = Output::new_unlinked(full_broadcast);
+        let mut input = Input::new_unlinked();
+        link(&mut output, &mut input);
+        let remotes = Remotes::new();
+        router.lifecycle(rendezvous_select, &mut output, &remotes);
+        let msg = input.recv().unwrap();
+        assert!(matches!(msg, Message::Rescale(_)))
     }
 }

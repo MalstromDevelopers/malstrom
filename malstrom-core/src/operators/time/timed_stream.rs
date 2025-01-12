@@ -90,7 +90,7 @@ mod tests {
         ontime.sink("sink", StatelessSink::new(collector.clone()));
         late.finish();
 
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
         let timestamps = collector.into_iter().map(|x| x.timestamp).collect_vec();
 
         assert_eq!((0..10).map(|x| x * 2).collect_vec(), timestamps)
@@ -117,7 +117,7 @@ mod tests {
         stream.sink_full("sink-ontime", collector.clone());
         late.sink_full("sink", late_collector.clone());
 
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
 
         let timestamps: Vec<i32> = collector
             .into_iter()
@@ -156,7 +156,7 @@ mod tests {
 
         stream.sink_full("sink", time_collector.clone());
         late.finish();
-        worker.build().unwrap().execute();
+        worker.build().unwrap().0.execute();
 
         let timestamps: Vec<i32> = time_collector
             .into_iter()
@@ -206,7 +206,7 @@ mod tests {
         ));
         ontime.finish();
         late.finish();
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
 
         assert_eq!(
             collector.drain_vec(..),
@@ -232,7 +232,7 @@ mod tests {
 
         ontime.sink("sink-ontime", StatelessSink::new(collector_ontime.clone()));
         late.sink("sink-late", StatelessSink::new(collector_late.clone()));
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
 
         assert_eq!(
             collector_ontime
@@ -267,7 +267,7 @@ mod tests {
                 }
             });
         ontime.sink_full("sink-ontime", collector_ontime.clone());
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
         let epochs = collector_ontime
             .into_iter()
             .filter_map(|msg| {

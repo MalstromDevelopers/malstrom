@@ -50,21 +50,6 @@ pub enum Message<K, V, T> {
     Collect(Collect<K>),
     Acquire(Acquire<K>),
 }
-// impl <K, V, T> From<DataMessage<K, V, T>> for Message<K, V, T> {
-//     fn from(value: DataMessage<K, V, T>) -> Self {
-//         Message::Data(value)
-//     }
-// }
-// impl <K, V, T> From<T> for Message<K, V, T> where T: Timestamp {
-//     fn from(value: T) -> Self {
-//         Message::Epoch(value)
-//     }
-// }
-// impl <K, V, T> From<Barrier> for Message<K, V, T> {
-//     fn from(value: Barrier) -> Self {
-//         Message::AbsBarrier(value)
-//     }
-// }
 macro_rules! impl_from_variants {
     ($($variant:ident($variant_type:ty)),* $(,)?) => {
         $(
@@ -95,9 +80,36 @@ where
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-pub enum RescaleMessage {
+pub enum RescaleChange {
     ScaleRemoveWorker(IndexSet<WorkerId>),
     ScaleAddWorker(IndexSet<WorkerId>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct RescaleMessage {
+    change: RescaleChange,
+    rc: Rc<()>
+}
+
+impl RescaleMessage {
+    pub(crate) fn new_add(change: IndexSet<WorkerId>) -> Self {
+        Self { change: RescaleChange::ScaleAddWorker(change), rc: Rc::new(()) }
+    }
+
+    pub(crate) fn new_remove(change: IndexSet<WorkerId>) -> Self {
+        Self { change: RescaleChange::ScaleRemoveWorker(change), rc: Rc::new(()) }
+    }
+
+    pub fn get_change(&self) -> &RescaleChange {
+        &self.change
+    }
+
+    /// Get the count of strong reference to the inner Rc
+    /// Note that this includes the instance you are calling
+    /// this method on.
+    pub(crate) fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.rc)
+    }
 }
 
 impl<K, V, T> Clone for Message<K, V, T>
@@ -123,7 +135,7 @@ where
 
 /// This marker will be sent by the cluster lifecycle controller
 /// when the worker is planning to shut down.
-// Operators wishing to delay shut down, must hold onto this marker as long
+/// Operators wishing to delay shut down, must hold onto this marker as long
 /// as necessary
 #[derive(Debug, Clone, Default)]
 pub struct SuspendMarker {

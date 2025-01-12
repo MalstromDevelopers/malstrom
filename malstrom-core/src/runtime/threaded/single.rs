@@ -29,7 +29,8 @@ where
     /// Start execution on this runtime, returning a build error if building the
     /// JetStream worker fails
     pub fn execute(self) -> Result<(), BuildError> {
-        self.worker_builder.build()?.execute();
+        let (mut worker, _) = self.worker_builder.build()?;
+        worker.execute();
         Ok(())
     }
 }

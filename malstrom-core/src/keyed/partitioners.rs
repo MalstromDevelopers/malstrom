@@ -17,10 +17,16 @@ fn default_hash<T: Hash>(value: &T) -> u64 {
 ///
 /// TODD: Add test
 pub fn rendezvous_select<V: Hash, T: Hash + Copy>(value: &V, options: &IndexSet<T>) -> T {
-    let v_hash = default_hash(value);
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    
     options
         .iter()
-        .map(|x| (default_hash(&x).wrapping_add(v_hash), x))
+        .map(|x| {
+            let mut h = hasher.clone();
+            x.hash(&mut h);
+            (h.finish(), x)
+        })
         .max_by_key(|x| x.0)
         .map(|x| x.1)
         .expect("Collection not empty")

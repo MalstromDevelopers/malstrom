@@ -5,13 +5,13 @@ metadata:
   labels:
     app: malstrom
 spec:
+  selector:
+    app: malstrom
   clusterIP: None
   ports:
   - name: malstrom-p2p
     port: 29091
     targetPort: 29091
-  selector:
-    app: malstrom
   publishNotReadyAddresses: true # important for discovery
 ----
 apiVersion: apps/v1

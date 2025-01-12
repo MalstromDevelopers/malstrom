@@ -85,7 +85,7 @@ mod tests {
             )
             .map("get-len", |x| x.len())
             .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().execute();
+        builder.build().unwrap().0.execute();
 
         assert_eq!(
             collector.into_iter().map(|x| x.value).collect_vec(),

@@ -21,8 +21,7 @@ use crate::{
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage,
-        SuspendMarker, Timestamp, WorkerId,
+        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
     },
 };
 
@@ -215,9 +214,9 @@ where
 
     fn on_rescale(
         &mut self,
-        rescale_message: &mut RescaleMessage,
+        _rescale_message: &mut RescaleMessage,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
-        ctx: &mut OperatorContext,
+        _ctx: &mut OperatorContext,
     ) -> () {
     }
 

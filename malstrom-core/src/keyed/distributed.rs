@@ -14,7 +14,7 @@ use crate::{
     runtime::CommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
-    types::{DataMessage, MaybeTime, Message, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
+    types::{DataMessage, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;
@@ -92,7 +92,6 @@ where
             .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_suspend)
             .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
             .collect();
-
         for (wid, msg) in remote_message.into_iter() {
             match msg {
                 NetworkMessage::Data(data_message) => {
@@ -255,14 +254,17 @@ where
         output: &mut Output<K, V, T>,
         ctx: &mut OperatorContext,
     ) {
-        match &message {
+        match &message.get_change() {
             // we can not remove these yet because they may still have messages for us
-            RescaleMessage::ScaleRemoveWorker(_index_set) => (),
-            RescaleMessage::ScaleAddWorker(to_add) => {
+            RescaleChange::ScaleRemoveWorker(_index_set) => (),
+            RescaleChange::ScaleAddWorker(to_add) => {
                 for wid in to_add {
-                    let comm_client = ctx.create_communication_client(*wid);
-                    let remote_state = RemoteState::default();
-                    self.remotes.insert(*wid, (comm_client, remote_state));
+                    // HACK sometimes the client already exists, not sure why
+                    if !self.remotes.contains_key(wid) {
+                        let comm_client = ctx.create_communication_client(*wid);
+                        let remote_state = RemoteState::default();
+                        self.remotes.insert(*wid, (comm_client, remote_state));
+                    }
                 }
             }
         }

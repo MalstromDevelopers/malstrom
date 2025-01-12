@@ -21,8 +21,7 @@ use crate::{
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage,
-        SuspendMarker, Timestamp, WorkerId,
+        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
     },
 };
 
@@ -264,13 +263,13 @@ where
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> () {
-        match rescale_message {
-            RescaleMessage::ScaleRemoveWorker(index_set) => {
+        match rescale_message.get_change() {
+            RescaleChange::ScaleRemoveWorker(index_set) => {
                 for wid in index_set.iter() {
                     self.comm_clients.swap_remove(wid);
                 }
             }
-            RescaleMessage::ScaleAddWorker(index_set) => {
+            RescaleChange::ScaleAddWorker(index_set) => {
                 for wid in index_set.iter() {
                     let comm_client = ctx.create_communication_client(*wid);
                     self.comm_clients.insert(wid.clone(), comm_client);

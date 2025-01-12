@@ -14,6 +14,7 @@ use crate::types::{MaybeData, MaybeKey, NoData, NoKey, OperatorPartitioner, Work
 use crate::types::{MaybeTime, NoTime};
 use thiserror::Error;
 
+use super::rescaling::{make_rescale_controller, RescaleController, RescaleError, RescaleRequest};
 use super::runtime_flavor::CommunicationError;
 use super::{CommunicationBackend, RuntimeFlavor};
 
@@ -26,6 +27,8 @@ type RootOperator = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime
 pub struct WorkerBuilder<F, P> {
     inner: Rc<Mutex<InnerRuntimeBuilder>>,
     flavor: F,
+    rescale_operator: RescaleController,
+    rescale_tx: std::sync::mpsc::Sender<RescaleRequest>,
     root_operator: RootOperator,
     persistence_client: P,
 }
@@ -40,14 +43,21 @@ where
         persistence_backend: B,
     ) -> WorkerBuilder<F, P> {
         let persistence_client = persistence_backend.last_commited(flavor.this_worker_id());
-        let root_operator = make_snapshot_controller(persistence_backend, snapshot_trigger);
+        let mut snapshot_operator = make_snapshot_controller(persistence_backend, snapshot_trigger);
         let inner = Rc::new(Mutex::new(InnerRuntimeBuilder {
             operators: Vec::new(),
         }));
+
+        let (rescale_tx, rescale_rx) = std::sync::mpsc::channel();
+        let mut rescale_operator = make_rescale_controller(rescale_rx);
+        link(rescale_operator.get_output_mut(), snapshot_operator.get_input_mut());
+
         WorkerBuilder {
             inner,
             flavor,
-            root_operator,
+            rescale_operator,
+            rescale_tx,
+            root_operator: snapshot_operator,
             persistence_client,
         }
     }
@@ -66,7 +76,7 @@ where
         JetStreamBuilder::from_receiver(receiver, self.inner.clone())
     }
 
-    pub fn build(mut self) -> Result<Worker<<F as RuntimeFlavor>::Communication>, BuildError> {
+    pub fn build(mut self) -> Result<(Worker<<F as RuntimeFlavor>::Communication>, WorkerApiHandle), BuildError> {
         let this_worker = self.flavor.this_worker_id();
         let state_client = Rc::new(self.persistence_client) as Rc<dyn PersistenceClient>;
 
@@ -74,8 +84,11 @@ where
         let inner =
             Rc::try_unwrap(self.inner).map_err(|_| BuildError::UnfinishedStreams(ref_count - 1))?;
 
-        let mut operators = inner.into_inner().unwrap().finish();
-        operators.insert(0, Box::new(self.root_operator).into_buildable());
+        let mut operators = vec![
+            Box::new(self.rescale_operator).into_buildable(),
+            Box::new(self.root_operator).into_buildable()
+        ];
+        operators.extend(inner.into_inner().unwrap().finish().into_iter());
 
         let cluster_size: u64 = self.flavor.runtime_size().try_into().unwrap();
         let mut communication_backend = self.flavor.establish_communication()?;
@@ -106,8 +119,8 @@ where
             operators,
             communication: communication_backend,
         };
-
-        Ok(worker)
+        let api_handle = WorkerApiHandle{rescale_tx: self.rescale_tx};
+        Ok((worker, api_handle))
     }
 }
 
@@ -186,6 +199,24 @@ where
     /// be the case
     pub fn execute(&mut self) {
         while !self.step() {}
+    }
+}
+
+#[derive(Clone)]
+pub struct WorkerApiHandle {
+    rescale_tx: std::sync::mpsc::Sender<RescaleRequest>,
+}
+
+impl WorkerApiHandle {
+    pub async fn rescale(&self, change: i64) -> Result<(), RescaleError> {
+        if change == 0 {
+            return Ok(());
+        }
+        let (req, callback) = RescaleRequest::new(change);
+        // PANIC: controller impl guarantees sender/receiver wont be dropped
+        self.rescale_tx.send(req).unwrap();
+        // TODO // callback.await.unwrap()
+        Ok(())
     }
 }
 

@@ -7,7 +7,7 @@ mod time;
 
 pub use data::{Data, MaybeData, NoData};
 pub use key::{Key, MaybeKey, NoKey};
-pub use message::{DataMessage, Message, RescaleMessage, SuspendMarker};
+pub use message::{DataMessage, Message, RescaleChange, SuspendMarker, RescaleMessage};
 pub use operator_partitioner::{OperatorId, OperatorPartitioner};
 pub use time::{MaybeTime, NoTime, Timestamp};
 

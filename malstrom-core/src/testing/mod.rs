@@ -6,8 +6,8 @@ use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
 use crate::runtime::WorkerBuilder;
 use crate::snapshot::{Barrier, NoSnapshots};
-use crate::types::MaybeTime;
-use crate::types::{Key, RescaleMessage, SuspendMarker};
+use crate::types::{MaybeTime, RescaleMessage};
+use crate::types::{Key, RescaleChange, SuspendMarker};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     stream::JetStreamBuilder,
@@ -74,7 +74,6 @@ impl PersistenceClient for CapturingPersistenceBackend {
     }
 
     fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>> {
-        println!("CPB loading state for {operator_id}");
         self.capture.lock().unwrap().remove(operator_id)
     }
 
@@ -124,20 +123,12 @@ pub fn test_forward_system_messages<
         Message::Interrogate(_)
     ));
 
-    let msg = Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new()));
+    let msg = Message::Rescale(RescaleMessage::new_add(IndexSet::new()));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(
         tester.recv_local().unwrap(),
-        Message::Rescale(RescaleMessage::ScaleAddWorker(_))
-    ));
-
-    let msg = Message::Rescale(RescaleMessage::ScaleRemoveWorker(IndexSet::new()));
-    tester.send_local(msg);
-    tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))
+        Message::Rescale(_)
     ));
 
     let msg = Message::SuspendMarker(SuspendMarker::default());

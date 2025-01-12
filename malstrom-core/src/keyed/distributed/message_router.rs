@@ -69,6 +69,15 @@ where
             MessageRouter::Finished(finished_router) => finished_router.version,
         }
     }
+
+    pub(crate) fn get_type(&self) -> String {
+        match self {
+            MessageRouter::Normal(normal_router) => format!("Normal: {:?}", normal_router.worker_set),
+            MessageRouter::Interrogate(interrogate_router) => format!("Interrogate: {:?}", interrogate_router.new_worker_set),
+            MessageRouter::Collect(collect_router) => format!("Collect: {:?}", collect_router.new_worker_set),
+            MessageRouter::Finished(finished_router) => format!("Finished: {:?}", finished_router.new_worker_set),
+        }.into()
+    }
 }
 
 impl<K, V, T> MessageRouter<K, V, T>
@@ -142,7 +151,7 @@ mod tests {
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::ScaleAddWorker(IndexSet::from([3])),
+            RescaleMessage::new_add(IndexSet::from([3])),
             index_select,
         ).0);
         let mut collect_router = MessageRouter::Collect(CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));

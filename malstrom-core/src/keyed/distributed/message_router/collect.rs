@@ -16,7 +16,7 @@ pub(crate) struct CollectRouter<K, V, T> {
 
     pub(super) whitelist: IndexSet<K>, // pub for testing
     old_worker_set: IndexSet<WorkerId>,
-    new_worker_set: IndexSet<WorkerId>,
+    pub(super) new_worker_set: IndexSet<WorkerId>,
     /// Datamessages for the key we are currently collecting
     buffered: Vec<DataMessage<K, V, T>>,
 
@@ -25,6 +25,7 @@ pub(crate) struct CollectRouter<K, V, T> {
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
     pub(super) queued_rescales: Vec<RescaleMessage>,
+    trigger: RescaleMessage,
 }
 
 impl<K, V, T> CollectRouter<K, V, T>
@@ -37,6 +38,7 @@ where
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         queued_rescales: Vec<RescaleMessage>,
+        trigger: RescaleMessage,
     ) -> Self {
         Self {
             version: version + 1,
@@ -46,6 +48,7 @@ where
             buffered: Vec::new(),
             current_collect: None,
             queued_rescales,
+            trigger,
         }
     }
 
@@ -132,6 +135,7 @@ where
                 self.old_worker_set,
                 self.new_worker_set,
                 self.queued_rescales,
+                self.trigger,
             ))
         } else {
             MessageRouter::Collect(self)

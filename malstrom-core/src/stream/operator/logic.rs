@@ -2,7 +2,7 @@ use crate::{
     channels::operator_io::Output,
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::Barrier,
-    types::{DataMessage, MaybeData, MaybeKey, MaybeTime, Message, RescaleMessage, SuspendMarker},
+    types::{DataMessage, MaybeData, MaybeKey, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker},
 };
 
 use super::{Logic, OperatorContext};

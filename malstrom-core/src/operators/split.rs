@@ -5,36 +5,13 @@ use std::rc::Rc;
 
 pub trait Split<K, V, T>: super::sealed::Sealed {
     /// Split a stream into const N streams.
-    /// Messages will be distributed according to the given partitioning function.
-    ///
-    /// # Example
-    /// ```
-    /// use malstrom::operators::*;
-    /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::testing::VecSink;
-    /// use malstrom::sources::SingleIteratorSource;
-    ///
-    /// let even_sink = VecSink::new();
-    /// let odd_sink = VecSink::new();
-    ///
-    /// let rt = SingleThreadRuntime::new(|flavor| {
-    ///     let mut worker = WorkerBuilder::new(flavor, || false, NoPersistence::default());
-    ///     let stream = worker.new_stream().source(SingleIteratorSource::new(0..10u64));
-    ///     let [even, odd] = stream.split_n(|msg, i| vec![msg.value % i]);
-    ///     even.sink(even_sink.clone()).finish();
-    ///     odd.sink(odd_sink.clone()).finish();
-    ///     worker
-    /// });
-    /// rt.execute().unwrap();
-    ///
-    /// let even_expected = vec![0, 2, 4, 6, 8];
-    /// let even_result: Vec<u64> = even_sink.into_iter().map(|x| x.value).collect();
-    /// assert_eq!(even_expected, even_result);
-    ///
-    /// let odd_expected = vec![1, 3, 5, 7, 9];
-    /// let odd_result: Vec<u64> = odd_sink.into_iter().map(|x| x.value).collect();
-    /// assert_eq!(odd_expected, odd_result);
-    /// ```
+    /// Messages will be distributed according to the given partitioning function,
+    /// the function receives a mutable array of booleans, all `false` by default,
+    /// and should set all values in the array to `true` where output streams should
+    /// receive message. For example if you do a `const_split::<2>` and mutate the array to
+    /// `[true, false]` the left output will receive the message.
+    /// 
+    /// If you always want all outputs to receive every message see [crate::operators::Cloned].
     fn const_split<const N: usize>(
         self,
         name: &str,

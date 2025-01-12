@@ -6,7 +6,7 @@ use malstrom::snapshot::{NoPersistence, NoSnapshots};
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    MultiThreadRuntime::new(4, build_dataflow)
+    MultiThreadRuntime::new(2, build_dataflow)
         .execute()
         .unwrap()
 }

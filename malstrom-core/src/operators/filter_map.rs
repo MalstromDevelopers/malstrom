@@ -90,7 +90,7 @@ mod tests {
             .sink("sink", StatelessSink::new(collector.clone()));
         let mut worker = builder.build().unwrap();
 
-        worker.execute();
+        worker.0.execute();
 
         let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
         let expected: Vec<usize> = (0..42).map(|x| x * 2).collect();
