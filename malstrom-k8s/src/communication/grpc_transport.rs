@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::config::CONFIG;
 use flume::{Receiver, Sender};
-use malstrom::runtime::communication::{Transport, TransportError};
+use malstrom::runtime::communication::{BiStreamTransport, TransportError};
 use malstrom::types::{OperatorId, WorkerId};
 use log::{debug, warn};
 use tokio::runtime::Handle;
@@ -42,7 +42,7 @@ impl GrpcTransport {
     }
 }
 
-impl Transport for GrpcTransport {
+impl BiStreamTransport for GrpcTransport {
     fn send(&self, msg: Vec<u8>) -> Result<(), malstrom::runtime::communication::TransportError> {
         self.outgoing.send(msg).map_err(TransportError::send_error)
     }

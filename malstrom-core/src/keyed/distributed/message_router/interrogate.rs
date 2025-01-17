@@ -15,10 +15,6 @@ pub(crate) struct InterrogateRouter<K> {
     pub(super) old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
     interrogate_msg: Interrogate<K>,
-
-    // these are control messages we can not handle while rescaling
-    // so we will buffer them, waiting for the normal dist to deal with them
-    pub(super) queued_rescales: Vec<RescaleMessage>,
     trigger: RescaleMessage,
 }
 impl<K> InterrogateRouter<K>
@@ -60,7 +56,6 @@ where
             old_worker_set,
             new_worker_set,
             interrogate_msg: interrogate_msg.clone(),
-            queued_rescales: Vec::new(),
             trigger,
         };
         (new_state, interrogate_msg)
@@ -97,7 +92,6 @@ where
                     whitelist,
                     self.old_worker_set,
                     self.new_worker_set,
-                    self.queued_rescales,
                     self.trigger
                 );
                 MessageRouter::Collect(router)

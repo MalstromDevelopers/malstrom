@@ -91,7 +91,7 @@ mod tests {
             )
             .flatten("flatten")
             .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![1, 2, 3, 4, 5];
@@ -111,7 +111,7 @@ mod tests {
             .flatten("flatten")
             .sink("sink", StatelessSink::new(collector.clone()));
 
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
         let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
         let result = collector
             .into_iter()
@@ -137,7 +137,7 @@ mod tests {
             .key_local("key-local", |x| x.value.len())
             .flatten("flatten")
             .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
         let result = collector
             .into_iter()

@@ -9,8 +9,8 @@ use crate::{
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot::{Sender, Receiver};
 use thiserror::Error;
+use tokio::sync::oneshot::{Receiver, Sender};
 use tracing::{debug, info};
 
 use super::CommunicationClient;
@@ -27,9 +27,15 @@ impl RescaleRequest {
         // PANIC: Will always fit because of abs
         let net_change: u64 = change.abs().try_into().unwrap();
         let this = if change > 0 {
-            Self{ change: RescaleRequestChange::ScaleUp(net_change), callback: tx }
+            Self {
+                change: RescaleRequestChange::ScaleUp(net_change),
+                callback: tx,
+            }
         } else {
-            Self{ change: RescaleRequestChange::ScaleDown(net_change), callback: tx }
+            Self {
+                change: RescaleRequestChange::ScaleDown(net_change),
+                callback: tx,
+            }
         };
         (this, rx)
     }
@@ -77,7 +83,10 @@ fn build_controller_logic(
             request_channel,
         ))
     } else {
-        Box::new(build_follower_controller_logic(build_context, request_channel))
+        Box::new(build_follower_controller_logic(
+            build_context,
+            request_channel,
+        ))
     }
 }
 
@@ -127,7 +136,7 @@ fn build_leader_controller_logic(
                     RescaleRequestChange::ScaleDown(x) => {
                         if x >= current_max {
                             // don't care about dropped channel
-                            let _ =req.finish(RescaleResponse::Err(RescaleError::DownscaleTooFar));
+                            let _ = req.finish(RescaleResponse::Err(RescaleError::DownscaleTooFar));
                             return;
                         }
                         let remove_set: IndexSet<u64> =
@@ -163,13 +172,12 @@ fn build_leader_controller_logic(
                 None
             } else {
                 for (wid, client) in clients.iter() {
-                    for msg in client.recv_all() {
-                        match msg {
-                            ComsMessage::Complete => {
-                                rescale.remotes.insert(*wid, true);
-                            }
-                            _ => unreachable!("Leader can only receive completion"),
+                    match client.recv() {
+                        Some(ComsMessage::Complete) => {
+                            rescale.remotes.insert(*wid, true);
                         }
+                        None => (),
+                        _ => unreachable!("Leader can only receive completion"),
                     }
                 }
                 Some(rescale)

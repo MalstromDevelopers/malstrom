@@ -4,7 +4,7 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-use crate::runtime::WorkerBuilder;
+use crate::runtime::{StreamProvider, WorkerBuilder};
 use crate::snapshot::{Barrier, NoSnapshots};
 use crate::types::{MaybeTime, RescaleMessage};
 use crate::types::{Key, RescaleChange, SuspendMarker};
@@ -32,8 +32,7 @@ pub fn get_test_stream() -> (
     JetStreamBuilder<NoKey, NoData, NoTime>,
 ) {
     let mut worker = WorkerBuilder::new(
-        SingleThreadRuntimeFlavor,
-        NoSnapshots,
+        SingleThreadRuntimeFlavor::default(),
         NoPersistence::default(),
     );
     let stream = worker.new_stream();
@@ -93,7 +92,7 @@ pub fn test_forward_system_messages<
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: Distributable + 'static,
+    R: Distributable + Send + Sync + 'static,
 >(
     tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
 ) {

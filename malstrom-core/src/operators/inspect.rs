@@ -99,7 +99,7 @@ mod tests {
                 inspect_collector_moved.give(x.value.to_owned())
             })
             .sink("sink", StatelessSink::new(output_collector.clone()));
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         assert_eq!(inspect_collector.drain_vec(..), expected);
         // check we still get unmodified output

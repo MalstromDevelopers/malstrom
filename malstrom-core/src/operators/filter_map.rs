@@ -88,7 +88,7 @@ mod tests {
             )
             .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
             .sink("sink", StatelessSink::new(collector.clone()));
-        let mut worker = builder.build().unwrap();
+        let mut worker = builder.build_and_run().unwrap();
 
         worker.0.execute();
 

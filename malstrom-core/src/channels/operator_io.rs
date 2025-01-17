@@ -59,6 +59,7 @@ pub struct Output<K, V, T> {
     #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     frontier: Option<T>,
+    suspended: bool
 }
 
 impl<K, V, T> Output<K, V, T>
@@ -74,6 +75,7 @@ where
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
             frontier: None,
+            suspended: false
         }
     }
 
@@ -82,6 +84,7 @@ where
     ///
     /// System messages are always broadcasted.
     pub fn send(&mut self, msg: Message<K, V, T>) {
+        debug_assert!(!self.suspended);
         if let Message::Epoch(e) = &msg {
             if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
                 self.frontier = Some(e.clone());
@@ -108,6 +111,9 @@ where
                 }
             }
             x => {
+                if let Message::SuspendMarker(_) = &x {
+                    self.suspended = true
+                }
                 // repeat_n will clone for every iteration except the last
                 // this gives us a small optimization on the common "1 receiver" case :)
                 let messages = self
@@ -128,8 +134,14 @@ where
         &self.frontier
     }
 
+    #[inline]
     pub(crate) fn receiver_count(&self) -> usize {
         self.senders.len()
+    }
+
+    #[inline]
+    pub(crate) fn is_suspended(&self) -> bool {
+        self.suspended
     }
 }
 
@@ -552,4 +564,12 @@ mod test {
     //     let result = receiver.recv();
     //     assert!(result.is_some())
     // }
+
+    /// Output should be suspended after sending suspend marker
+    #[test]
+    fn output_suspended_after_marker() {
+        let mut sender: Output<NoKey, NoData, NoTime> = Output::new_unlinked(full_broadcast);
+        sender.send(Message::SuspendMarker(SuspendMarker::default()));
+        assert!(sender.is_suspended())
+    }
 }

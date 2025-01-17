@@ -136,7 +136,7 @@ mod tests {
 
     use crate::{
         keyed::distributed::{Acquire, Collect, Interrogate},
-        runtime::CommunicationClient,
+        runtime::{BiCommunicationClient, CommunicationClient},
         snapshot::{Barrier, PersistenceClient},
         testing::{CapturingPersistenceBackend, OperatorTester},
         types::*,
@@ -251,7 +251,7 @@ mod tests {
         // so we can unwrap it
         while tester.recv_local().is_some() {}
 
-        let foo_enc = CommunicationClient::encode("foo".to_string());
+        let foo_enc = BiCommunicationClient::encode("foo".to_string());
         let (_key, result) = collector.try_unwrap().unwrap();
         // 42 is the operator id
         assert_eq!(IndexMap::from([(42, foo_enc)]), result)

@@ -1,54 +1,50 @@
+use std::time::Duration;
+
 use crate::{
-    runtime::{builder::BuildError, RuntimeFlavor, WorkerBuilder},
-    snapshot::PersistenceClient,
+    coordinator::Coordinator, runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}
 };
 
 use super::{communication::InterThreadCommunication, Shared};
+use bon::Builder;
 
 /// Runs all dataflows in a single thread on a
 /// single machine with no parrallelism.
-pub struct SingleThreadRuntime<P> {
-    worker_builder: WorkerBuilder<SingleThreadRuntimeFlavor, P>,
+#[derive(Builder)]
+pub struct SingleThreadRuntime<P, F> {
+    #[builder(finish_fn)]
+    build: F,
+    persistence: P,
+    snapshots: Option<Duration>,
 }
 
-impl<P> SingleThreadRuntime<P>
+impl<P, F> SingleThreadRuntime<P, F>
 where
-    P: PersistenceClient,
+    P: PersistenceBackend + Clone + Send,
+    F: Fn(&mut dyn StreamProvider) -> ()
 {
-    /// Create a new runtime for running on a single thread
-    pub fn new(
-        builder_func: impl FnOnce(
-            SingleThreadRuntimeFlavor,
-        ) -> WorkerBuilder<SingleThreadRuntimeFlavor, P>,
-    ) -> Self {
-        Self {
-            worker_builder: builder_func(SingleThreadRuntimeFlavor::default()),
-        }
-    }
-
     /// Start execution on this runtime, returning a build error if building the
     /// JetStream worker fails
     pub fn execute(self) -> Result<(), BuildError> {
-        let (mut worker, _) = self.worker_builder.build()?;
-        worker.execute();
-        Ok(())
+        let mut flavor = SingleThreadRuntimeFlavor::default();
+        let mut worker = WorkerBuilder::new(flavor.clone(), self.persistence.clone());
+        (self.build)(&mut worker);
+        let _coordinator = Coordinator::new(1, self.snapshots, self.persistence, flavor.communication().unwrap());
+        worker.build_and_run()
     }
 }
 
-#[derive(Debug, Default)]
-pub struct SingleThreadRuntimeFlavor;
+#[derive(Default, Clone)]
+pub struct SingleThreadRuntimeFlavor{
+    comm_shared: Shared
+}
 
 impl RuntimeFlavor for SingleThreadRuntimeFlavor {
     type Communication = InterThreadCommunication;
 
-    fn establish_communication(
+    fn communication(
         &mut self,
     ) -> Result<Self::Communication, crate::runtime::runtime_flavor::CommunicationError> {
-        Ok(InterThreadCommunication::new(Shared::default(), 0))
-    }
-
-    fn runtime_size(&self) -> u64 {
-        1
+        Ok(InterThreadCommunication::new(self.comm_shared.clone(), 0))
     }
 
     fn this_worker_id(&self) -> u64 {

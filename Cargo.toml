@@ -1,7 +1,10 @@
 [workspace]
 resolver = "2"
-members = [ "dirty-tests",
-    "malstrom-core", "k8s-app", "malstrom-k8s", "malstrom-k8s-operator",
+members = [
+    "malstrom-core",
+    "k8s-app",
+    "malstrom-k8s",
+    "malstrom-k8s-operator",
     "malstrom-kafka",
 ]
 
@@ -10,5 +13,5 @@ members = [ "dirty-tests",
 # Install libssl-dev:arm64, see <https://github.com/cross-rs/cross/blob/main/docs/custom_images.md#adding-dependencies-to-existing-images>
 pre-build = [
     "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH protobuf-compiler"
+    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH protobuf-compiler",
 ]

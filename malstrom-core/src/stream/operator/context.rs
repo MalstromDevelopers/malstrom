@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::runtime::communication::Distributable;
-use crate::runtime::{CommunicationBackend, CommunicationClient};
+use crate::runtime::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
 use crate::snapshot::{deserialize_state, PersistenceClient};
 use crate::types::{OperatorId, WorkerId};
 
@@ -17,7 +17,7 @@ use crate::types::{OperatorId, WorkerId};
 pub struct OperatorContext<'a> {
     pub worker_id: WorkerId,
     pub operator_id: OperatorId,
-    pub(super) communication: &'a mut dyn CommunicationBackend,
+    pub(super) communication: &'a mut dyn OperatorOperatorComm,
 }
 
 impl<'a> OperatorContext<'a> {
@@ -25,14 +25,14 @@ impl<'a> OperatorContext<'a> {
     pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
-    ) -> CommunicationClient<T> {
-        CommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
+    ) -> BiCommunicationClient<T> {
+        BiCommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
     }
 
     pub fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
-        communication: &'a mut dyn CommunicationBackend,
+        communication: &'a mut dyn OperatorOperatorComm,
     ) -> Self {
         OperatorContext {
             worker_id,
@@ -48,7 +48,7 @@ pub struct BuildContext<'a> {
     pub operator_name: String,
     persistence_backend: Rc<dyn PersistenceClient>,
     // HACK: We need this in the ica tests
-    pub(crate) communication: &'a mut dyn CommunicationBackend,
+    pub(crate) communication: &'a mut dyn OperatorOperatorComm,
     worker_ids: Vec<WorkerId>,
 }
 impl<'a> BuildContext<'a> {
@@ -57,7 +57,7 @@ impl<'a> BuildContext<'a> {
         operator_id: OperatorId,
         name: String,
         persistence_backend: Rc<dyn PersistenceClient>,
-        communication: &'a mut dyn CommunicationBackend,
+        communication: &'a mut dyn OperatorOperatorComm,
         worker_ids: Vec<WorkerId>,
     ) -> Self {
         Self {
@@ -88,14 +88,14 @@ impl<'a> BuildContext<'a> {
     pub fn create_communication_client<T: Distributable>(
         &mut self,
         other_worker: WorkerId,
-    ) -> CommunicationClient<T> {
+    ) -> BiCommunicationClient<T> {
         CommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
     }
 
     /// Create clients for all workers active at build_time
     pub fn create_all_communication_clients<T: Distributable>(
         &mut self,
-    ) -> IndexMap<WorkerId, CommunicationClient<T>> {
+    ) -> IndexMap<WorkerId, BiCommunicationClient<T>> {
         let other_workers = self
             .get_worker_ids()
             .into_iter()
@@ -106,14 +106,5 @@ impl<'a> BuildContext<'a> {
             .into_iter()
             .map(|wid| (wid, self.create_communication_client(wid)))
             .collect()
-    }
-
-    /// Create an operator context (runtime context) for this operator
-    pub fn get_operator_context(&mut self) -> OperatorContext {
-        OperatorContext {
-            worker_id: self.worker_id,
-            operator_id: self.operator_id,
-            communication: self.communication,
-        }
     }
 }

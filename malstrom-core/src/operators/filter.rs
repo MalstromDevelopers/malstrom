@@ -94,7 +94,7 @@ mod tests {
             )
             .filter("less-than-42", |x| *x < 42)
             .sink("sink", StatelessSink::new(collector.clone()));
-        let mut worker = builder.build().unwrap();
+        let mut worker = builder.build_and_run().unwrap();
 
         worker.0.execute();
 

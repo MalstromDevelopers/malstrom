@@ -15,8 +15,7 @@ use crate::{
     },
     operators::{Map, Source, StreamSource},
     runtime::{
-        communication::{broadcast, Distributable},
-        CommunicationClient,
+        communication::{broadcast, Distributable}, BiCommunicationClient, CommunicationClient
     },
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
@@ -139,7 +138,7 @@ struct StatefulSourcePartitionOp<V, T, Builder: StatefulSourceImpl<V, T>> {
     partitions: IndexMap<Builder::Part, Builder::SourcePartition>,
     part_builder: Builder,
     all_partitions: IndexMap<Builder::Part, bool>, // true if partition is finished
-    comm_clients: IndexMap<WorkerId, CommunicationClient<PartitionFinished<Builder::Part>>>,
+    comm_clients: IndexMap<WorkerId, BiCommunicationClient<PartitionFinished<Builder::Part>>>,
     // final marker, we keep it in an option to only send it once
     max_t: Option<T>,
     _phantom: PhantomData<(Builder::PartitionState, V)>,
@@ -208,7 +207,7 @@ where
                 broadcast(self.comm_clients.values(), PartitionFinished(part.clone()));
             }
         }
-        for msg in self.comm_clients.values().flat_map(|x| x.recv_all()) {
+        for msg in self.comm_clients.values().flat_map(|x| x.recv()) {
             *self
                 .all_partitions
                 .get_mut(&msg.0)

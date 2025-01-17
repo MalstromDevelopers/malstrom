@@ -1,7 +1,7 @@
 //! Utilities for testing inter-worker communication
 
 use crate::{
-    runtime::CommunicationBackend,
+    runtime::OperatorOperatorComm,
     types::{OperatorId, WorkerId},
 };
 use thiserror::Error;
@@ -11,13 +11,13 @@ use thiserror::Error;
 /// to make a connection or want to assert it does not
 #[derive(Debug, Default)]
 pub struct NoCommunication;
-impl CommunicationBackend for NoCommunication {
-    fn new_connection(
-        &mut self,
+impl OperatorOperatorComm for NoCommunication {
+    fn operator_to_operator(
+        &self,
         _to_worker: WorkerId,
         _operator: OperatorId,
     ) -> Result<
-        Box<dyn crate::runtime::communication::Transport>,
+        Box<dyn crate::runtime::communication::BiStreamTransport>,
         crate::runtime::communication::CommunicationBackendError,
     > {
         Err(

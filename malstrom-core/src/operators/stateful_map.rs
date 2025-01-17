@@ -137,7 +137,7 @@ mod test {
             .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
             .sink("sink", StatelessSink::new(collector.clone()));
 
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
@@ -177,7 +177,7 @@ mod test {
             })
             .sink("sink", StatelessSink::new(collector.clone()));
 
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec!["foo", "foobar", "hello", "helloworld", "baz"];

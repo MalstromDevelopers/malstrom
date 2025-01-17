@@ -7,13 +7,8 @@ use crate::{channels::operator_io::Output, keyed::distributed::Remotes, types::*
 #[derive(Debug)]
 pub(crate) struct FinishedRouter {
     pub(super) version: Version,
-
     old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
-
-    // these are control messages we can not handle while rescaling
-    // so we will buffer them, waiting for the normal dist to deal with them
-    pub(super) queued_rescales: Vec<RescaleMessage>,
     trigger: RescaleMessage,
 }
 
@@ -22,14 +17,12 @@ impl FinishedRouter {
         version: Version,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
-        queued_rescales: Vec<RescaleMessage>,
         trigger: RescaleMessage,
     ) -> Self {
         Self {
             version,
             old_worker_set,
             new_worker_set,
-            queued_rescales,
             trigger
         }
     }
@@ -71,24 +64,8 @@ impl FinishedRouter {
             .values()
             .all(|(_, state)| state.last_version >= self.version)
         {
-            match self.queued_rescales.pop() {
-                Some(rescale) => {
-                    let (interrogate_router, interrogate_msg) = InterrogateRouter::new(
-                        self.version,
-                        self.new_worker_set,
-                        rescale,
-                        partitioner,
-                    );
-                    output.send(Message::Rescale(self.trigger));
-                    output.send(Message::Interrogate(interrogate_msg));
-                    MessageRouter::Interrogate(interrogate_router)
-                }
-                None => {
-                    let normal_router = NormalRouter::new(self.new_worker_set, self.version);
-                    output.send(Message::Rescale(self.trigger));
-                    MessageRouter::Normal(normal_router)
-                }
-            }
+            let normal_router = NormalRouter::new(self.new_worker_set, self.version);
+            MessageRouter::Normal(normal_router)
         } else {
             MessageRouter::Finished(self)
         }
@@ -110,7 +87,7 @@ mod tests {
         let router = FinishedRouter::new(
             1,
             IndexSet::from([0]),
-            IndexSet::from([0, 1]), Vec::new(), RescaleMessage::new_add(IndexSet::from([1])));
+            IndexSet::from([0, 1]), RescaleMessage::new_add(IndexSet::from([1])));
         let mut output: Output<usize, usize, usize> = Output::new_unlinked(full_broadcast);
         let mut input = Input::new_unlinked();
         link(&mut output, &mut input);

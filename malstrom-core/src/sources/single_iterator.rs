@@ -165,7 +165,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new(in_data)),
             )
             .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let c = collector.into_iter().map(|x| x.value).collect_vec();
         assert_eq!(c, (0..100).collect_vec())
@@ -209,7 +209,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new(42..52)),
             )
             .sink("sink", StatelessSink::new(sink.clone()));
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let timestamps = sink.into_iter().map(|x| x.timestamp).collect_vec();
         let expected = (0..10).collect_vec();
@@ -228,7 +228,7 @@ mod tests {
                 StatelessSource::new(SingleIteratorSource::new(0..10)),
             )
             .sink_full("sink", sink.clone());
-        builder.build().unwrap().0.execute();
+        builder.build_and_run().unwrap().0.execute();
 
         let messages = sink.drain_vec(..);
         let last = messages.last().unwrap();

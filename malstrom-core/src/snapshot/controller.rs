@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::channels::operator_io::Output;
 use crate::runtime::communication::broadcast;
-use crate::runtime::CommunicationClient;
+use crate::runtime::{BiCommunicationClient, CommunicationClient};
 use crate::snapshot::Barrier;
 use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::*;
@@ -74,7 +74,7 @@ fn build_leader_controller_logic<P: PersistenceBackend>(
         .map(|x| *x)
         .collect_vec();
     let this_worker = build_context.worker_id;
-    let clients: IndexMap<WorkerId, CommunicationClient<ComsMessage>> = worker_ids
+    let clients: IndexMap<WorkerId, BiCommunicationClient<ComsMessage>> = worker_ids
         .iter()
         .filter(|i| **i != this_worker)
         .cloned()
@@ -118,17 +118,16 @@ fn build_leader_controller_logic<P: PersistenceBackend>(
             }
 
             for (wid, client) in clients.iter() {
-                for msg in client.recv_all() {
-                    match msg {
-                        ComsMessage::StartSnapshot(_i) => {
-                            unreachable!(
-                                "Lead node received instruction which can only be given by lead node"
-                            )
-                        }
-                        ComsMessage::CommitSnapshot(_i) => {
-                            commits.insert(*wid, true);
-                        }
+                match client.recv() {
+                    Some(ComsMessage::StartSnapshot(_i)) => {
+                        unreachable!(
+                            "Lead node received instruction which can only be given by lead node"
+                        )
                     }
+                    Some(ComsMessage::CommitSnapshot(_i)) => {
+                        commits.insert(*wid, true);
+                    }
+                    None => (),
                 }
             }
 

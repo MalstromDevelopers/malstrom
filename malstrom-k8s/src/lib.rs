@@ -38,7 +38,7 @@ impl KubernetesRuntimeFlavor {
 impl RuntimeFlavor for KubernetesRuntimeFlavor {
     type Communication = GrpcBackend;
 
-    fn establish_communication(&mut self) -> Result<Self::Communication, CommunicationError> {
+    fn communication(&mut self) -> Result<Self::Communication, CommunicationError> {
         GrpcBackend::new(self.this_worker).map_err(CommunicationError::from_error)
     }
 

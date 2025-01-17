@@ -8,6 +8,7 @@ use std::{
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 
+use crate::runtime::BiCommunicationClient;
 use crate::{runtime::communication::Distributable, types::*};
 // Marker trait for distributable keys, values or time
 // pub trait Distributable: Serialize + DeserializeOwned + 'static{}
@@ -198,7 +199,7 @@ where
         self.collection
             .lock()
             .unwrap()
-            .insert(operator_id, CommunicationClient::encode(state));
+            .insert(operator_id, BiCommunicationClient::encode(state));
     }
 }
 impl<K> Collect<K> {
@@ -252,7 +253,7 @@ where
             .lock()
             .unwrap()
             .swap_remove(operator_id)
-            .map(|x| CommunicationClient::decode(&x))
+            .map(|x| BiCommunicationClient::decode(&x))
             .map(|s| (self.key.clone(), s))
     }
 }

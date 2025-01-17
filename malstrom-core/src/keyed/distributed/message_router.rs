@@ -103,17 +103,14 @@ where
                 output.send(Message::Interrogate(interrogate));
                 MessageRouter::Interrogate(new_router)
             }
-            MessageRouter::Interrogate(mut interrogate_router) => {
-                interrogate_router.queued_rescales.push(message);
-                MessageRouter::Interrogate(interrogate_router)
+            MessageRouter::Interrogate(_) => {
+                unreachable!()
             }
-            MessageRouter::Collect(mut collect_router) => {
-                collect_router.queued_rescales.push(message);
-                MessageRouter::Collect(collect_router)
+            MessageRouter::Collect(_) => {
+                unreachable!()
             }
-            MessageRouter::Finished(mut finished_router) => {
-                finished_router.queued_rescales.push(message);
-                MessageRouter::Finished(finished_router)
+            MessageRouter::Finished(_) => {
+                unreachable!()
             }
         }
     }
@@ -154,8 +151,11 @@ mod tests {
             RescaleMessage::new_add(IndexSet::from([3])),
             index_select,
         ).0);
-        let mut collect_router = MessageRouter::Collect(CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
-        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
+        let mut collect_router = MessageRouter::Collect(
+            CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]
+            
+            ), RescaleMessage::new_add(IndexSet::from([4]))));
+        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), RescaleMessage::new_add(IndexSet::from([4]))));
 
 
         let msg = DataMessage::new(key, 100, 0);

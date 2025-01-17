@@ -1,6 +1,6 @@
 use flume::{Receiver, Sender, TryRecvError};
-use malstrom::runtime::communication::Transport;
-use malstrom::runtime::CommunicationBackend;
+use malstrom::runtime::communication::BiStreamTransport;
+use malstrom::runtime::OperatorOperatorComm;
 use malstrom::types::{OperatorId, WorkerId};
 use log::debug;
 use std::collections::HashMap;
@@ -77,12 +77,12 @@ impl GrpcBackend {
     }
 }
 
-impl CommunicationBackend for GrpcBackend {
-    fn new_connection(
+impl OperatorOperatorComm for GrpcBackend {
+    fn operator_to_operator(
         &mut self,
         to_worker: WorkerId,
         operator: OperatorId,
-    ) -> Result<Box<dyn Transport>, malstrom::runtime::communication::CommunicationBackendError>
+    ) -> Result<Box<dyn BiStreamTransport>, malstrom::runtime::communication::CommunicationBackendError>
     {
         let remote_addr = lookup_worker_addr(to_worker);
         let outgoing = self.get_or_create_outgoing_send(to_worker, operator);

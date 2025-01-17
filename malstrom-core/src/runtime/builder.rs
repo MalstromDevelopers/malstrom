@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use crate::channels::operator_io::{link, merge_receiver_groups, Input};
+use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
+use crate::coordinator::messages::{BuildInformation, NoMessage, WorkerClient};
 use crate::snapshot::controller::make_snapshot_controller;
 use crate::snapshot::triggers::SnapshotTrigger;
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
@@ -14,9 +15,10 @@ use crate::types::{MaybeData, MaybeKey, NoData, NoKey, OperatorPartitioner, Work
 use crate::types::{MaybeTime, NoTime};
 use thiserror::Error;
 
+use super::communication::WorkerCoordinatorComm;
 use super::rescaling::{make_rescale_controller, RescaleController, RescaleError, RescaleRequest};
 use super::runtime_flavor::CommunicationError;
-use super::{CommunicationBackend, RuntimeFlavor};
+use super::{CommunicationClient, RuntimeFlavor, OperatorOperatorComm};
 
 type RootOperator = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime>;
 
@@ -27,71 +29,68 @@ type RootOperator = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime
 pub struct WorkerBuilder<F, P> {
     inner: Rc<Mutex<InnerRuntimeBuilder>>,
     flavor: F,
-    rescale_operator: RescaleController,
-    rescale_tx: std::sync::mpsc::Sender<RescaleRequest>,
-    root_operator: RootOperator,
-    persistence_client: P,
+    persistence: P,
+    root_stream: Output<NoKey, NoData, NoTime>,
 }
 
 impl<F, P> WorkerBuilder<F, P>
 where
     F: RuntimeFlavor,
+    P: PersistenceBackend
 {
-    pub fn new<B: PersistenceBackend<Client = P>, T: SnapshotTrigger>(
+    pub fn new(
         flavor: F,
-        snapshot_trigger: T,
-        persistence_backend: B,
+        persistence: P
     ) -> WorkerBuilder<F, P> {
-        let persistence_client = persistence_backend.last_commited(flavor.this_worker_id());
-        let mut snapshot_operator = make_snapshot_controller(persistence_backend, snapshot_trigger);
         let inner = Rc::new(Mutex::new(InnerRuntimeBuilder {
             operators: Vec::new(),
         }));
 
-        let (rescale_tx, rescale_rx) = std::sync::mpsc::channel();
-        let mut rescale_operator = make_rescale_controller(rescale_rx);
-        link(rescale_operator.get_output_mut(), snapshot_operator.get_input_mut());
-
         WorkerBuilder {
             inner,
             flavor,
-            rescale_operator,
-            rescale_tx,
-            root_operator: snapshot_operator,
-            persistence_client,
+            persistence,
+            root_stream: Output::new_unlinked(full_broadcast),
         }
+    }
+}
+
+pub trait StreamProvider {
+    fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime>;
+}
+
+impl<F, P> StreamProvider for WorkerBuilder<F, P> {
+    fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
+        // link our new stream to the root stream we will build later
+        // so it can receive system messages
+        let mut receiver = Input::new_unlinked();
+        link(&mut self.root_stream, &mut receiver);
+        JetStreamBuilder::from_receiver(receiver, self.inner.clone())
     }
 }
 
 impl<F, P> WorkerBuilder<F, P>
 where
     F: RuntimeFlavor,
-    P: PersistenceClient,
+    P: PersistenceBackend,
 {
-    pub fn new_stream(&mut self) -> JetStreamBuilder<NoKey, NoData, NoTime> {
-        // link our new stream to the root stream we will build later
-        // so it can receive system messages
-        let mut receiver = Input::new_unlinked();
-        link(self.root_operator.get_output_mut(), &mut receiver);
-        JetStreamBuilder::from_receiver(receiver, self.inner.clone())
-    }
 
-    pub fn build(mut self) -> Result<(Worker<<F as RuntimeFlavor>::Communication>, WorkerApiHandle), BuildError> {
-        let this_worker = self.flavor.this_worker_id();
-        let state_client = Rc::new(self.persistence_client) as Rc<dyn PersistenceClient>;
-
+    pub fn build_and_run(mut self) -> Result<(), BuildError> {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
         let ref_count = Rc::strong_count(&self.inner);
         let inner =
             Rc::try_unwrap(self.inner).map_err(|_| BuildError::UnfinishedStreams(ref_count - 1))?;
+        
+        let this_worker = self.flavor.this_worker_id();
+        
+        let mut communication_backend = self.flavor.communication()?;
+        let coordinator = WorkerClient::new(&communication_backend);
+        let (build_info, coordinator) = rt.block_on(coordinator.get_build_info());
+        let cluster_size = build_info.scale;
+        let state_client = Rc::new(self.persistence.for_version(this_worker, &build_info.resume_snapshot)) as Rc<dyn PersistenceClient>;
 
-        let mut operators = vec![
-            Box::new(self.rescale_operator).into_buildable(),
-            Box::new(self.root_operator).into_buildable()
-        ];
+        let mut operators = vec![];
         operators.extend(inner.into_inner().unwrap().finish().into_iter());
-
-        let cluster_size: u64 = self.flavor.runtime_size().try_into().unwrap();
-        let mut communication_backend = self.flavor.establish_communication()?;
 
         let mut seen_ids = HashSet::new();
         let operators: Vec<RunnableOperator> = operators
@@ -114,13 +113,15 @@ where
                 Result::<RunnableOperator, BuildError>::Ok(x.into_runnable(&mut ctx))
             })
             .collect::<Result<Vec<RunnableOperator>, BuildError>>()?;
-        let worker = Worker {
+        let mut worker = Worker {
             worker_id: this_worker,
             operators,
             communication: communication_backend,
         };
-        let api_handle = WorkerApiHandle{rescale_tx: self.rescale_tx};
-        Ok((worker, api_handle))
+        
+        let coordinator = rt.block_on(coordinator.await_start());
+        worker.execute();
+        Ok(())
     }
 }
 
@@ -136,6 +137,8 @@ pub enum BuildError {
     UnfinishedStreams(usize),
     #[error("Operator name '{0}' is not unique. Rename this operator.")]
     NonUniqueName(String),
+    #[error("Error starting async runtime: {0:?}")]
+    AsyncRuntime(#[from] std::io::Error)
 }
 
 #[derive(Default)]
@@ -178,13 +181,16 @@ pub struct Worker<C> {
 }
 impl<C> Worker<C>
 where
-    C: CommunicationBackend,
+    C: OperatorOperatorComm,
 {
     pub fn step(&mut self) -> bool {
         let span = tracing::debug_span!("scheduling::run_graph", worker_id = self.worker_id);
         let _span_guard = span.enter();
         let mut all_done = true;
         for (i, op) in self.operators.iter_mut().enumerate().rev() {
+            if op.is_suspended() {
+                continue;
+            }
             op.step(&mut self.communication);
             while op.has_queued_work() {
                 op.step(&mut self.communication);

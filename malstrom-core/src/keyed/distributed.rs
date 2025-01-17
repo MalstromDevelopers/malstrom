@@ -11,7 +11,7 @@ pub use types::*;
 
 use crate::{
     channels::operator_io::{Input, Output},
-    runtime::CommunicationClient,
+    runtime::BiCommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
     types::{DataMessage, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
@@ -20,7 +20,7 @@ use crate::{
 use crate::runtime::communication::broadcast;
 
 type Remotes<K, V, T> =
-    IndexMap<WorkerId, (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>;
+    IndexMap<WorkerId, (BiCommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>;
 
 pub(super) struct Distributor<K, V, T> {
     router: Container<MessageRouter<K, V, T>>,

@@ -1,5 +1,6 @@
-use std::{any::type_name, error::Error, marker::PhantomData};
+use std::{error::Error, marker::PhantomData};
 
+use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::types::{OperatorId, WorkerId};
@@ -9,19 +10,43 @@ pub trait Distributable: Serialize + DeserializeOwned {}
 impl<T> Distributable for T where T: Serialize + DeserializeOwned {}
 
 /// A backend facilitating inter-worker communication in malstrom
-pub trait CommunicationBackend {
+pub trait OperatorOperatorComm {
     /// Establish a new two-way communciation transport between the same operators
-    /// on two workers
+    /// on two workers.
     /// Implementors can expect this method to be called at most once per
     /// unique combination of arguments
-    fn new_connection(
-        &mut self,
+    /// The returned future should complete when the other side has accepted the connection
+    /// The implementation must not wait for the other side to accept the stream, i.e.
+    /// implementations must be able to buffer outgoing messages
+    fn operator_to_operator(
+        &self,
         to_worker: WorkerId,
         operator: OperatorId,
-    ) -> Result<Box<dyn Transport>, CommunicationBackendError>;
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
+
 }
 
-pub trait Transport {
+pub trait CoordinatorWorkerComm {
+    /// Establish a connection from the coordinator to a given worker.
+    /// The returned Future should complete once the worker has accepted the Connection vie
+    /// its [WorkerCoordinatorBackend]
+    /// The implementation must not wait for the other side to accept the stream, i.e.
+    /// implementations must be able to buffer outgoing messages
+    fn coordinator_to_worker(&self, worker_id: WorkerId) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
+}
+
+pub trait WorkerCoordinatorComm {
+    /// Establish a connection to the coordinator.
+    /// The returned future should complete once the coordinator has accepted the connection via
+    /// its [CoordinatorWorkerBackend]
+    /// The implementation must not wait for the other side to accept the stream, i.e.
+    /// implementations must be able to buffer outgoing messages
+    fn worker_to_coordinator(&self) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
+}
+
+/// Bi-directional streaming transport where each end can send many messages to the other without
+/// requiring a response
+pub trait BiStreamTransport: Send + Sync {
     /// Send a single message to the Operator on the other end of the transport.
     ///
     /// Fallible transports must implement applicable retry logic internally,
@@ -47,78 +72,91 @@ pub trait Transport {
 
 /// A Client for point to point communication between operators
 /// on different workers and possibly different machines
-pub struct CommunicationClient<T> {
-    transport: Box<dyn Transport>,
-    message_type: PhantomData<T>,
+pub struct CommunicationClient<TSend, TRecv> {
+    transport: Box<dyn BiStreamTransport>,
+    message_type: PhantomData<(TSend, TRecv)>,
 }
-impl<T> CommunicationClient<T>
+/// A communication client which sends and receives the same type of message
+pub type BiCommunicationClient<T> = CommunicationClient<T, T>;
+
+/// Operator-to-Operator impl
+impl<T> CommunicationClient<T, T>
 where
     T: Distributable,
 {
     pub fn new(
         to_worker: WorkerId,
         operator: OperatorId,
-        backend: &mut dyn CommunicationBackend,
+        backend: &dyn OperatorOperatorComm,
     ) -> Result<Self, CommunicationBackendError> {
-        let transport = backend.new_connection(to_worker, operator)?;
+        let transport = backend.operator_to_operator(to_worker, operator)?;
+        Ok(Self {
+            transport,
+            message_type: PhantomData,
+        })
+    }
+}
+
+impl<TSend, TRecv> CommunicationClient<TSend, TRecv> {
+    /// Establish a connection from the coordinator to a given worker
+    pub(crate) fn coordinator_to_worker(worker_id: WorkerId, backend: &dyn CoordinatorWorkerComm) -> Result<Self, CommunicationBackendError> {
+        let transport = backend.coordinator_to_worker(worker_id)?;
         Ok(Self {
             transport,
             message_type: PhantomData,
         })
     }
 
-    pub fn send(&self, msg: T) {
+    /// Establish a connection to the coordinator
+    pub(crate) fn worker_to_coordinator(backend: &dyn WorkerCoordinatorComm)  -> Result<Self, CommunicationBackendError> {
+        let transport = backend.worker_to_coordinator()?;
+        Ok(Self {
+            transport,
+            message_type: PhantomData,
+        })
+    }
+
+    pub(crate) fn transform<TSendNew, TRecvNew>(self) -> CommunicationClient<TSendNew, TRecvNew> {
+        CommunicationClient { transport: self.transport, message_type: PhantomData }
+    }
+}
+
+
+impl<TSend, TRecv> CommunicationClient<TSend, TRecv>
+where
+    TSend: Distributable,
+{
+
+    pub fn send(&self, msg: TSend) {
         self.transport.send(Self::encode(msg)).unwrap()
     }
 
-    pub fn recv(&self) -> Option<T> {
+    pub(crate) fn encode(msg: TSend) -> Vec<u8> {
+        rmp_serde::encode::to_vec(&msg).unwrap()
+    }
+}
+
+impl<TSend, TRecv> CommunicationClient<TSend, TRecv>
+where
+    TRecv: Distributable,
+{
+
+    pub fn recv(&self) -> Option<TRecv> {
         let encoded = self.transport.recv().unwrap()?;
         // let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
         //     .expect(&format!("Deserialize message, type: {typ}"));
         Some(Self::decode(&encoded))
     }
 
-    pub fn recv_all(&self) -> RecvAllIterator<'_, T> {
-        RecvAllIterator::new(self.transport.recv_all())
-    }
-
-    pub(crate) fn encode(msg: T) -> Vec<u8> {
-        rmp_serde::encode::to_vec(&msg).unwrap()
-    }
-    pub(crate) fn decode(msg: &[u8]) -> T {
+    pub(crate) fn decode(msg: &[u8]) -> TRecv {
         rmp_serde::decode::from_slice(msg).unwrap()
     }
 }
 
-/// The Iterator returned by CommunicationClient::recv_all
-pub struct RecvAllIterator<'a, T> {
-    inner: Box<dyn Iterator<Item = Result<Vec<u8>, TransportError>> + 'a>,
-    item_type: PhantomData<T>,
-}
-impl<'a, T> RecvAllIterator<'a, T> {
-    fn new(inner: Box<dyn Iterator<Item = Result<Vec<u8>, TransportError>> + 'a>) -> Self {
-        Self {
-            inner,
-            item_type: PhantomData,
-        }
-    }
-}
-impl<'a, T> Iterator for RecvAllIterator<'a, T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let item = self.inner.next()?.unwrap();
-        CommunicationClient::decode(&item)
-    }
-}
-
 /// A convinience method to broadcast a message to all available clients
-pub fn broadcast<'a, T: Distributable + Clone + 'a>(
-    clients: impl Iterator<Item = &'a CommunicationClient<T>>,
-    msg: T,
+pub fn broadcast<'a, TSend: Distributable + Clone + 'a, TRecv: 'a>(
+    clients: impl Iterator<Item = &'a CommunicationClient<TSend, TRecv>>,
+    msg: TSend,
 ) {
     for c in clients {
         c.send(msg.clone());

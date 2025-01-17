@@ -1,14 +1,12 @@
 use crate::{
     runtime::{
-        communication::{CommunicationBackendError, Transport, TransportError},
-        CommunicationBackend,
+        communication::{BiStreamTransport, CommunicationBackendError, CoordinatorWorkerComm, TransportError, WorkerCoordinatorComm},
+        OperatorOperatorComm,
     },
     types::{OperatorId, WorkerId},
 };
-use std::sync::{
-    mpsc::{self, Receiver, Sender},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
+use flume::{Sender, Receiver};
 
 use indexmap::{map::Entry, IndexMap, IndexSet};
 use thiserror::Error;
@@ -47,32 +45,36 @@ pub struct InterThreadCommunication {
     // the purpose is to prevent the worker from obtaining the same
     // channel twice (which should not happen), as then they would have both
     // ends, and the other worker would simply create a new Connection pair
-    burnt_keys: IndexSet<ConnectionKey>,
+    burnt_keys: Arc<Mutex<IndexSet<ConnectionKey>>>,
 }
 impl InterThreadCommunication {
     pub(crate) fn new(shared: Shared, this_worker: WorkerId) -> Self {
         Self {
             shared,
             this_worker,
-            burnt_keys: IndexSet::new(),
+            burnt_keys: Default::default(),
         }
     }
 }
-impl CommunicationBackend for InterThreadCommunication {
-    fn new_connection(
-        &mut self,
+
+impl OperatorOperatorComm for InterThreadCommunication {
+    fn operator_to_operator(
+        &self,
         to_worker: WorkerId,
         operator: OperatorId,
-    ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
-        let mut shared = self.shared.lock().unwrap();
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         let key = ConnectionKey::new(to_worker, self.this_worker, operator);
 
-        if self.burnt_keys.contains(&key) {
+        let mut burnt_keys = self.burnt_keys.lock().unwrap();
+        if burnt_keys.contains(&key) {
             return Err(CommunicationBackendError::ClientBuildError(Box::new(
                 InterThreadCommunicationError::TransportAlreadyEstablished,
             )));
         }
+        burnt_keys.insert(key);
+        drop(burnt_keys); // drop to not attempt locking 1 while holding the other
 
+        let mut shared = self.shared.lock().unwrap();
         let transport = match shared.entry(key) {
             Entry::Occupied(o) => o.swap_remove(),
             Entry::Vacant(v) => {
@@ -81,8 +83,20 @@ impl CommunicationBackend for InterThreadCommunication {
                 b
             }
         };
-        self.burnt_keys.insert(key);
         Ok(Box::new(transport))
+    }
+}
+
+impl WorkerCoordinatorComm for InterThreadCommunication {
+    fn worker_to_coordinator(&self) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+        // HACK but works
+        self.operator_to_operator(WorkerId::MAX, 0)
+    }
+}
+impl CoordinatorWorkerComm for InterThreadCommunication {
+    fn coordinator_to_worker(&self, worker_id: WorkerId) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+        // HACK but works
+        self.operator_to_operator(worker_id, 0)
     }
 }
 
@@ -92,7 +106,7 @@ pub(crate) struct ChannelTransport {
     receiver: Receiver<Vec<u8>>,
 }
 
-impl Transport for ChannelTransport {
+impl BiStreamTransport for ChannelTransport {
     fn send(&self, msg: Vec<u8>) -> Result<(), TransportError> {
         self.sender
             .send(msg)
@@ -102,12 +116,12 @@ impl Transport for ChannelTransport {
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError> {
         match self.receiver.try_recv() {
             Ok(x) => Ok(Some(x)),
-            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(flume::TryRecvError::Empty) => Ok(None),
             // TODO: Currently we don't really have a way to know if the channel
             // is closed because the other thread paniced or if it was closed in
             // an orderly fashion. In the panic case we probably should emit
             // an error instead....
-            Err(mpsc::TryRecvError::Disconnected) => Ok(None),
+            Err(flume::TryRecvError::Disconnected) => Ok(None),
         }
     }
 }
@@ -116,8 +130,8 @@ impl Transport for ChannelTransport {
 /// Each client can send messages to and receive messages from the
 /// other client
 fn new_transport_pair() -> (ChannelTransport, ChannelTransport) {
-    let (tx1, rx1) = mpsc::channel();
-    let (tx2, rx2) = mpsc::channel();
+    let (tx1, rx1) = flume::unbounded();
+    let (tx2, rx2) = flume::unbounded();
     let a = ChannelTransport {
         sender: tx1,
         receiver: rx2,
@@ -143,11 +157,11 @@ mod test {
     #[test]
     fn send_recv_message() {
         let shared = Shared::default();
-        let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
-        let mut worker1 = InterThreadCommunication::new(shared.clone(), 1);
+        let worker0 = InterThreadCommunication::new(shared.clone(), 0);
+        let worker1 = InterThreadCommunication::new(shared.clone(), 1);
 
-        let operator_0_42 = worker0.new_connection(1, 1337).unwrap();
-        let operator_1_1337 = worker1.new_connection(0, 1337).unwrap();
+        let operator_0_42 = worker0.operator_to_operator(1, 1337).unwrap();
+        let operator_1_1337 = worker1.operator_to_operator(0, 1337).unwrap();
 
         let val = vec![1, 8, 8, 7];
         operator_0_42.send(val.clone()).unwrap();
@@ -165,12 +179,12 @@ mod test {
         let shared = Shared::default();
         let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
 
-        worker0.new_connection(1, 0).unwrap();
+        worker0.operator_to_operator(1, 0).unwrap();
         // this should work
-        worker0.new_connection(0, 0).unwrap();
+        worker0.operator_to_operator(0, 0).unwrap();
 
         // but this should err since we already made the connection
-        let err = worker0.new_connection(1, 0);
+        let err = worker0.operator_to_operator(1, 0);
         match err {
             Err(CommunicationBackendError::ClientBuildError(e)) => {
                 let concrete = *e.downcast::<InterThreadCommunicationError>().unwrap();
@@ -188,10 +202,10 @@ mod test {
     #[test]
     fn no_error_orderly_disconnect() {
         let shared = Shared::default();
-        let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
-        let mut worker1 = InterThreadCommunication::new(shared.clone(), 1);
-        let operator_0_42 = worker0.new_connection(1, 42).unwrap();
-        let operator_1_42 = worker1.new_connection(0, 42).unwrap();
+        let worker0 = InterThreadCommunication::new(shared.clone(), 0);
+        let worker1 = InterThreadCommunication::new(shared.clone(), 1);
+        let operator_0_42 = worker0.operator_to_operator(1, 42).unwrap();
+        let operator_1_42 = worker1.operator_to_operator(0, 42).unwrap();
 
         // now drop one of them
         drop(operator_0_42);

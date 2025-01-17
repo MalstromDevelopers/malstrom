@@ -13,18 +13,14 @@ use super::{finished::FinishedRouter, MessageRouter, NetworkMessage};
 #[derive(Debug)]
 pub(crate) struct CollectRouter<K, V, T> {
     pub(super) version: Version,
-
     pub(super) whitelist: IndexSet<K>, // pub for testing
     old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
     /// Datamessages for the key we are currently collecting
     buffered: Vec<DataMessage<K, V, T>>,
-
     current_collect: Option<Collect<K>>,
-
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
-    pub(super) queued_rescales: Vec<RescaleMessage>,
     trigger: RescaleMessage,
 }
 
@@ -37,7 +33,6 @@ where
         whitelist: IndexSet<K>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
-        queued_rescales: Vec<RescaleMessage>,
         trigger: RescaleMessage,
     ) -> Self {
         Self {
@@ -47,7 +42,6 @@ where
             new_worker_set,
             buffered: Vec::new(),
             current_collect: None,
-            queued_rescales,
             trigger,
         }
     }
@@ -134,7 +128,6 @@ where
                 self.version,
                 self.old_worker_set,
                 self.new_worker_set,
-                self.queued_rescales,
                 self.trigger,
             ))
         } else {
@@ -183,7 +176,7 @@ mod test {
             IndexSet::new(),
             IndexSet::new(),
             IndexSet::new(),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([1])),
         );
         assert_eq!(dist.version, 1)
     }
@@ -200,7 +193,7 @@ mod test {
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([])),
         );
 
         let msg = DataMessage {
@@ -231,7 +224,7 @@ mod test {
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -280,7 +273,7 @@ mod test {
             IndexSet::from([3]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([])),
         );
         let msg = DataMessage {
             key: 7,
@@ -305,7 +298,7 @@ mod test {
             IndexSet::from([3]),
             IndexSet::from([0, 1]),
             IndexSet::from([0]),
-            Vec::new(),
+            RescaleMessage::new_remove(IndexSet::from([1])),
         );
 
         // this should go downstream
@@ -341,7 +334,7 @@ mod test {
             IndexSet::from([1, 3, 5]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -380,7 +373,7 @@ mod test {
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([1])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -444,7 +437,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([1, 2])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -507,7 +500,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new_add(IndexSet::from([1])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
