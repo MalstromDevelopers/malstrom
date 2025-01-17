@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 
-use super::{super::types::*, interrogate::InterrogateRouter, MessageRouter, NormalRouter};
+use super::{super::types::*, MessageRouter, NormalRouter};
 use crate::{channels::operator_io::Output, keyed::distributed::Remotes, types::*};
 /// A collect route which has finished its local collection cycles
 /// and is now just waiting for all remotes to finish
@@ -49,7 +49,7 @@ impl FinishedRouter {
     }
 
     pub(crate) fn lifecycle<K, V, T>(
-        mut self,
+        self,
         partitioner: WorkerPartitioner<K>,
         output: &mut Output<K, V, T>,
         remotes: &Remotes<K, V, T>,

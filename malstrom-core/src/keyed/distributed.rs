@@ -14,7 +14,7 @@ use crate::{
     runtime::BiCommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
-    types::{DataMessage, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
+    types::{DataMessage, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;

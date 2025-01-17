@@ -1,7 +1,7 @@
 use crate::channels::operator_io::{Input, Output};
 
 use crate::stream::{JetStreamBuilder, OperatorBuilder};
-use crate::types::{Data, DataMessage, Key, MaybeKey, MaybeTime, Message, Timestamp};
+use crate::types::{Data, DataMessage, Key, MaybeKey, MaybeTime, Message};
 
 pub trait KeyLocal<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and **do not** distribute

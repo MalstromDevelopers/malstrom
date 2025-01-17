@@ -1,7 +1,7 @@
-use std::{future::Future, sync::Arc, thread::JoinHandle, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     snapshot::{
-        deserialize_state, serialize_state, triggers::SnapshotTrigger, NoSnapshots,
+        deserialize_state, serialize_state,
         PersistenceBackend, PersistenceClient,
     },
     types::WorkerId,
@@ -19,18 +19,17 @@ use crate::{
 
 use super::messages::*;
 use crate::runtime::{
-    communication::{broadcast, CommunicationBackendError, CoordinatorWorkerComm, Distributable},
-    CommunicationClient, OperatorOperatorComm,
+    communication::{CommunicationBackendError, CoordinatorWorkerComm, Distributable},
+    CommunicationClient,
 };
-use bon::{bon, builder};
 
 /// This way we do not need seperate IDs for worker and coordinator
 const COORDINATOR_ID: WorkerId = WorkerId::MAX;
 
 pub struct Coordinator {
-    rt: tokio::runtime::Runtime,
-    coordinator_loop: tokio::task::JoinHandle<()>,
-    auto_snapshot_loop: Option<tokio::task::JoinHandle<()>>,
+    _rt: tokio::runtime::Runtime,
+    _coordinator_loop: tokio::task::JoinHandle<()>,
+    _auto_snapshot_loop: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Coordinator {
@@ -77,9 +76,9 @@ impl Coordinator {
         };
 
         Ok(Self {
-            rt,
-            coordinator_loop,
-            auto_snapshot_loop,
+            _rt: rt,
+            _coordinator_loop: coordinator_loop,
+            _auto_snapshot_loop: auto_snapshot_loop,
         })
     }
 }
@@ -182,7 +181,7 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
         {
             Ok(guard) => guard,
             Err(e) => {
-                req.callback.send(Err(CoordinatorError::from(e)));
+                let _ = req.callback.send(Err(CoordinatorError::from(e)));
                 continue;
             }
         };
@@ -214,29 +213,9 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
                 unimplemented!()
             }
         };
-        req.callback.send(Ok(()));
-    }
-}
-
-/// Not elegant, but works
-async fn wait_for_all_reply<TSend, TRecv: Distributable>(
-    clients: &IndexMap<WorkerId, CommunicationClient<TSend, TRecv>>,
-) -> IndexMap<WorkerId, TRecv> {
-    let mut awaiting_reply = clients.iter().collect_vec();
-    let mut replies = IndexMap::with_capacity(clients.len());
-    loop {
-        awaiting_reply.retain(|(wid, client)| {
-            if let Some(resp) = client.recv() {
-                replies.insert(**wid, resp);
-                false
-            } else {
-                true
-            }
-        });
-        if awaiting_reply.len() == 0 {
-            return replies;
-        }
-        yield_now().await
+        // ignore since it is fine for us if the requester did not wait for
+        // a response
+        let _ = req.callback.send(Ok(()));
     }
 }
 

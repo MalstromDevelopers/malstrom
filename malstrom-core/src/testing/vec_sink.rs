@@ -1,8 +1,7 @@
 use crate::{
     operators::SinkFullImpl,
     sinks::StatelessSinkImpl,
-    stream::OperatorBuilder,
-    types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime},
+    types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message},
 };
 use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 

@@ -138,7 +138,7 @@ impl<T> DerefMut for Container<T> {
 
 pub type WorkerPartitioner<K> = fn(&K, &IndexSet<WorkerId>) -> WorkerId;
 
-use crate::{runtime::CommunicationClient, types::OperatorId};
+use crate::types::OperatorId;
 
 #[derive(Clone)]
 pub struct Interrogate<K> {

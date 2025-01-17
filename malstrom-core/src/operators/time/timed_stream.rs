@@ -1,6 +1,6 @@
 use crate::{
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{Data, DataMessage, MaybeKey, Message, NoTime, Timestamp},
+    types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
 use super::NeedsEpochs;

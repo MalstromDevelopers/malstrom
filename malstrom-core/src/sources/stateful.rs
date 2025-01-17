@@ -9,18 +9,18 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
-        distributed::{Acquire, Collect, DistKey, Interrogate},
+        distributed::{Acquire, Collect, Interrogate},
         partitioners::rendezvous_select,
-        Distribute, KeyDistribute,
+        Distribute,
     },
-    operators::{Map, Source, StreamSource},
+    operators::{Map, StreamSource},
     runtime::{
-        communication::{broadcast, Distributable}, BiCommunicationClient, CommunicationClient
+        communication::{broadcast, Distributable}, BiCommunicationClient
     },
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
+        Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
     },
 };
 

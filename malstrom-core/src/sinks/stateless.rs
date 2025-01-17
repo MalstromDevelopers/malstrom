@@ -1,12 +1,10 @@
-use std::hash::Hash;
 use std::marker::PhantomData;
 
 use crate::{
     channels::operator_io::{Input, Output},
-    operators::{Source, StreamSink, StreamSource},
-    runtime::communication::Distributable,
+    operators::StreamSink,
     stream::{JetStreamBuilder, OperatorBuilder},
-    types::{Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, Timestamp},
+    types::{Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, Timestamp},
 };
 
 pub struct StatelessSink<K, V, T, S: StatelessSinkImpl<K, V, T>>(S, PhantomData<(K, V, T)>);

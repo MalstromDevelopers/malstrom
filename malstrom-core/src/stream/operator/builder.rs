@@ -4,11 +4,11 @@ use std::hash::{Hash, Hasher};
 
 use crate::{
     channels::operator_io::{full_broadcast, Input, Output},
-    types::{Data, MaybeKey, MaybeTime, OperatorPartitioner},
+    types::{Data, MaybeKey, MaybeTime},
 };
 
 use super::{
-    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator, LogicWrapper,
+    standard::StandardOperator, AppendableOperator, BuildContext, BuildableOperator,
     OperatorContext, RunnableOperator,
 };
 

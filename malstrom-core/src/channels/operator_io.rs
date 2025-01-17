@@ -14,7 +14,7 @@ use itertools::Itertools;
 
 use super::spsc;
 
-use crate::types::{MaybeTime, Message, OperatorId, OperatorPartitioner};
+use crate::types::{MaybeTime, Message, OperatorPartitioner};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// This is a somewhat hacky we to get a unique id for each sender, which we

@@ -6,7 +6,7 @@ use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
     channels::operator_io::{link, Input},
     runtime::{union, InnerRuntimeBuilder},
-    types::{Data, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner},
+    types::{Data, MaybeData, MaybeKey, MaybeTime},
 };
 
 #[must_use = "Call .finish() on a stream to finalize it"]

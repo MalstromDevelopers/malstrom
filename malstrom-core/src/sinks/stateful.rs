@@ -10,18 +10,14 @@ use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
         distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
-        partitioners::rendezvous_select,
-        Distribute, KeyDistribute,
+        partitioners::rendezvous_select, KeyDistribute,
     },
-    operators::{Map, Source, StreamSink, StreamSource},
-    runtime::{
-        communication::{broadcast, Distributable},
-        CommunicationClient,
-    },
+    operators::{Map, StreamSink},
+    runtime::communication::Distributable,
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
+        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoTime, RescaleMessage, SuspendMarker
     },
 };
 

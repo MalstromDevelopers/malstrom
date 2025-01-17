@@ -1,6 +1,5 @@
 use std::{error::Error, marker::PhantomData};
 
-use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::types::{OperatorId, WorkerId};

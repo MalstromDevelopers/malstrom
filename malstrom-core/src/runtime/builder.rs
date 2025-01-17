@@ -3,22 +3,19 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
-use crate::coordinator::messages::{BuildInformation, NoMessage, WorkerClient};
-use crate::snapshot::controller::make_snapshot_controller;
-use crate::snapshot::triggers::SnapshotTrigger;
+use crate::coordinator::messages::WorkerClient;
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
 use crate::stream::{
-    AppendableOperator, BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
+    BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
-use crate::types::{MaybeData, MaybeKey, NoData, NoKey, OperatorPartitioner, WorkerId};
+use crate::types::{MaybeData, MaybeKey, NoData, NoKey, WorkerId};
 use crate::types::{MaybeTime, NoTime};
 use thiserror::Error;
 
-use super::communication::WorkerCoordinatorComm;
-use super::rescaling::{make_rescale_controller, RescaleController, RescaleError, RescaleRequest};
+use super::rescaling::{RescaleError, RescaleRequest};
 use super::runtime_flavor::CommunicationError;
-use super::{CommunicationClient, RuntimeFlavor, OperatorOperatorComm};
+use super::{RuntimeFlavor, OperatorOperatorComm};
 
 type RootOperator = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime>;
 

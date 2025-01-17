@@ -5,9 +5,9 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
 use crate::runtime::{StreamProvider, WorkerBuilder};
-use crate::snapshot::{Barrier, NoSnapshots};
+use crate::snapshot::Barrier;
 use crate::types::{MaybeTime, RescaleMessage};
-use crate::types::{Key, RescaleChange, SuspendMarker};
+use crate::types::{Key, SuspendMarker};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     stream::JetStreamBuilder,

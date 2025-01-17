@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 
 use crate::{
     channels::operator_io::{Input, Output},
@@ -7,13 +6,11 @@ use crate::{
     types::{Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, WorkerId},
 };
 use indexmap::{IndexMap, IndexSet};
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::oneshot::{Receiver, Sender};
-use tracing::{debug, info};
+use tracing::info;
 
-use super::CommunicationClient;
 
 pub(super) type RescaleController = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime>;
 
@@ -193,7 +190,7 @@ fn build_follower_controller_logic(
     request_channel: std::sync::mpsc::Receiver<RescaleRequest>,
 ) -> impl Logic<NoKey, NoData, NoTime, NoKey, NoData, NoTime> {
     let mut in_progress_rescale: Option<RescaleMessage> = None;
-    let mut leader_client = build_context.create_communication_client::<ComsMessage>(0);
+    let leader_client = build_context.create_communication_client::<ComsMessage>(0);
 
     move |input: &mut Input<NoKey, NoData, NoTime>,
           output: &mut Output<NoKey, NoData, NoTime>,

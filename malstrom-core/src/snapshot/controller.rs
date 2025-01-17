@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::channels::operator_io::Output;
 use crate::runtime::communication::broadcast;
-use crate::runtime::{BiCommunicationClient, CommunicationClient};
+use crate::runtime::BiCommunicationClient;
 use crate::snapshot::Barrier;
 use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::*;

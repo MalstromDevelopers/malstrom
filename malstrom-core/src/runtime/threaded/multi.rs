@@ -1,13 +1,11 @@
 use std::{
-    sync::{atomic::AtomicU64, Arc, Barrier, Mutex},
-    thread::JoinHandle, time::Duration, u64,
+    sync::Arc, time::Duration, u64,
 };
 
 use bon::Builder;
-use indexmap::IndexMap;
 
 use crate::{
-    coordinator::{self, Coordinator}, runtime::{builder::{BuildError, WorkerApiHandle}, rescaling::RescaleError, RuntimeFlavor, StreamProvider, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}, types::WorkerId
+    coordinator::{Coordinator}, runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}, types::WorkerId
 };
 
 use super::{communication::InterThreadCommunication, Shared};
@@ -64,7 +62,7 @@ impl<P> MultiThreadRuntime<P> where P: PersistenceBackend + Clone + Send {
                 let mut worker_builder = WorkerBuilder::new(flavor, persistence);
                 (self.build)(&mut worker_builder);
                 let result = worker_builder.build_and_run();
-                finish_tx.send(result);
+                finish_tx.send(result).expect("Runtime should be alive");
             });
             threads.push(thread);
         }
