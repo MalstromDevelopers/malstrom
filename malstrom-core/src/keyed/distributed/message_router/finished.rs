@@ -65,6 +65,7 @@ impl FinishedRouter {
             .all(|(_, state)| state.last_version >= self.version)
         {
             let normal_router = NormalRouter::new(self.new_worker_set, self.version);
+            output.send(Message::Rescale(self.trigger));
             MessageRouter::Normal(normal_router)
         } else {
             MessageRouter::Finished(self)

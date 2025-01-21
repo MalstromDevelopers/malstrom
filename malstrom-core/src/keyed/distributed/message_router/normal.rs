@@ -1,5 +1,6 @@
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::super::types::*;
 use crate::types::*;
@@ -17,6 +18,7 @@ impl NormalRouter {
     /// Create a new router for the given worker set (including the local worker)
     /// and for the given version
     pub(super) fn new(worker_set: IndexSet<WorkerId>, version: Version) -> Self {
+        info!("Creating normal router with set {:?}", worker_set);
         Self {
             worker_set,
             version,

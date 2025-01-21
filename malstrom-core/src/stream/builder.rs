@@ -9,7 +9,6 @@ use crate::{
     types::{Data, MaybeData, MaybeKey, MaybeTime},
 };
 
-#[must_use = "Call .finish() on a stream to finalize it"]
 pub struct JetStreamBuilder<K, V, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
     tail: Input<K, V, T>,
@@ -75,14 +74,14 @@ where
 
         JetStreamBuilder {
             tail: new_tail,
-            operators: self.operators,
-            runtime: self.runtime,
+            operators: self.operators.drain(..).collect(),
+            runtime: Rc::clone(&self.runtime),
         }
     }
 
-    pub(crate) fn into_operators(self) -> Vec<Box<dyn BuildableOperator>> {
-        self.operators
-    }
+    // pub(crate) fn into_operators(self) -> Vec<Box<dyn BuildableOperator>> {
+    //     self.operators
+    // }
 
     /// Add a label to the last operator in this stream.
     /// This can be useful when tracing operator execution
@@ -91,15 +90,17 @@ where
     //     self
     // }
 
-    pub fn finish(self) {
-        let rt = self.runtime.clone();
-        rt.lock().unwrap().add_operators(self.operators);
-    }
+    // pub fn finish(self) {
+    //     let rt = self.runtime.clone();
+    //     rt.lock().unwrap().add_operators(self.operators);
+    // }
 
-    pub(crate) fn finish_pop_tail(self) -> Input<K, V, T> {
+    pub(crate) fn finish_pop_tail(mut self) -> Input<K, V, T> {
         let rt = self.runtime.clone();
-        rt.lock().unwrap().add_operators(self.operators);
-        self.tail
+        rt.lock().unwrap().add_operators(self.operators.drain(..));
+        let mut placeholder = Input::new_unlinked();
+        std::mem::swap(&mut placeholder, &mut self.tail);
+        placeholder
     }
 
     pub fn union(
@@ -108,5 +109,12 @@ where
     ) -> JetStreamBuilder<K, V, T> {
         let runtime = self.runtime.clone();
         union(runtime, iter::once(self).chain(others))
+    }
+}
+
+impl<K, V, T> Drop for JetStreamBuilder<K, V, T> {
+    fn drop(&mut self) {
+        let rt = self.runtime.clone();
+        rt.lock().unwrap().add_operators(self.operators.drain(..));
     }
 }

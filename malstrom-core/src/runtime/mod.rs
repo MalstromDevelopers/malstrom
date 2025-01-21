@@ -2,7 +2,7 @@ mod builder;
 pub mod communication;
 mod runtime_flavor;
 pub mod threaded;
-mod rescaling;
+// mod rescaling;
 
 pub use builder::{Worker, WorkerBuilder, StreamProvider};
 pub use communication::{OperatorOperatorComm, CommunicationClient, BiCommunicationClient};

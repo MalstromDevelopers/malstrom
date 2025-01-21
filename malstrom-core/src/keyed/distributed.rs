@@ -260,7 +260,7 @@ where
             RescaleChange::ScaleAddWorker(to_add) => {
                 for wid in to_add {
                     // HACK sometimes the client already exists, not sure why
-                    if !self.remotes.contains_key(wid) {
+                    if !self.remotes.contains_key(wid) && *wid != ctx.worker_id {
                         let comm_client = ctx.create_communication_client(*wid);
                         let remote_state = RemoteState::default();
                         self.remotes.insert(*wid, (comm_client, remote_state));

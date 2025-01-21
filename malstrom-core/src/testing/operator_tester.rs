@@ -5,6 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use async_trait::async_trait;
+
 use crate::types::*;
 use crate::{
     channels::operator_io::{full_broadcast, link, Input, Output},
@@ -190,6 +192,7 @@ struct FakeCommunicationTransport<R> {
     sent_to_operator: Arc<Mutex<HashMap<ImpersonatedSender, VecDeque<R>>>>,
     impersonate: ImpersonatedSender,
 }
+#[async_trait]
 impl<R> BiStreamTransport for FakeCommunicationTransport<R>
 where
     R: Distributable + Send,
@@ -209,6 +212,16 @@ where
     }
 
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError> {
+        let mut guard = self.sent_to_operator.lock().unwrap();
+        let queue = guard.get_mut(&self.impersonate);
+        match queue {
+            Some(q) => Ok(q.pop_front().map(BiCommunicationClient::encode)),
+            None => Ok(None),
+        }
+    }
+
+    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError> {
+        // TODO not a good implementation since it is essentially sync
         let mut guard = self.sent_to_operator.lock().unwrap();
         let queue = guard.get_mut(&self.impersonate);
         match queue {

@@ -48,7 +48,6 @@ where
                     sink.sink_full(msg);
                 }
             },
-        ))
-        .finish();
+        ));
     }
 }

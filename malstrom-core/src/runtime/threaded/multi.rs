@@ -3,9 +3,10 @@ use std::{
 };
 
 use bon::Builder;
+use tracing::info;
 
 use crate::{
-    coordinator::{Coordinator}, runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}, types::WorkerId
+    coordinator::{Coordinator, CoordinatorError}, runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder}, snapshot::{PersistenceBackend, PersistenceClient}, types::WorkerId
 };
 
 use super::{communication::InterThreadCommunication, Shared};
@@ -44,8 +45,13 @@ pub struct MultiThreadRuntime<P> {
     persistence: P,
     snapshots: Option<Duration>,
     parrallelism: u64,
+    #[builder(default = tokio::sync::watch::Sender::new(None))]
+    api_handles: tokio::sync::watch::Sender<Option<Coordinator>>,
+    #[builder(default = std::sync::mpsc::channel())]
+    rescale_req: (std::sync::mpsc::Sender<u64>, std::sync::mpsc::Receiver<u64>)
 }
-impl<P> MultiThreadRuntime<P> where P: PersistenceBackend + Clone + Send {
+
+impl<P> MultiThreadRuntime<P> where P: PersistenceBackend + Clone + Send + Sync {
     pub fn execute(
         self
     ) -> Result<(), BuildError> {
@@ -54,29 +60,52 @@ impl<P> MultiThreadRuntime<P> where P: PersistenceBackend + Clone + Send {
 
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
         for i in 0..self.parrallelism {
-            let shared = Arc::clone(&shared);
-            let finish_tx = finish_tx.clone();
-            let persistence = self.persistence.clone();
-            let thread = std::thread::spawn(move || {
-                let flavor = MultiThreadRuntimeFlavor::new(shared, i);
-                let mut worker_builder = WorkerBuilder::new(flavor, persistence);
-                (self.build)(&mut worker_builder);
-                let result = worker_builder.build_and_run();
-                finish_tx.send(result).expect("Runtime should be alive");
-            });
+            let thread = Self::spawn_worker(
+                self.build,
+                self.persistence.clone(),
+                Arc::clone(&shared),
+                finish_tx.clone(),
+                i
+            );
             threads.push(thread);
         }
         
         // TODO: Rescale immediatly when default_scale != last_scale
 
-        let _coordinator = Coordinator::new(
+        let coordinator = Coordinator::new(
             self.parrallelism,
             self.snapshots,
-            self.persistence,
-            InterThreadCommunication::new(shared, u64::MAX)
-        );
+            self.persistence.clone(),
+            InterThreadCommunication::new(Arc::clone(&shared), u64::MAX)
+        ).unwrap();
+        // fails if there are no API handles
+        let _ = self.api_handles.send(Some(coordinator));
         // Err(_) would mean all senders dropped i.e. all threads finished, which would be
         // perfectly fine with us
+
+        loop {
+            if let Ok(desired) = self.rescale_req.1.try_recv() {
+                let actual = threads.len() as u64;
+                if desired > actual {
+                    for i in actual..desired {
+                        let thread = Self::spawn_worker(
+                            self.build,
+                            self.persistence.clone(),
+                            Arc::clone(&shared),
+                            finish_tx.clone(),
+                            i
+                        );
+                    threads.push(thread);
+
+                    }
+                }
+            }
+            threads.retain(|x| !x.is_finished());
+            if threads.len() == 0 {
+                return Ok(());
+            }
+        }
+
         while let Ok(worker_result) = finish_rx.recv() {
             match worker_result {
                 Ok(_) => continue,
@@ -88,6 +117,26 @@ impl<P> MultiThreadRuntime<P> where P: PersistenceBackend + Clone + Send {
         };
         Ok(())
     }
+
+    fn spawn_worker(
+        build_fn: fn(&mut dyn StreamProvider) -> (),
+        persistence: P,
+        shared: Shared,
+        finish_tx: std::sync::mpsc::Sender<Result<(), BuildError>>,
+        thread_id: u64) -> std::thread::JoinHandle<()>{
+        std::thread::spawn(move || {
+            let flavor = MultiThreadRuntimeFlavor::new(shared, thread_id);
+            let mut worker_builder = WorkerBuilder::new(flavor, persistence);
+            build_fn(&mut worker_builder);
+            let result = worker_builder.build_and_run();
+            finish_tx.send(result).expect("Runtime should be alive");
+        })
+    }
+
+    pub fn api_handle(&self) -> MultiThreadRuntimeApiHandle {
+        MultiThreadRuntimeApiHandle { coord_channel: self.api_handles.subscribe(), rescale_req: self.rescale_req.0.clone() }
+    }
+
 }
 
 /// This is passed to the worker
@@ -119,6 +168,18 @@ impl RuntimeFlavor for MultiThreadRuntimeFlavor {
 
     fn this_worker_id(&self) -> u64 {
         self.worker_id
+    }
+}
+
+pub struct MultiThreadRuntimeApiHandle {
+    coord_channel: tokio::sync::watch::Receiver<Option<Coordinator>>,
+    rescale_req: std::sync::mpsc::Sender<u64>,
+}
+
+impl MultiThreadRuntimeApiHandle {
+    pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
+        self.rescale_req.send(desired).unwrap();
+        self.coord_channel.borrow().as_ref().unwrap().rescale(desired).await
     }
 }
 

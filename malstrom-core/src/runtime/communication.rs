@@ -1,5 +1,6 @@
 use std::{error::Error, marker::PhantomData};
 
+use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::types::{OperatorId, WorkerId};
@@ -45,6 +46,7 @@ pub trait WorkerCoordinatorComm {
 
 /// Bi-directional streaming transport where each end can send many messages to the other without
 /// requiring a response
+#[async_trait]
 pub trait BiStreamTransport: Send + Sync {
     /// Send a single message to the Operator on the other end of the transport.
     ///
@@ -58,6 +60,9 @@ pub trait BiStreamTransport: Send + Sync {
     /// Fallible transports must implement applicable retry logic internally,
     /// an error should only be returned on **unrecoverable conditions**.
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError>;
+
+    /// Wait until a message becomes available
+    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError>;
 
     /// Receive all currently available messages for this operator.
     /// Some transport implementations may handle message reception more efficiently
@@ -146,6 +151,14 @@ where
         //     .expect(&format!("Deserialize message, type: {typ}"));
         Some(Self::decode(&encoded))
     }
+
+    pub async fn recv_async(&self) -> Option<TRecv> {
+        let encoded = self.transport.recv_async().await.unwrap()?;
+        // let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
+        //     .expect(&format!("Deserialize message, type: {typ}"));
+        Some(Self::decode(&encoded))
+    }
+
 
     pub(crate) fn decode(msg: &[u8]) -> TRecv {
         rmp_serde::decode::from_slice(msg).unwrap()

@@ -6,14 +6,12 @@ use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{sync::Mutex, task::yield_now};
-use tracing::{error, info, warn};
+use tokio::{task::yield_now, time::Timeout};
+use std::sync::Mutex;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    snapshot::{
-        deserialize_state, serialize_state,
-        PersistenceBackend, PersistenceClient,
-    },
+    snapshot::{deserialize_state, serialize_state, PersistenceBackend, PersistenceClient},
     types::WorkerId,
 };
 
@@ -28,8 +26,8 @@ const COORDINATOR_ID: WorkerId = WorkerId::MAX;
 
 pub struct Coordinator {
     _rt: tokio::runtime::Runtime,
-    _coordinator_loop: tokio::task::JoinHandle<()>,
-    _auto_snapshot_loop: Option<tokio::task::JoinHandle<()>>,
+    _tasks: tokio::task::JoinHandle<()>,
+    req_tx: flume::Sender<CoordinatorRequest>
 }
 
 impl Coordinator {
@@ -39,7 +37,7 @@ impl Coordinator {
         persistence: P,
         communication: C,
     ) -> Result<Coordinator, CoordinatorCreationError> {
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_time()
             .build()?;
 
@@ -54,6 +52,7 @@ impl Coordinator {
         let clients = CoordinatorClients::new(state.scale, communication)?;
         let (req_tx, req_rx) = flume::bounded(16);
         let status = Arc::new(Mutex::new(CoordinatorStatus::Idle));
+        debug!("Spawning coordinator loop");
         let coordinator_loop = rt.spawn(coordinator_loop(req_rx, status, clients, persistence));
 
         let auto_snap_tx = req_tx.clone();
@@ -75,11 +74,28 @@ impl Coordinator {
         None => None
         };
 
+        let tasks = rt.spawn(async {
+            coordinator_loop.await;
+            info!("Coordinator exited, terminating snapshot loop");
+            if let Some(asl) = auto_snapshot_loop {
+                asl.abort();
+                asl.await;
+            }
+        });
+
         Ok(Self {
             _rt: rt,
-            _coordinator_loop: coordinator_loop,
-            _auto_snapshot_loop: auto_snapshot_loop,
+            _tasks: tasks,
+            req_tx
         })
+    }
+}
+
+impl Coordinator {
+
+    pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
+        CoordinatorRequest::send(RequestOperation::Scale(desired), &self.req_tx).await
+
     }
 }
 
@@ -169,53 +185,65 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
         .last_commited(COORDINATOR_ID)
         .get_version();
 
-    let clients = clients.start_build(last_snapshot).await;
+    info!("Awaiting build from {} worker(s)", clients.scale());
+    let scale = clients.scale();
+    let clients = clients.start_build(scale, last_snapshot).await;
     info!("Build completed on all workers");
     let mut clients = clients.start_execution().await;
     info!("Execution started on all workers");
 
-    while let Ok(req) = requests.recv_async().await {
-        let _guard = match status
-            .set_status(CoordinatorStatus::from(req.request))
-            .await
+    loop {
+        clients = clients.check_execution_complete();
+        if let Ok(Ok(req)) =
+            tokio::time::timeout(Duration::from_millis(100), requests.recv_async()).await
         {
-            Ok(guard) => guard,
-            Err(e) => {
-                let _ = req.callback.send(Err(CoordinatorError::from(e)));
-                continue;
-            }
-        };
-
-        clients = match req.request {
-            RequestOperation::Snapshot => {
-                let next_version = last_snapshot + 1;
-                let clients = clients.snapshot(next_version).await;
-                let state = CoordinatorState {
-                    scale: clients.scale(),
-                };
-                persistence_backend
-                    .for_version(last_snapshot, &next_version)
-                    .persist(&serialize_state(&state), &0);
-                persistence_backend.commit_version(&next_version);
-                last_snapshot = next_version;
-                clients
-            }
-            RequestOperation::Scale(desired) => {
-                let scale = clients.scale();
-                let diff = desired.abs_diff(scale);
-                if desired > scale {
-                    clients.scale_up(diff).await
-                } else {
-                    clients.scale_down(diff).await
+            let _guard = match status
+                .set_status(CoordinatorStatus::from(req.request))
+                .await
+            {
+                Ok(guard) => guard,
+                Err(e) => {
+                    let _ = req.callback.send(Err(CoordinatorError::from(e)));
+                    continue;
                 }
-            }
-            RequestOperation::Suspend => {
-                unimplemented!()
-            }
-        };
-        // ignore since it is fine for us if the requester did not wait for
-        // a response
-        let _ = req.callback.send(Ok(()));
+            };
+            clients = match req.request {
+                RequestOperation::Snapshot => {
+                    let next_version = last_snapshot + 1;
+                    let clients = clients.snapshot(next_version).await;
+                    let state = CoordinatorState {
+                        scale: clients.scale(),
+                    };
+                    persistence_backend
+                        .for_version(last_snapshot, &next_version)
+                        .persist(&serialize_state(&state), &0);
+                    persistence_backend.commit_version(&next_version);
+                    last_snapshot = next_version;
+                    clients
+                }
+                RequestOperation::Scale(desired) => {
+                    debug!("Handling scale request, target {desired}");
+                    let scale = clients.scale();
+                    let diff = desired.abs_diff(scale);
+                    if desired > scale {
+                        clients.scale_up(diff).await
+                    } else {
+                        clients.scale_down(diff).await
+                    }
+                }
+                RequestOperation::Suspend => {
+                    unimplemented!()
+                }
+            };
+            debug!("JIOJWIOJOF");
+            // ignore since it is fine for us if the requester did not wait for
+            // a response
+            let _ = req.callback.send(Ok(()));
+        }
+        if clients.scale() == 0 {
+            info!("No workers left, exiting coordinator loop");
+            break;
+        }
     }
 }
 
@@ -224,7 +252,7 @@ struct StatusGuard {
 }
 impl Drop for StatusGuard {
     fn drop(&mut self) {
-        let mut owner = self.owner.blocking_lock();
+        let mut owner = self.owner.lock().unwrap();
         let mut idle = CoordinatorStatus::Idle;
         std::mem::swap(&mut *owner, &mut idle);
     }
@@ -243,7 +271,7 @@ trait SetStatus {
 #[async_trait]
 impl SetStatus for Arc<Mutex<CoordinatorStatus>> {
     async fn set_status(&self, status: CoordinatorStatus) -> Result<StatusGuard, SetStatusError> {
-        let mut lock_guard = self.lock().await;
+        let mut lock_guard = self.lock().unwrap();
         if let CoordinatorStatus::Idle = *lock_guard {
             *lock_guard = status;
             Ok(StatusGuard {

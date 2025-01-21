@@ -117,8 +117,7 @@ where
                     let partition_op = StatefulSinkPartitionOp::<K, V, T, S>::new(ctx, builder_ref);
                     partition_op.into_logic()
                 },
-            ))
-            .finish()
+            ));
     }
 }
 

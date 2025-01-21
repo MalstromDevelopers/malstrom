@@ -30,7 +30,6 @@ where
     fn key_local(
         self,
         name: &str,
-
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> JetStreamBuilder<K, V, T> {
         let op = OperatorBuilder::direct(

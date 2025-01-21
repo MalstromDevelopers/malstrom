@@ -80,7 +80,7 @@ fn build_controller_logic(
             request_channel,
         ))
     } else {
-        Box::new(build_follower_controller_logic(
+        Box::new(run_rescale(
             build_context,
             request_channel,
         ))
@@ -164,7 +164,6 @@ fn build_leader_controller_logic(
                     RescaleChange::ScaleAddWorker(_) => (),
                 };
                 rescale.request.finish(RescaleResponse::Ok(()));
-                println!("FOIJWIONFIONWOINFOWNAWFNFNFLWNANFOWNFIONFOIWNFOIF");
                 info!("Rescaling finished");
                 None
             } else {
@@ -185,49 +184,23 @@ fn build_leader_controller_logic(
     }
 }
 
-fn build_follower_controller_logic(
-    build_context: &mut BuildContext,
-    request_channel: std::sync::mpsc::Receiver<RescaleRequest>,
-) -> impl Logic<NoKey, NoData, NoTime, NoKey, NoData, NoTime> {
-    let mut in_progress_rescale: Option<RescaleMessage> = None;
-    let leader_client = build_context.create_communication_client::<ComsMessage>(0);
+enum RescaleOperation {
+    ScaleAdd(IndexSet<u64>),
+    ScaleRemove(IndexSet<u64>),
+}
 
-    move |input: &mut Input<NoKey, NoData, NoTime>,
-          output: &mut Output<NoKey, NoData, NoTime>,
-          ctx: &mut OperatorContext| {
-        if let Some(x) = input.recv() {
-            output.send(x);
-        };
-
-        if let Ok(x) = request_channel.try_recv() {
-            let _ = x.finish(Err(RescaleError::InitiatedOnFollower));
-        }
-
-        in_progress_rescale = match in_progress_rescale.take() {
-            Some(rescale) => {
-                if rescale.strong_count() == 1 {
-                    leader_client.send(ComsMessage::Complete);
-                    None
-                } else {
-                    Some(rescale)
-                }
-            }
-            None => match leader_client.recv() {
-                Some(ComsMessage::ScaleUp(change)) => {
-                    let local_msg = RescaleMessage::new_add(change.clone());
-                    output.send(Message::Rescale(local_msg.clone()));
-                    Some(local_msg)
-                }
-                Some(ComsMessage::ScaleDown(change)) => {
-                    let local_msg = RescaleMessage::new_remove(change.clone());
-                    output.send(Message::Rescale(local_msg.clone()));
-                    Some(local_msg)
-                }
-                None => None,
-                Some(ComsMessage::Complete) => {
-                    unreachable!("Only leader can receive completion message")
-                }
-            },
-        };
+fn run_rescale(
+    output: &mut Output<NoKey, NoData, NoTime>,
+    trigger: RescaleOperation,
+    schedule_fn: &mut impl FnMut() -> bool
+) -> () {
+    let in_progress_rescale: RescaleMessage = match trigger {
+        RescaleOperation::ScaleAdd(index_set) => RescaleMessage::new_add(index_set),
+        RescaleOperation::ScaleRemove(index_set) => RescaleMessage::new_remove(index_set),
+    };
+    output.send(Message::Rescale(in_progress_rescale.clone()));
+    while in_progress_rescale.strong_count() > 1 {
+        schedule_fn();
     }
+    
 }

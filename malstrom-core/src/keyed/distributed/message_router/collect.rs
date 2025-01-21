@@ -1,4 +1,5 @@
 use indexmap::IndexSet;
+use itertools::Itertools;
 
 use crate::{
     channels::operator_io::Output,

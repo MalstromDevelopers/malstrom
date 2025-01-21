@@ -6,10 +6,12 @@ use crate::{
     types::{OperatorId, WorkerId},
 };
 use std::sync::{Arc, Mutex};
-use flume::{Sender, Receiver};
+use async_trait::async_trait;
+use flume::{Receiver, RecvError, Sender};
 
 use indexmap::{map::Entry, IndexMap, IndexSet};
 use thiserror::Error;
+use tracing::debug;
 
 /// uniquely identifies a connection
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -49,21 +51,21 @@ pub struct InterThreadCommunication {
 }
 impl InterThreadCommunication {
     pub(crate) fn new(shared: Shared, this_worker: WorkerId) -> Self {
+        debug!("Creating communication backend for worker {:?}", this_worker);
         Self {
             shared,
             this_worker,
             burnt_keys: Default::default(),
         }
     }
-}
 
-impl OperatorOperatorComm for InterThreadCommunication {
-    fn operator_to_operator(
+    fn inner_operator_to_operator(
         &self,
         to_worker: WorkerId,
+        from_worker: WorkerId,
         operator: OperatorId,
     ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
-        let key = ConnectionKey::new(to_worker, self.this_worker, operator);
+        let key = ConnectionKey::new(to_worker, from_worker, operator);
 
         let mut burnt_keys = self.burnt_keys.lock().unwrap();
         if burnt_keys.contains(&key) {
@@ -87,6 +89,16 @@ impl OperatorOperatorComm for InterThreadCommunication {
     }
 }
 
+impl OperatorOperatorComm for InterThreadCommunication {
+    fn operator_to_operator(
+        &self,
+        to_worker: WorkerId,
+        operator: OperatorId,
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+        self.inner_operator_to_operator(to_worker, self.this_worker, operator)
+    }
+}
+
 impl WorkerCoordinatorComm for InterThreadCommunication {
     fn worker_to_coordinator(&self) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         // HACK but works
@@ -96,21 +108,31 @@ impl WorkerCoordinatorComm for InterThreadCommunication {
 impl CoordinatorWorkerComm for InterThreadCommunication {
     fn coordinator_to_worker(&self, worker_id: WorkerId) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         // HACK but works
-        self.operator_to_operator(worker_id, 0)
+        self.inner_operator_to_operator(worker_id, WorkerId::MAX, 0)
+
     }
 }
 
 /// MPSC Channel based transport
+#[derive(Debug)]
 pub(crate) struct ChannelTransport {
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
 }
 
+#[async_trait]
 impl BiStreamTransport for ChannelTransport {
     fn send(&self, msg: Vec<u8>) -> Result<(), TransportError> {
         self.sender
             .send(msg)
             .map_err(|e| TransportError::SendError(Box::new(e)))
+    }
+
+    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError> {
+        match self.receiver.recv_async().await {
+            Ok(x) => Ok(Some(x)),
+            Err(e) => Ok(None)
+        }
     }
 
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError> {

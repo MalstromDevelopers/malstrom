@@ -3,17 +3,19 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
-use crate::coordinator::messages::WorkerClient;
+use crate::coordinator;
+use crate::coordinator::messages::{ActionWorkerClient, CoordinationMessage, ExecutionComplete, WorkerClient};
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
 use crate::stream::{
     BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
 };
-use crate::types::{MaybeData, MaybeKey, NoData, NoKey, WorkerId};
+use crate::types::{MaybeData, MaybeKey, Message, NoData, NoKey, RescaleMessage, WorkerId};
 use crate::types::{MaybeTime, NoTime};
+use indexmap::IndexSet;
 use thiserror::Error;
+use tracing::{info, span, Level};
 
-use super::rescaling::{RescaleError, RescaleRequest};
 use super::runtime_flavor::CommunicationError;
 use super::{RuntimeFlavor, OperatorOperatorComm};
 
@@ -73,16 +75,20 @@ where
 {
 
     pub fn build_and_run(mut self) -> Result<(), BuildError> {
+        let this_worker = self.flavor.this_worker_id();
+        let _span = span!(Level::INFO, "worker", worker_id = this_worker);
+        let _span_guard = _span.enter();
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
         let ref_count = Rc::strong_count(&self.inner);
         let inner =
             Rc::try_unwrap(self.inner).map_err(|_| BuildError::UnfinishedStreams(ref_count - 1))?;
         
-        let this_worker = self.flavor.this_worker_id();
         
         let mut communication_backend = self.flavor.communication()?;
         let coordinator = WorkerClient::new(&communication_backend);
+        info!("Waiting for Coordinator build info");
         let (build_info, coordinator) = rt.block_on(coordinator.get_build_info());
+        info!("Obtained build info: {:?}", build_info);
         let cluster_size = build_info.scale;
         let state_client = Rc::new(self.persistence.for_version(this_worker, &build_info.resume_snapshot)) as Rc<dyn PersistenceClient>;
 
@@ -117,7 +123,10 @@ where
         };
         
         let coordinator = rt.block_on(coordinator.await_start());
-        worker.execute();
+        let coordinator = worker.execute(&mut self.root_stream, coordinator);
+        info!("Finished execution");
+        let coordinator = coordinator.signal_execution_complete();
+        rt.block_on(coordinator.await_execution_complete());
         Ok(())
     }
 }
@@ -200,27 +209,46 @@ where
     /// Repeatedly schedule all operators until all have reached a finished state
     /// Note that depending on the specific operator implementations this may never
     /// be the case
-    pub fn execute(&mut self) {
-        while !self.step() {}
-    }
-}
-
-#[derive(Clone)]
-pub struct WorkerApiHandle {
-    rescale_tx: std::sync::mpsc::Sender<RescaleRequest>,
-}
-
-impl WorkerApiHandle {
-    pub async fn rescale(&self, change: i64) -> Result<(), RescaleError> {
-        if change == 0 {
-            return Ok(());
+    pub fn execute(&mut self, root: &mut Output<NoKey, NoData, NoTime>, mut coordinator: WorkerClient<ExecutionComplete, CoordinationMessage>) -> WorkerClient<ExecutionComplete, CoordinationMessage> {
+        while !self.step() {
+            coordinator = match coordinator.recv() {
+                ActionWorkerClient::Idle(worker_client) => worker_client,
+                ActionWorkerClient::Snapshot(worker_client, _) => todo!(),
+                ActionWorkerClient::ScaleAdd(worker_client, index_set) => {
+                    run_rescale(root, RescaleOperation::ScaleAdd(index_set), &mut || self.step());
+                    worker_client.complete_scale_add()
+                },
+                ActionWorkerClient::ScaleRemove(worker_client, index_set) => {
+                    run_rescale(root, RescaleOperation::ScaleRemove(index_set), &mut || self.step());
+                    worker_client.complete_scale_add()
+                },
+                ActionWorkerClient::Suspend(worker_client) => todo!(),
+            }
         }
-        let (req, callback) = RescaleRequest::new(change);
-        // PANIC: controller impl guarantees sender/receiver wont be dropped
-        self.rescale_tx.send(req).unwrap();
-        // TODO // callback.await.unwrap()
-        Ok(())
+
+        coordinator
     }
+}
+
+enum RescaleOperation {
+    ScaleAdd(IndexSet<u64>),
+    ScaleRemove(IndexSet<u64>),
+}
+
+fn run_rescale(
+    output: &mut Output<NoKey, NoData, NoTime>,
+    trigger: RescaleOperation,
+    schedule_fn: &mut impl FnMut() -> bool
+) -> () {
+    let in_progress_rescale: RescaleMessage = match trigger {
+        RescaleOperation::ScaleAdd(index_set) => RescaleMessage::new_add(index_set),
+        RescaleOperation::ScaleRemove(index_set) => RescaleMessage::new_remove(index_set),
+    };
+    output.send(Message::Rescale(in_progress_rescale.clone()));
+    while in_progress_rescale.strong_count() > 1 {
+        schedule_fn();
+    }
+
 }
 
 #[cfg(test)]

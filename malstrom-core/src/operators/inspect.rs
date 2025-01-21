@@ -60,7 +60,7 @@ where
                 Some(Message::Data(d)) => {
                     inspector(&d, ctx);
                     output.send(Message::Data(d));
-                }
+                },
                 Some(x) => output.send(x),
                 None => (),
             });

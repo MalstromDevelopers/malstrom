@@ -6,6 +6,7 @@ use crate::{
 
 use super::{communication::InterThreadCommunication, Shared};
 use bon::Builder;
+use tracing::debug;
 
 /// Runs all dataflows in a single thread on a
 /// single machine with no parrallelism.
@@ -26,14 +27,17 @@ where
     /// JetStream worker fails
     pub fn execute(self) -> Result<(), BuildError> {
         let mut flavor = SingleThreadRuntimeFlavor::default();
+
         let mut worker = WorkerBuilder::new(flavor.clone(), self.persistence.clone());
         (self.build)(&mut worker);
+        
         let _coordinator = Coordinator::new(1, self.snapshots, self.persistence, flavor.communication().unwrap());
+        println!("{:?}", flavor.comm_shared);
         worker.build_and_run()
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct SingleThreadRuntimeFlavor{
     comm_shared: Shared
 }
