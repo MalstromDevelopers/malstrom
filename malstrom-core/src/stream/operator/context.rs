@@ -23,9 +23,11 @@ pub struct OperatorContext<'a> {
 impl<'a> OperatorContext<'a> {
     /// Create a client for inter-worker communication
     pub fn create_communication_client<T: Distributable>(
-        &mut self,
+        &self,
         other_worker: WorkerId,
     ) -> BiCommunicationClient<T> {
+        // Assert is kinda ugly here, but this situation is a programming error
+        assert!(other_worker != self.worker_id);
         BiCommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
     }
 

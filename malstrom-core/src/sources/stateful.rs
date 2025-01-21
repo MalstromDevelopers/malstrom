@@ -5,6 +5,7 @@ use std::{hash::Hash, marker::PhantomData};
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{
     channels::operator_io::{Input, Output},
@@ -270,6 +271,10 @@ where
             }
             RescaleChange::ScaleAddWorker(index_set) => {
                 for wid in index_set.iter() {
+                    // HACK: Not sure why this is necessary
+                    if self.comm_clients.contains_key(wid) || *wid == ctx.worker_id {
+                        continue;
+                    }
                     let comm_client = ctx.create_communication_client(*wid);
                     self.comm_clients.insert(wid.clone(), comm_client);
                 }

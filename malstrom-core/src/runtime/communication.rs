@@ -2,6 +2,7 @@ use std::{error::Error, marker::PhantomData};
 
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
+use tracing::debug;
 
 use crate::types::{OperatorId, WorkerId};
 
@@ -93,6 +94,7 @@ where
         operator: OperatorId,
         backend: &dyn OperatorOperatorComm,
     ) -> Result<Self, CommunicationBackendError> {
+        debug!(message = "Creating operator-operator communication client", ?to_worker, ?operator);
         let transport = backend.operator_to_operator(to_worker, operator)?;
         Ok(Self {
             transport,

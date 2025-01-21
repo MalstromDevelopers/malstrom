@@ -70,7 +70,7 @@ impl InterThreadCommunication {
         let mut burnt_keys = self.burnt_keys.lock().unwrap();
         if burnt_keys.contains(&key) {
             return Err(CommunicationBackendError::ClientBuildError(Box::new(
-                InterThreadCommunicationError::TransportAlreadyEstablished,
+                InterThreadCommunicationError::TransportAlreadyEstablished(key),
             )));
         }
         burnt_keys.insert(key);
@@ -167,8 +167,8 @@ fn new_transport_pair() -> (ChannelTransport, ChannelTransport) {
 
 #[derive(Error, Debug)]
 pub enum InterThreadCommunicationError {
-    #[error("Transport for this connection was already established. Listener already taken")]
-    TransportAlreadyEstablished,
+    #[error("Transport for {0:?} was already established. Listener already taken")]
+    TransportAlreadyEstablished(ConnectionKey),
 }
 
 #[cfg(test)]

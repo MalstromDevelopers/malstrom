@@ -1,3 +1,5 @@
+use tracing::debug_span;
+
 use crate::{
     runtime::OperatorOperatorComm,
     types::{OperatorId, WorkerId},
@@ -28,7 +30,8 @@ impl RunnableOperator {
             operator_id: self.operator_id,
             communication,
         };
-
+        let span = debug_span!("scheduling::run_operator", operator_name = self.name);
+        let _span_guard = span.enter();
         self.operator.step(&mut context)
     }
     pub fn has_queued_work(&self) -> bool {
