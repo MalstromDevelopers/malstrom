@@ -55,9 +55,6 @@ impl<T> Sender<T> {
     pub fn send(&self, msg: T) -> () {
         self.shared.borrow_mut().push(msg);
     }
-    pub(crate) fn strong_count(&self) -> usize {
-        Rc::strong_count(&self.shared)
-    }
 }
 
 /// A receiver for receiving messages from the channel

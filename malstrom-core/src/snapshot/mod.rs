@@ -1,4 +1,3 @@
-pub mod controller;
 #[cfg(feature = "slatedb")]
 pub mod slatedb;
 pub mod triggers;

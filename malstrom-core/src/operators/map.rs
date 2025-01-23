@@ -68,25 +68,26 @@ mod tests {
         operators::{map::Map, source::Source, Sink},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
     #[test]
     fn test_map() {
-        let (builder, stream) = get_test_stream();
         let input = ["hello", "world", "foo", "bar"];
         let expected = input.iter().map(|x| x.len()).collect_vec();
         let collector = VecSink::new();
 
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(input)),
-            )
-            .map("get-len", |x| x.len())
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build_and_run().unwrap().0.execute();
-
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(input)),
+                )
+                .map("get-len", |x| x.len())
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
         assert_eq!(
             collector.into_iter().map(|x| x.value).collect_vec(),
             expected

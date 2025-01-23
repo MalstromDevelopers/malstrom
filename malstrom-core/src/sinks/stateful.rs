@@ -10,14 +10,16 @@ use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
         distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
-        partitioners::rendezvous_select, KeyDistribute,
+        partitioners::rendezvous_select,
+        KeyDistribute,
     },
-    operators::{Map, StreamSink},
+    operators::StreamSink,
     runtime::communication::Distributable,
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoTime, RescaleMessage, SuspendMarker
+        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoTime, RescaleMessage,
+        SuspendMarker,
     },
 };
 
@@ -264,7 +266,7 @@ where
         &mut self,
         _epoch: T,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
-        ctx: &mut OperatorContext,
+        _ctx: &mut OperatorContext,
     ) -> () {
     }
 }

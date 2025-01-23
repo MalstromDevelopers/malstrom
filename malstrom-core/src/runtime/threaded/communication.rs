@@ -1,13 +1,16 @@
 use crate::{
     runtime::{
-        communication::{BiStreamTransport, CommunicationBackendError, CoordinatorWorkerComm, TransportError, WorkerCoordinatorComm},
+        communication::{
+            BiStreamTransport, CommunicationBackendError, CoordinatorWorkerComm, TransportError,
+            WorkerCoordinatorComm,
+        },
         OperatorOperatorComm,
     },
     types::{OperatorId, WorkerId},
 };
-use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use flume::{Receiver, RecvError, Sender};
+use flume::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use indexmap::{map::Entry, IndexMap, IndexSet};
 use thiserror::Error;
@@ -15,7 +18,7 @@ use tracing::debug;
 
 /// uniquely identifies a connection
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-pub(crate) struct ConnectionKey {
+pub struct ConnectionKey {
     worker_low: WorkerId,
     worker_high: WorkerId,
     operator: OperatorId,
@@ -51,7 +54,10 @@ pub struct InterThreadCommunication {
 }
 impl InterThreadCommunication {
     pub(crate) fn new(shared: Shared, this_worker: WorkerId) -> Self {
-        debug!("Creating communication backend for worker {:?}", this_worker);
+        debug!(
+            "Creating communication backend for worker {:?}",
+            this_worker
+        );
         Self {
             shared,
             this_worker,
@@ -100,16 +106,20 @@ impl OperatorOperatorComm for InterThreadCommunication {
 }
 
 impl WorkerCoordinatorComm for InterThreadCommunication {
-    fn worker_to_coordinator(&self) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+    fn worker_to_coordinator(
+        &self,
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         // HACK but works
         self.operator_to_operator(WorkerId::MAX, 0)
     }
 }
 impl CoordinatorWorkerComm for InterThreadCommunication {
-    fn coordinator_to_worker(&self, worker_id: WorkerId) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+    fn coordinator_to_worker(
+        &self,
+        worker_id: WorkerId,
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         // HACK but works
         self.inner_operator_to_operator(worker_id, WorkerId::MAX, 0)
-
     }
 }
 
@@ -131,7 +141,7 @@ impl BiStreamTransport for ChannelTransport {
     async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError> {
         match self.receiver.recv_async().await {
             Ok(x) => Ok(Some(x)),
-            Err(e) => Ok(None)
+            Err(_) => Ok(None),
         }
     }
 
@@ -199,7 +209,7 @@ mod test {
     #[test]
     fn error_on_double_listen() {
         let shared = Shared::default();
-        let mut worker0 = InterThreadCommunication::new(shared.clone(), 0);
+        let worker0 = InterThreadCommunication::new(shared.clone(), 0);
 
         worker0.operator_to_operator(1, 0).unwrap();
         // this should work
@@ -212,7 +222,7 @@ mod test {
                 let concrete = *e.downcast::<InterThreadCommunicationError>().unwrap();
                 assert!(matches!(
                     concrete,
-                    InterThreadCommunicationError::TransportAlreadyEstablished
+                    InterThreadCommunicationError::TransportAlreadyEstablished(_)
                 ));
             }
             Ok(_) => panic!("OK IS NOT OK"),

@@ -11,6 +11,9 @@ where
     T: Debug,
 {
     fn sink(&mut self, msg: crate::types::DataMessage<K, V, T>) {
-        println!("{{ key: {:?}, value: {:?}, timestamp: {:?} }}", msg.key, msg.value, msg.timestamp)
+        println!(
+            "{{ key: {:?}, value: {:?}, timestamp: {:?} }}",
+            msg.key, msg.value, msg.timestamp
+        )
     }
 }

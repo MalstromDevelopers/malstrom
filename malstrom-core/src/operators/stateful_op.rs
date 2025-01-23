@@ -103,7 +103,7 @@ fn build_stateful_logic<
                 output.send(Message::Interrogate(x))
             }
             Message::Collect(mut c) => {
-                if let Some(x) = state.remove(&c.key) {
+                if let Some(x) = state.swap_remove(&c.key) {
                     c.add_state(ctx.operator_id, x);
                 }
                 output.send(Message::Collect(c))
@@ -314,7 +314,7 @@ mod tests {
         let mut tester: OperatorTester<i32, String, NoTime, i32, String, NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
 
-        let state = IndexMap::from([(42, CommunicationClient::encode("HelloWorld".to_owned()))]);
+        let state = IndexMap::from([(42, BiCommunicationClient::encode("HelloWorld".to_owned()))]);
 
         tester.send_local(Message::Acquire(Acquire::new(1337, state)));
         tester.step();
@@ -399,7 +399,7 @@ mod tests {
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(backend.clone()))));
         tester.step();
 
-        let state: IndexMap<bool, i32> = CommunicationClient::decode(&backend.load(&42).unwrap());
+        let state: IndexMap<bool, i32> = BiCommunicationClient::decode(&backend.load(&42).unwrap());
         assert_eq!(*state.get(&false).unwrap(), 1);
     }
 

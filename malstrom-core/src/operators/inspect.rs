@@ -60,7 +60,7 @@ where
                 Some(Message::Data(d)) => {
                     inspector(&d, ctx);
                     output.send(Message::Data(d));
-                },
+                }
                 Some(x) => output.send(x),
                 None => (),
             });
@@ -73,34 +73,34 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{inspect::Inspect, source::Source, Sink},
+        operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
     #[test]
     fn test_inspect() {
-        let (builder, stream) = get_test_stream();
-
         let inspect_collector = VecSink::new();
-        let inspect_collector_moved = inspect_collector.clone();
-
         let output_collector = VecSink::new();
 
         let input = vec!["hello", "world", "foo", "bar"];
         let expected = input.clone();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(input)),
-            )
-            .inspect("inspect", move |x, _ctx| {
-                inspect_collector_moved.give(x.value.to_owned())
-            })
-            .sink("sink", StatelessSink::new(output_collector.clone()));
-        builder.build_and_run().unwrap().0.execute();
 
+        let rt = get_test_rt(|provider| {
+            let inspect_collector = inspect_collector.clone();
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(input.clone())),
+                )
+                .inspect("inspect", move |x, _| {
+                    inspect_collector.give(x.value.to_owned())
+                })
+                .sink("sink", StatelessSink::new(output_collector.clone()));
+        });
+        rt.execute().unwrap();
         assert_eq!(inspect_collector.drain_vec(..), expected);
         // check we still get unmodified output
         assert_eq!(

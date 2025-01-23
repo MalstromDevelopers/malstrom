@@ -1,17 +1,23 @@
+use std::time::Duration;
+
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 /// A stateful program
-use malstrom::runtime::{RuntimeFlavor, SingleThreadRuntime, WorkerBuilder};
+use malstrom::runtime::{RuntimeFlavor, SingleThreadRuntime, StreamProvider, WorkerBuilder};
 use malstrom::snapshot::{NoPersistence, NoSnapshots};
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    SingleThreadRuntime::new(build_dataflow).execute().unwrap()
+    SingleThreadRuntime::builder()
+        .snapshots(Duration::from_secs(300))
+        .persistence(NoPersistence::default())
+        .build(build_dataflow)
+        .execute()
+        .unwrap()
 }
 
-fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder<F, NoPersistence> {
-    let mut worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence::default());
-    worker
+fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
+    provider
         .new_stream()
         .source(
             "iter-source",
@@ -22,7 +28,5 @@ fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder<F, NoPersistence
             let state = state + value;
             (state.clone(), Some(state))
         })
-        .inspect("print", |x, _ctx_| println!("{}", x.value))
-        .finish();
-    worker
+        .inspect("print", |x, _ctx_| println!("{}", x.value));
 }

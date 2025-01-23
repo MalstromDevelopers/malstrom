@@ -13,8 +13,6 @@ use super::{BuildContext, OperatorContext, RunnableOperator};
 pub trait AppendableOperator<K, V, T> {
     fn get_output_mut(&mut self) -> &mut Output<K, V, T>;
 
-    fn get_output(&self) -> &Output<K, V, T>;
-
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
 }
 

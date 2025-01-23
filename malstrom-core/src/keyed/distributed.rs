@@ -14,13 +14,18 @@ use crate::{
     runtime::BiCommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
-    types::{DataMessage, MaybeTime, Message, RescaleChange, RescaleMessage, SuspendMarker, WorkerId},
+    types::{DataMessage, MaybeTime, Message, RescaleMessage, SuspendMarker, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;
 
-type Remotes<K, V, T> =
-    IndexMap<WorkerId, (BiCommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>;
+type Remotes<K, V, T> = IndexMap<
+    WorkerId,
+    (
+        BiCommunicationClient<NetworkMessage<K, V, T>>,
+        RemoteState<T>,
+    ),
+>;
 
 pub(super) struct Distributor<K, V, T> {
     router: Container<MessageRouter<K, V, T>>,
@@ -156,7 +161,7 @@ where
         self.try_emit_barrier(output);
         self.try_emit_shutdown(output);
         self.router
-            .apply(|x| x.lifecycle(self.partitioner, output, &self.remotes));
+            .apply(|x| x.lifecycle(self.partitioner, output, &mut self.remotes));
     }
 
     /// Handle a data message we received from our local upstream
@@ -254,21 +259,16 @@ where
         output: &mut Output<K, V, T>,
         ctx: &mut OperatorContext,
     ) {
-        match &message.get_change() {
-            // we can not remove these yet because they may still have messages for us
-            RescaleChange::ScaleRemoveWorker(_index_set) => (),
-            RescaleChange::ScaleAddWorker(to_add) => {
-                for wid in to_add {
-                    // HACK sometimes the client already exists, not sure why
-                    if !self.remotes.contains_key(wid) && *wid != ctx.worker_id {
-                        let comm_client = ctx.create_communication_client(*wid);
-                        let remote_state = RemoteState::default();
-                        self.remotes.insert(*wid, (comm_client, remote_state));
-                    }
-                }
+        // we can not remove clients of workers here because we need them during the rescale
+        // process. They are removed in the final step of the "Finished" distributor
+
+        for wid in message.get_new_workers() {
+            if !self.remotes.contains_key(wid) && *wid != ctx.worker_id {
+                let comm_client = ctx.create_communication_client(*wid);
+                let remote_state = RemoteState::default();
+                self.remotes.insert(*wid, (comm_client, remote_state));
             }
         }
-
         self.router
             .apply(|router| router.handle_rescale(message, self.partitioner, output))
     }

@@ -5,32 +5,10 @@
 //! The value is copied as often as necessary, to ensure multiple receivers can receive it.
 //! NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
 //! big queues with this channel.
-use std::{
-    rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
-use itertools::Itertools;
-
 use super::spsc;
-
 use crate::types::{MaybeTime, Message, OperatorPartitioner};
-
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
-/// This is a somewhat hacky we to get a unique id for each sender, which we
-/// use to identify messages downstream
-/// Taken from https://users.rust-lang.org/t/idiomatic-rust-way-to-generate-unique-id/33805
-fn get_id() -> usize {
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-enum MessageWrapper<K, V, T> {
-    /// Normal JetStream message with sender id
-    Message(usize, Message<K, V, T>),
-    /// Sender sends this to the receiver once it gets unlinked
-    Register(usize),
-    Deregister(usize),
-}
+use itertools::Itertools;
+use std::rc::Rc;
 
 // /// A simple partitioner, which will broadcast a value to all receivers
 #[inline(always)]
@@ -59,7 +37,7 @@ pub struct Output<K, V, T> {
     #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     frontier: Option<T>,
-    suspended: bool
+    suspended: bool,
 }
 
 impl<K, V, T> Output<K, V, T>
@@ -75,7 +53,7 @@ where
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
             frontier: None,
-            suspended: false
+            suspended: false,
         }
     }
 
@@ -89,10 +67,6 @@ where
             if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
                 self.frontier = Some(e.clone());
             }
-        }
-
-        if self.senders.is_empty() {
-            return;
         }
         let recipient_len = self.senders.len();
         let mut output_flags = vec![false; recipient_len];
@@ -109,9 +83,9 @@ where
                         sender.send(msg);
                     }
                 }
-            }
+            },
             x => {
-                if let Message::SuspendMarker(_) = &x {
+                if matches!(x, Message::SuspendMarker(_)) {
                     self.suspended = true
                 }
                 // repeat_n will clone for every iteration except the last
@@ -132,11 +106,6 @@ where
     #[inline]
     pub fn get_frontier(&self) -> &Option<T> {
         &self.frontier
-    }
-
-    #[inline]
-    pub(crate) fn receiver_count(&self) -> usize {
-        self.senders.len()
     }
 
     #[inline]
@@ -549,21 +518,6 @@ mod test {
         // if the sender had kept or sent the message somewhere this should panic
         Rc::try_unwrap(elem).unwrap();
     }
-
-    //Test linking a cloned sender works
-    // #[test]
-    // fn link_cloned_sender() {
-    //     let mut sender = Sender::new_unlinked(full_broadcast);
-    //     let mut sender2 = sender.clone();
-    //     let mut receiver = Receiver::new_unlinked();
-    //     link(&mut sender2, &mut receiver);
-    //     let msg = Message::Data(DataMessage::new("Beeble", 123, 42));
-
-    //     // should have linked both the original and cloned sender
-    //     sender.send(msg);
-    //     let result = receiver.recv();
-    //     assert!(result.is_some())
-    // }
 
     /// Output should be suspended after sending suspend marker
     #[test]

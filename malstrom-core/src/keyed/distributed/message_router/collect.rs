@@ -1,5 +1,4 @@
 use indexmap::IndexSet;
-use itertools::Itertools;
 
 use crate::{
     channels::operator_io::Output,
@@ -177,7 +176,7 @@ mod test {
             IndexSet::new(),
             IndexSet::new(),
             IndexSet::new(),
-            RescaleMessage::new_add(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1])),
         );
         assert_eq!(dist.version, 1)
     }
@@ -194,7 +193,7 @@ mod test {
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([])),
         );
 
         let msg = DataMessage {
@@ -225,7 +224,7 @@ mod test {
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -240,7 +239,7 @@ mod test {
 
         let (mut sender, mut receiver) = get_input_output();
 
-        let mut dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let mut dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let collector = receiver.recv().unwrap();
         assert!(matches!(collector, Message::Collect(_)));
@@ -251,7 +250,7 @@ mod test {
 
         // drop the collector, next lifecycle should emit the acquire
         drop(collector);
-        let _ = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let _ = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let acquire = comm.recv_from_operator().unwrap();
         assert_eq!(acquire.to_operator, 0);
@@ -274,7 +273,7 @@ mod test {
             IndexSet::from([3]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([])),
         );
         let msg = DataMessage {
             key: 7,
@@ -299,7 +298,7 @@ mod test {
             IndexSet::from([3]),
             IndexSet::from([0, 1]),
             IndexSet::from([0]),
-            RescaleMessage::new_remove(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1])),
         );
 
         // this should go downstream
@@ -335,7 +334,7 @@ mod test {
             IndexSet::from([1, 3, 5]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -349,17 +348,17 @@ mod test {
         );
 
         let (mut sender, mut receiver) = get_input_output();
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 5, .. })
         ));
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 3, .. })
         ));
-        dist.lifecycle(partiton_index, &mut sender, &remotes);
+        dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 1, .. })
@@ -374,7 +373,7 @@ mod test {
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -403,7 +402,7 @@ mod test {
         collector.add_state(25, "foobar".to_string());
         // drop it to trigger the acquire
         drop(collector);
-        dist.lifecycle(partiton_index, &mut sender, &remotes);
+        dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let acquire = comm.recv_from_operator().unwrap();
         assert_eq!(acquire.to_worker, 1);
@@ -438,7 +437,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::new_add(IndexSet::from([1, 2])),
+            RescaleMessage::new(IndexSet::from([1, 2])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -501,7 +500,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new_add(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1])),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -518,9 +517,9 @@ mod test {
         // tell it worker 1 is done with rescaling
         remotes.get_mut(&1).unwrap().1.last_version = 1;
 
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Finished(_)));
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
     }
 }

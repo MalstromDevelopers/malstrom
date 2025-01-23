@@ -103,10 +103,6 @@ where
         &mut self.output
     }
 
-    fn get_output(&self) -> &Output<KO, VO, TO> {
-        &self.output
-    }
-
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {
         self
     }

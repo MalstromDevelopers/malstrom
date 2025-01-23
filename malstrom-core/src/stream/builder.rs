@@ -6,7 +6,7 @@ use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
     channels::operator_io::{link, Input},
     runtime::{union, InnerRuntimeBuilder},
-    types::{Data, MaybeData, MaybeKey, MaybeTime},
+    types::{Data, MaybeKey, MaybeTime},
 };
 
 pub struct JetStreamBuilder<K, V, T> {
@@ -35,19 +35,6 @@ where
     ) -> JetStreamBuilder<K, V, T> {
         JetStreamBuilder {
             operators: Vec::new(),
-            tail: receiver,
-            runtime,
-        }
-    }
-    pub(crate) fn from_operator<KI: MaybeKey, VI: MaybeData, TI: MaybeTime>(
-        mut operator: OperatorBuilder<KI, VI, TI, K, V, T>,
-        runtime: Rc<Mutex<InnerRuntimeBuilder>>,
-    ) -> JetStreamBuilder<K, V, T> {
-        let mut receiver = Input::new_unlinked();
-        link(operator.get_output_mut(), &mut receiver);
-        let operator = Box::new(operator).into_buildable();
-        JetStreamBuilder {
-            operators: vec![operator],
             tail: receiver,
             runtime,
         }

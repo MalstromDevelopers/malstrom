@@ -72,27 +72,30 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{source::Source, KeyLocal, Sink},
+        operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
-    use super::Flatten;
     #[test]
     fn test_flatten() {
-        let (builder, stream) = get_test_stream();
-
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
-            )
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build_and_run().unwrap().0.execute();
-
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4],
+                        vec![5],
+                    ])),
+                )
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![1, 2, 3, 4, 5];
         assert_eq!(result, expected);
@@ -101,17 +104,23 @@ mod tests {
     /// check we preserve the timestamp on every message
     #[test]
     fn test_preserves_time() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
-            )
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4],
+                        vec![5],
+                    ])),
+                )
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
 
-        builder.build_and_run().unwrap().0.execute();
+        rt.execute().unwrap();
         let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
         let result = collector
             .into_iter()
@@ -123,21 +132,23 @@ mod tests {
     // check we preserve the key
     #[test]
     fn test_preserves_key() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([
-                    vec![1, 2],
-                    vec![3, 4, 5],
-                    vec![6],
-                ])),
-            )
-            .key_local("key-local", |x| x.value.len())
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4, 5],
+                        vec![6],
+                    ])),
+                )
+                .key_local("key-local", |x| x.value.len())
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
         let result = collector
             .into_iter()

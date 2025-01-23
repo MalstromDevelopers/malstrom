@@ -4,10 +4,10 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-use crate::runtime::{StreamProvider, WorkerBuilder};
+use crate::runtime::{SingleThreadRuntime, StreamProvider, WorkerBuilder};
 use crate::snapshot::Barrier;
-use crate::types::{MaybeTime, RescaleMessage};
 use crate::types::{Key, SuspendMarker};
+use crate::types::{MaybeTime, RescaleMessage};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     stream::JetStreamBuilder,
@@ -27,16 +27,13 @@ pub use operator_tester::{FakeCommunication, OperatorTester, SentMessage};
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
-pub fn get_test_stream() -> (
-    WorkerBuilder<SingleThreadRuntimeFlavor, NoPersistence>,
-    JetStreamBuilder<NoKey, NoData, NoTime>,
-) {
-    let mut worker = WorkerBuilder::new(
-        SingleThreadRuntimeFlavor::default(),
-        NoPersistence::default(),
-    );
-    let stream = worker.new_stream();
-    (worker, stream)
+pub fn get_test_rt<F>(stream: F) -> SingleThreadRuntime<NoPersistence, F>
+where
+    F: FnMut(&mut dyn StreamProvider) -> (),
+{
+    SingleThreadRuntime::builder()
+        .persistence(NoPersistence::default())
+        .build(stream)
 }
 
 #[derive(Default, Clone, Debug)]
@@ -122,13 +119,10 @@ pub fn test_forward_system_messages<
         Message::Interrogate(_)
     ));
 
-    let msg = Message::Rescale(RescaleMessage::new_add(IndexSet::new()));
+    let msg = Message::Rescale(RescaleMessage::new(IndexSet::new()));
     tester.send_local(msg);
     tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Rescale(_)
-    ));
+    assert!(matches!(tester.recv_local().unwrap(), Message::Rescale(_)));
 
     let msg = Message::SuspendMarker(SuspendMarker::default());
     tester.send_local(msg);

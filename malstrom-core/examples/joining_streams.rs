@@ -1,23 +1,24 @@
 // main.rs
 use malstrom::operators::*;
-use malstrom::runtime::{
-    RuntimeFlavor, SingleThreadRuntime, WorkerBuilder,
-};
+use malstrom::runtime::{RuntimeFlavor, SingleThreadRuntime, StreamProvider, WorkerBuilder};
 use malstrom::sinks::{StatelessSink, StdOutSink};
 use malstrom::snapshot::{NoPersistence, NoSnapshots};
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    SingleThreadRuntime::new(build_dataflow).execute().unwrap()
+    SingleThreadRuntime::builder()
+        .persistence(NoPersistence::default())
+        .build(build_dataflow)
+        .execute()
+        .unwrap()
 }
 
-fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder<F, NoPersistence> {
-    let mut worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence::default());
-    let numbers = worker.new_stream().source(
+fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
+    let numbers = provider.new_stream().source(
         "iter-source",
         StatelessSource::new(SingleIteratorSource::new(0..=100)),
     );
-    let more_numbers = worker.new_stream().source(
+    let more_numbers = provider.new_stream().source(
         "other-iter-source",
         StatelessSource::new(SingleIteratorSource::new(0..=100)),
     );
@@ -25,5 +26,4 @@ fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder<F, NoPersistence
     numbers
         .union([more_numbers].into_iter())
         .sink("std-out-sink", StatelessSink::new(StdOutSink));
-    worker
 }

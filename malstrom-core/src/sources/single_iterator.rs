@@ -1,6 +1,5 @@
 use std::iter::{Enumerate, Peekable};
 
-
 use crate::types::{Data, NoKey};
 
 use super::{StatelessSourceImpl, StatelessSourcePartition};
@@ -138,25 +137,27 @@ mod tests {
         sinks::StatelessSink,
         snapshot::{NoPersistence, NoSnapshots},
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        stream::OperatorBuilder,
+        testing::{get_test_rt, VecSink},
         types::Message,
     };
 
     /// The into_iter source should emit the iterator values
     #[test]
     fn emits_values() {
-        let (builder, stream) = get_test_stream();
-
         let in_data: Vec<i32> = (0..100).collect();
         let collector = VecSink::new();
-
-        let stream = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(in_data)),
-            )
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            let in_data = in_data.clone();
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(in_data)),
+                )
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
 
         let c = collector.into_iter().map(|x| x.value).collect_vec();
         assert_eq!(c, (0..100).collect_vec())
@@ -192,15 +193,17 @@ mod tests {
     /// values should be timestamped with their iterator index
     #[test]
     fn emits_timestamped_messages() {
-        let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(42..52)),
-            )
-            .sink("sink", StatelessSink::new(sink.clone()));
-        builder.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(42..52)),
+                )
+                .sink("sink", StatelessSink::new(sink.clone()));
+        });
+        rt.execute().unwrap();
 
         let timestamps = sink.into_iter().map(|x| x.timestamp).collect_vec();
         let expected = (0..10).collect_vec();
@@ -211,21 +214,28 @@ mod tests {
     /// be emitted
     #[test]
     fn emits_max_epoch() {
-        let (builder, stream) = get_test_stream();
         let sink = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..10)),
-            )
-            .sink_full("sink", sink.clone());
-        builder.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            let sink = sink.clone();
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..10)),
+                )
+                .then(OperatorBuilder::direct(
+                    "sink-epochs",
+                    move |input, output, _ctx| match input.recv() {
+                        Some(Message::Epoch(x)) => sink.give(x),
+                        Some(msg) => output.send(msg),
+                        None => (),
+                    },
+                ));
+        });
+        rt.execute().unwrap();
 
         let messages = sink.drain_vec(..);
         let last = messages.last().unwrap();
-        match last {
-            Message::Epoch(usize::MAX) => (),
-            _ => panic!(),
-        }
+        assert_eq!(*last, usize::MAX);
     }
 }

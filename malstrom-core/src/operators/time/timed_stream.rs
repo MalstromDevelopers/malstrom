@@ -63,11 +63,11 @@ where
 mod tests {
     use crate::{
         channels::operator_io::Input,
-        operators::{sink::SinkFull, GenerateEpochs, Sink, Source},
+        operators::{GenerateEpochs, Inspect, Sink, Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
         types::{Message, NoKey},
     };
     use itertools::Itertools;
@@ -77,20 +77,20 @@ mod tests {
     /// Check that the assigner assigns a timestamp to every record
     #[test]
     fn test_timestamp_gets_assigned() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
+        let rt = get_test_rt(|provider| {
+            let (ontime, _late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..10)),
+                )
+                .assign_timestamps("ts-double-value", |x| x.value * 2)
+                .generate_epochs("no-epochs", |_x, _y| None);
+            ontime.sink("sink", StatelessSink::new(collector.clone()));
+        });
 
-        let (ontime, late) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..10)),
-            )
-            .assign_timestamps("ts-double-value", |x| x.value * 2)
-            .generate_epochs("no-epochs", |_x, _y| None);
-        ontime.sink("sink", StatelessSink::new(collector.clone()));
-        late.finish();
-
-        builder.build_and_run().unwrap().0.execute();
+        rt.execute().unwrap();
         let timestamps = collector.into_iter().map(|x| x.timestamp).collect_vec();
 
         assert_eq!((0..10).map(|x| x * 2).collect_vec(), timestamps)
@@ -99,36 +99,51 @@ mod tests {
     /// check epochs get issued according to the given function
     #[test]
     fn test_epoch_gets_issued() {
-        let (builder, stream) = get_test_stream();
-
         let collector = VecSink::new();
         let late_collector = VecSink::new();
 
-        let (stream, late) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..10)),
-            )
-            .assign_timestamps("ts-from-value", |x| x.value)
-            .generate_epochs("add-epoch", |msg, epoch| {
-                Some(msg.timestamp + epoch.unwrap_or(0))
-            });
+        let rt = get_test_rt(|provider| {
+            let collector = collector.clone();
+            let late_collector = late_collector.clone();
 
-        stream.sink_full("sink-ontime", collector.clone());
-        late.sink_full("sink", late_collector.clone());
+            let (stream, late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..10)),
+                )
+                .assign_timestamps("ts-from-value", |x| x.value)
+                .generate_epochs("add-epoch", |msg, epoch| {
+                    Some(msg.timestamp + epoch.unwrap_or(0))
+                });
 
-        builder.build_and_run().unwrap().0.execute();
+            stream.then(OperatorBuilder::direct(
+                "get-epoch",
+                move |input, output, _| {
+                    if let Some(msg) = input.recv() {
+                        match msg {
+                            Message::Epoch(e) => collector.give(e),
+                            x => output.send(x),
+                        }
+                    };
+                },
+            ));
+            late.then(OperatorBuilder::direct(
+                "get-epoch",
+                move |input, output, _| {
+                    if let Some(msg) = input.recv() {
+                        match msg {
+                            Message::Epoch(e) => late_collector.give(e),
+                            x => output.send(x),
+                        }
+                    };
+                },
+            ));
+        });
 
-        let timestamps: Vec<i32> = collector
-            .into_iter()
-            .filter_map(|msg| {
-                if let Message::Epoch(e) = msg {
-                    Some(e)
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
+        rt.execute().unwrap();
+
+        let timestamps: Vec<i32> = collector.drain_vec(..);
         assert_eq!(
             timestamps,
             vec![0, 1, 3, 6, 10, 15, 21, 28, 36, 45, i32::MAX]
@@ -138,33 +153,39 @@ mod tests {
     /// Check epochs get removed if a new assign_timestamps is added (except for MAX)
     #[test]
     fn test_epochs_get_removed() {
-        let (worker, stream) = get_test_stream();
-
-        let (stream, late) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..10)),
-            )
-            .generate_epochs("monotonic-epoch", |msg, _| Some(msg.timestamp));
-
-        // this should remove epochs
-        let (stream, _) = stream
-            .assign_timestamps("ts-as-i32", |x| x.timestamp as i32)
-            .generate_epochs("no-epochs", |_x, _y| None);
-
         let time_collector = VecSink::new();
 
-        stream.sink_full("sink", time_collector.clone());
-        late.finish();
-        worker.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            let time_collector = time_collector.clone();
+            let (stream, _late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..10)),
+                )
+                .generate_epochs("monotonic-epoch", |msg, _| Some(msg.timestamp));
 
-        let timestamps: Vec<i32> = time_collector
-            .into_iter()
-            .filter_map(|x| match x {
-                Message::Epoch(e) => Some(e),
-                _ => None,
-            })
-            .collect();
+            // this should remove epochs
+            let (stream, _) = stream
+                .assign_timestamps("ts-as-i32", |x| x.timestamp as i32)
+                .generate_epochs("no-epochs", |_x, _y| None);
+
+            stream.then(OperatorBuilder::direct(
+                "get-epoch",
+                move |input, output, _| {
+                    if let Some(msg) = input.recv() {
+                        match msg {
+                            Message::Epoch(e) => time_collector.give(e),
+                            x => output.send(x),
+                        }
+                    };
+                },
+            ));
+        });
+
+        rt.execute().unwrap();
+
+        let timestamps: Vec<i32> = time_collector.drain_vec(..);
         // only max epoch should have gone through
         assert_eq!(timestamps, vec![i32::MAX])
     }
@@ -173,40 +194,40 @@ mod tests {
     /// epoch generator
     #[test]
     fn test_epoch_issued_after_message() {
-        let (builder, stream) = get_test_stream();
-
-        let (ontime, late) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(1..4)),
-            )
-            .assign_timestamps("value-as-ts", |x| x.value)
-            .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
-
         let collector = VecSink::new();
-        let collector_moved = collector.clone();
-        // TODO: use sink-all
-        let ontime = ontime.then(OperatorBuilder::direct(
-            "collect-msgs",
-            move |input: &mut Input<NoKey, i32, i32>, out, _| {
-                match input.recv() {
-                    // encode epoch to -T
-                    Some(Message::Data(d)) => {
-                        collector_moved.give(d.timestamp);
-                        out.send(Message::Data(d))
-                    }
-                    Some(Message::Epoch(e)) => {
-                        collector_moved.give(-e);
-                        out.send(Message::Epoch(e))
-                    }
-                    Some(x) => out.send(x),
-                    None => (),
-                };
-            },
-        ));
-        ontime.finish();
-        late.finish();
-        builder.build_and_run().unwrap().0.execute();
+
+        let rt = get_test_rt(|provider| {
+            let collector = collector.clone();
+            let (ontime, _late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(1..4)),
+                )
+                .assign_timestamps("value-as-ts", |x| x.value)
+                .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
+
+            ontime.then(OperatorBuilder::direct(
+                "collect-msgs",
+                move |input: &mut Input<NoKey, i32, i32>, out, _| {
+                    match input.recv() {
+                        // encode epoch to -T
+                        Some(Message::Data(d)) => {
+                            collector.give(d.timestamp);
+                            out.send(Message::Data(d))
+                        }
+                        Some(Message::Epoch(e)) => {
+                            collector.give(-e);
+                            out.send(Message::Epoch(e))
+                        }
+                        Some(x) => out.send(x),
+                        None => (),
+                    };
+                },
+            ));
+        });
+
+        rt.execute().unwrap();
 
         assert_eq!(
             collector.drain_vec(..),
@@ -217,22 +238,23 @@ mod tests {
     /// Test late messages are placed into the late stream
     #[test]
     fn test_late_message_into_late_stream() {
-        let (builder, stream) = get_test_stream();
-
         let collector_ontime = VecSink::new();
         let collector_late = VecSink::new();
 
-        let (ontime, late) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new((5..10).chain(0..5))),
-            )
-            .assign_timestamps("value-ts", |x| x.value)
-            .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
+        let rt = get_test_rt(|provider| {
+            let (ontime, late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new((5..10).chain(0..5))),
+                )
+                .assign_timestamps("value-ts", |x| x.value)
+                .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
 
-        ontime.sink("sink-ontime", StatelessSink::new(collector_ontime.clone()));
-        late.sink("sink-late", StatelessSink::new(collector_late.clone()));
-        builder.build_and_run().unwrap().0.execute();
+            ontime.sink("sink-ontime", StatelessSink::new(collector_ontime.clone()));
+            late.sink("sink-late", StatelessSink::new(collector_late.clone()));
+        });
+        rt.execute().unwrap();
 
         assert_eq!(
             collector_ontime
@@ -250,34 +272,36 @@ mod tests {
     /// test we ignore None epoch or smaller epoch
     #[test]
     fn test_ignore_none_or_smaller_epoch() {
-        let (builder, stream) = get_test_stream();
-
         let collector_ontime = VecSink::new();
-
-        let (ontime, _) = stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..6)),
-            )
-            .generate_epochs("out-of-order", |msg, _epoch| {
-                match msg.timestamp {
-                    3 => Some(2), // should be ignrored
-                    1 => None,    // this too
-                    x => Some(x),
-                }
-            });
-        ontime.sink_full("sink-ontime", collector_ontime.clone());
-        builder.build_and_run().unwrap().0.execute();
-        let epochs = collector_ontime
-            .into_iter()
-            .filter_map(|msg| {
-                if let Message::Epoch(e) = msg {
-                    Some(e)
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
+        let rt = get_test_rt(|provider| {
+            let collector_ontime = collector_ontime.clone();
+            let (ontime, _) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..6)),
+                )
+                .generate_epochs("out-of-order", |msg, _epoch| {
+                    match msg.timestamp {
+                        3 => Some(2), // should be ignrored
+                        1 => None,    // this too
+                        x => Some(x),
+                    }
+                });
+            ontime.then(OperatorBuilder::direct(
+                "get-epoch",
+                move |input, output, _| {
+                    if let Some(msg) = input.recv() {
+                        match msg {
+                            Message::Epoch(e) => collector_ontime.give(e),
+                            x => output.send(x),
+                        }
+                    };
+                },
+            ));
+        });
+        rt.execute().unwrap();
+        let epochs = collector_ontime.drain_vec(..);
         assert_eq!(epochs, vec![0, 2, 4, 5, usize::MAX])
     }
 }

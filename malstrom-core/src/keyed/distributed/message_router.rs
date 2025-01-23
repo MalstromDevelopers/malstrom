@@ -69,15 +69,6 @@ where
             MessageRouter::Finished(finished_router) => finished_router.version,
         }
     }
-
-    pub(crate) fn get_type(&self) -> String {
-        match self {
-            MessageRouter::Normal(normal_router) => format!("Normal: {:?}", normal_router.worker_set),
-            MessageRouter::Interrogate(interrogate_router) => format!("Interrogate: {:?}", interrogate_router.new_worker_set),
-            MessageRouter::Collect(collect_router) => format!("Collect: {:?}", collect_router.new_worker_set),
-            MessageRouter::Finished(finished_router) => format!("Finished: {:?}", finished_router.new_worker_set),
-        }.into()
-    }
 }
 
 impl<K, V, T> MessageRouter<K, V, T>
@@ -119,7 +110,7 @@ where
         self: MessageRouter<K, V, T>,
         partitioner: WorkerPartitioner<K>,
         output: &mut Output<K, V, T>,
-        remotes: &Remotes<K, V, T>,
+        remotes: &mut Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         match self {
             MessageRouter::Normal(normal_router) => MessageRouter::Normal(normal_router),
@@ -148,14 +139,14 @@ mod tests {
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::new_add(IndexSet::from([3])),
+            RescaleMessage::new(IndexSet::from([3])),
             index_select,
         ).0);
         let mut collect_router = MessageRouter::Collect(
             CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]
-            
-            ), RescaleMessage::new_add(IndexSet::from([4]))));
-        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), RescaleMessage::new_add(IndexSet::from([4]))));
+
+            ), RescaleMessage::new(IndexSet::from([4]))));
+        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), RescaleMessage::new(IndexSet::from([4]))));
 
 
         let msg = DataMessage::new(key, 100, 0);

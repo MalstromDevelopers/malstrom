@@ -3,12 +3,6 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use indexmap::IndexSet;
 
-fn default_hash<T: Hash>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Select a value from an Iterator of choices by applying [rendezvous hashing](https://en.wikipedia.org/wiki/Rendezvous_hashing).
 /// Rendezvous hashing ensures minimal shuffling when the set of options changes
 /// at the cost of being O(n) with n == options.len()
@@ -17,9 +11,11 @@ fn default_hash<T: Hash>(value: &T) -> u64 {
 ///
 /// TODD: Add test
 pub fn rendezvous_select<V: Hash, T: Hash + Copy>(value: &V, options: &IndexSet<T>) -> T {
+    // TODO: DefaultHasher is not stable
+    // see: https://doc.rust-lang.org/std/collections/hash_map/struct.DefaultHasher.html
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
-    
+
     options
         .iter()
         .map(|x| {

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
@@ -193,7 +191,11 @@ where
         debug!("Sending build and exec start to upscaled workers");
         let new_scale = (new_clients.inner.len() + self.inner.len()) as u64;
         // TODO: 0 is not right, they should not load any snapshot
-        let new_clients = new_clients.start_build(new_scale, 0).await.start_execution().await;
+        let new_clients = new_clients
+            .start_build(new_scale, 0)
+            .await
+            .start_execution()
+            .await;
         debug!("Execution started on new workers");
         self.inner = self
             .inner
@@ -302,7 +304,7 @@ async fn wait_for_message<TSend, TRecv: Distributable>(
     }
 }
 
-pub(crate) struct WorkerClient<TSend, TRecv> {
+pub struct WorkerClient<TSend, TRecv> {
     inner: CommunicationClient<TSend, TRecv>,
 }
 impl<TSend, TRecv> WorkerClient<TSend, TRecv> {

@@ -5,7 +5,6 @@ use std::{hash::Hash, marker::PhantomData};
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::{
     channels::operator_io::{Input, Output},
@@ -14,14 +13,16 @@ use crate::{
         partitioners::rendezvous_select,
         Distribute,
     },
-    operators::{Map, StreamSource},
+    operators::StreamSource,
     runtime::{
-        communication::{broadcast, Distributable}, BiCommunicationClient
+        communication::{broadcast, Distributable},
+        BiCommunicationClient,
     },
     snapshot::Barrier,
     stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
     types::{
-        Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, RescaleChange, RescaleMessage, SuspendMarker, Timestamp, WorkerId
+        Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker,
+        Timestamp, WorkerId,
     },
 };
 
@@ -263,21 +264,12 @@ where
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) -> () {
-        match rescale_message.get_change() {
-            RescaleChange::ScaleRemoveWorker(index_set) => {
-                for wid in index_set.iter() {
-                    self.comm_clients.swap_remove(wid);
-                }
-            }
-            RescaleChange::ScaleAddWorker(index_set) => {
-                for wid in index_set.iter() {
-                    // HACK: Not sure why this is necessary
-                    if self.comm_clients.contains_key(wid) || *wid == ctx.worker_id {
-                        continue;
-                    }
-                    let comm_client = ctx.create_communication_client(*wid);
-                    self.comm_clients.insert(wid.clone(), comm_client);
-                }
+        let new_workers = rescale_message.get_new_workers();
+        self.comm_clients.retain(|wid, _| new_workers.contains(wid));
+        for wid in new_workers.iter() {
+            if !self.comm_clients.contains_key(wid) {
+                let client = ctx.create_communication_client(*wid);
+                self.comm_clients.insert(wid.clone(), client);
             }
         }
     }

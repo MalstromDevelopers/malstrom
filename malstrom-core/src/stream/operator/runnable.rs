@@ -43,10 +43,6 @@ impl RunnableOperator {
         self.operator.is_finalized()
     }
 
-    pub(crate) fn get_label(&self) -> &str {
-        &self.name
-    }
-
     pub(crate) fn is_suspended(&self) -> bool {
         self.operator.is_suspended()
     }

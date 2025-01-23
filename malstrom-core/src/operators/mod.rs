@@ -22,7 +22,6 @@ pub use flatten::Flatten;
 pub use inspect::Inspect;
 pub use map::Map;
 pub use sink::{Sink, StreamSink};
-pub(crate) use sink::SinkFullImpl;
 pub use source::{Source, StreamSource};
 pub use split::Split;
 pub use stateful_map::StatefulMap;

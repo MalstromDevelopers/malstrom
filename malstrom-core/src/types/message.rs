@@ -85,23 +85,28 @@ pub enum RescaleChange {
     ScaleAddWorker(IndexSet<WorkerId>),
 }
 
+/// Indicates a reconfiguration in the amount of workers
+/// participating in the computation
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct RescaleMessage {
-    change: RescaleChange,
-    rc: Rc<()>
+    /// Set of workers in the computation AFTER the rescale
+    /// will have concluded
+    workers: IndexSet<WorkerId>,
+    rc: Rc<()>,
 }
 
 impl RescaleMessage {
-    pub(crate) fn new_add(change: IndexSet<WorkerId>) -> Self {
-        Self { change: RescaleChange::ScaleAddWorker(change), rc: Rc::new(()) }
+    pub(crate) fn new(workers: IndexSet<WorkerId>) -> Self {
+        Self {
+            workers,
+            rc: Rc::new(()),
+        }
     }
 
-    pub(crate) fn new_remove(change: IndexSet<WorkerId>) -> Self {
-        Self { change: RescaleChange::ScaleRemoveWorker(change), rc: Rc::new(()) }
-    }
-
-    pub fn get_change(&self) -> &RescaleChange {
-        &self.change
+    /// Get the set of workers which will be active after the rescale
+    /// has concluded
+    pub fn get_new_workers(&self) -> &IndexSet<WorkerId> {
+        &self.workers
     }
 
     /// Get the count of strong reference to the inner Rc

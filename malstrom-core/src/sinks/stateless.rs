@@ -35,20 +35,17 @@ where
     S: StatelessSinkImpl<K, V, T>,
 {
     fn consume_stream(mut self, name: &str, builder: JetStreamBuilder<K, V, T>) -> () {
-        builder
-            .then(OperatorBuilder::direct(
-                name,
-                move |input: &mut Input<K, V, T>,
-                      _output: &mut Output<NoKey, NoData, NoTime>,
-                      _ctx| {
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Data(d) => self.0.sink(d),
-                            Message::SuspendMarker(_s) => self.0.suspend(),
-                            _ => (),
-                        }
+        builder.then(OperatorBuilder::direct(
+            name,
+            move |input: &mut Input<K, V, T>, _output: &mut Output<NoKey, NoData, NoTime>, _ctx| {
+                if let Some(msg) = input.recv() {
+                    match msg {
+                        Message::Data(d) => self.0.sink(d),
+                        Message::SuspendMarker(_s) => self.0.suspend(),
+                        _ => (),
                     }
-                },
-            ));
+                }
+            },
+        ));
     }
 }

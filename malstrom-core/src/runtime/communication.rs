@@ -24,7 +24,6 @@ pub trait OperatorOperatorComm {
         to_worker: WorkerId,
         operator: OperatorId,
     ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
-
 }
 
 pub trait CoordinatorWorkerComm {
@@ -33,7 +32,10 @@ pub trait CoordinatorWorkerComm {
     /// its [WorkerCoordinatorBackend]
     /// The implementation must not wait for the other side to accept the stream, i.e.
     /// implementations must be able to buffer outgoing messages
-    fn coordinator_to_worker(&self, worker_id: WorkerId) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
+    fn coordinator_to_worker(
+        &self,
+        worker_id: WorkerId,
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
 }
 
 pub trait WorkerCoordinatorComm {
@@ -42,7 +44,9 @@ pub trait WorkerCoordinatorComm {
     /// its [CoordinatorWorkerBackend]
     /// The implementation must not wait for the other side to accept the stream, i.e.
     /// implementations must be able to buffer outgoing messages
-    fn worker_to_coordinator(&self) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
+    fn worker_to_coordinator(
+        &self,
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError>;
 }
 
 /// Bi-directional streaming transport where each end can send many messages to the other without
@@ -94,7 +98,11 @@ where
         operator: OperatorId,
         backend: &dyn OperatorOperatorComm,
     ) -> Result<Self, CommunicationBackendError> {
-        debug!(message = "Creating operator-operator communication client", ?to_worker, ?operator);
+        debug!(
+            message = "Creating operator-operator communication client",
+            ?to_worker,
+            ?operator
+        );
         let transport = backend.operator_to_operator(to_worker, operator)?;
         Ok(Self {
             transport,
@@ -105,7 +113,10 @@ where
 
 impl<TSend, TRecv> CommunicationClient<TSend, TRecv> {
     /// Establish a connection from the coordinator to a given worker
-    pub(crate) fn coordinator_to_worker(worker_id: WorkerId, backend: &dyn CoordinatorWorkerComm) -> Result<Self, CommunicationBackendError> {
+    pub(crate) fn coordinator_to_worker(
+        worker_id: WorkerId,
+        backend: &dyn CoordinatorWorkerComm,
+    ) -> Result<Self, CommunicationBackendError> {
         let transport = backend.coordinator_to_worker(worker_id)?;
         Ok(Self {
             transport,
@@ -114,7 +125,9 @@ impl<TSend, TRecv> CommunicationClient<TSend, TRecv> {
     }
 
     /// Establish a connection to the coordinator
-    pub(crate) fn worker_to_coordinator(backend: &dyn WorkerCoordinatorComm)  -> Result<Self, CommunicationBackendError> {
+    pub(crate) fn worker_to_coordinator(
+        backend: &dyn WorkerCoordinatorComm,
+    ) -> Result<Self, CommunicationBackendError> {
         let transport = backend.worker_to_coordinator()?;
         Ok(Self {
             transport,
@@ -123,16 +136,17 @@ impl<TSend, TRecv> CommunicationClient<TSend, TRecv> {
     }
 
     pub(crate) fn transform<TSendNew, TRecvNew>(self) -> CommunicationClient<TSendNew, TRecvNew> {
-        CommunicationClient { transport: self.transport, message_type: PhantomData }
+        CommunicationClient {
+            transport: self.transport,
+            message_type: PhantomData,
+        }
     }
 }
-
 
 impl<TSend, TRecv> CommunicationClient<TSend, TRecv>
 where
     TSend: Distributable,
 {
-
     pub fn send(&self, msg: TSend) {
         self.transport.send(Self::encode(msg)).unwrap()
     }
@@ -146,7 +160,6 @@ impl<TSend, TRecv> CommunicationClient<TSend, TRecv>
 where
     TRecv: Distributable,
 {
-
     pub fn recv(&self) -> Option<TRecv> {
         let encoded = self.transport.recv().unwrap()?;
         // let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
@@ -160,7 +173,6 @@ where
         //     .expect(&format!("Deserialize message, type: {typ}"));
         Some(Self::decode(&encoded))
     }
-
 
     pub(crate) fn decode(msg: &[u8]) -> TRecv {
         rmp_serde::decode::from_slice(msg).unwrap()

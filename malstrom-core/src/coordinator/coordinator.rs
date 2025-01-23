@@ -1,13 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::{FutureExt, StreamExt};
-use indexmap::{IndexMap, IndexSet};
-use itertools::Itertools;
+use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use tokio::{task::yield_now, time::Timeout};
 use std::sync::Mutex;
+use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -16,10 +13,7 @@ use crate::{
 };
 
 use super::messages::*;
-use crate::runtime::{
-    communication::{CommunicationBackendError, CoordinatorWorkerComm, Distributable},
-    CommunicationClient,
-};
+use crate::runtime::communication::{CommunicationBackendError, CoordinatorWorkerComm};
 
 /// This way we do not need seperate IDs for worker and coordinator
 const COORDINATOR_ID: WorkerId = WorkerId::MAX;
@@ -27,7 +21,7 @@ const COORDINATOR_ID: WorkerId = WorkerId::MAX;
 pub struct Coordinator {
     _rt: tokio::runtime::Runtime,
     _tasks: tokio::task::JoinHandle<()>,
-    req_tx: flume::Sender<CoordinatorRequest>
+    req_tx: flume::Sender<CoordinatorRequest>,
 }
 
 impl Coordinator {
@@ -75,27 +69,25 @@ impl Coordinator {
         };
 
         let tasks = rt.spawn(async {
-            coordinator_loop.await;
+            coordinator_loop.await.unwrap();
             info!("Coordinator exited, terminating snapshot loop");
             if let Some(asl) = auto_snapshot_loop {
                 asl.abort();
-                asl.await;
+                asl.await.unwrap();
             }
         });
 
         Ok(Self {
             _rt: rt,
             _tasks: tasks,
-            req_tx
+            req_tx,
         })
     }
 }
 
 impl Coordinator {
-
     pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
         CoordinatorRequest::send(RequestOperation::Scale(desired), &self.req_tx).await
-
     }
 }
 
@@ -259,7 +251,7 @@ impl Drop for StatusGuard {
 }
 
 #[derive(Debug, Error)]
-enum SetStatusError {
+pub enum SetStatusError {
     #[error("Status already set by concurrent operation: {0:?}")]
     ConcurrentOperation(CoordinatorStatus),
 }

@@ -73,24 +73,24 @@ mod tests {
         operators::{sink::Sink, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
     use super::*;
     #[test]
     fn test_filter_map() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..100)),
-            )
-            .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
-            .sink("sink", StatelessSink::new(collector.clone()));
-        let mut worker = builder.build_and_run().unwrap();
-
-        worker.0.execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..100)),
+                )
+                .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
 
         let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
         let expected: Vec<usize> = (0..42).map(|x| x * 2).collect();

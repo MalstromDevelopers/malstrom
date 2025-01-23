@@ -1,6 +1,6 @@
 use crate::channels::operator_io::{link, Input, Output};
 use crate::stream::{AppendableOperator, JetStreamBuilder, OperatorBuilder};
-use crate::types::{DataMessage, MaybeData, MaybeKey, MaybeTime, OperatorPartitioner};
+use crate::types::{DataMessage, MaybeData, MaybeKey, MaybeTime};
 use std::rc::Rc;
 
 pub trait Split<K, V, T>: super::sealed::Sealed {
@@ -10,7 +10,7 @@ pub trait Split<K, V, T>: super::sealed::Sealed {
     /// and should set all values in the array to `true` where output streams should
     /// receive message. For example if you do a `const_split::<2>` and mutate the array to
     /// `[true, false]` the left output will receive the message.
-    /// 
+    ///
     /// If you always want all outputs to receive every message see [crate::operators::Cloned].
     fn const_split<const N: usize>(
         self,
@@ -104,7 +104,7 @@ mod tests {
         sinks::{StatefulSink, StatelessSink},
         snapshot::NoPersistence,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::VecSink,
+        testing::{get_test_rt, VecSink},
     };
 
     /// Test const split
@@ -113,9 +113,8 @@ mod tests {
         let even_sink = VecSink::new();
         let odd_sink = VecSink::new();
 
-        let rt = SingleThreadRuntime::new(|flavor| {
-            let mut worker = WorkerBuilder::new(flavor, || false, NoPersistence::default());
-            let stream = worker.new_stream().source(
+        let rt = get_test_rt(|provider| {
+            let stream = provider.new_stream().source(
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(0..10u64)),
             );
@@ -125,7 +124,6 @@ mod tests {
             });
             even.sink("sink-even", StatelessSink::new(even_sink.clone()));
             odd.sink("sink-odd", StatelessSink::new(odd_sink.clone()));
-            worker
         });
         rt.execute().unwrap();
 
@@ -144,9 +142,8 @@ mod tests {
         let even_sink = VecSink::new();
         let odd_sink = VecSink::new();
 
-        let rt = SingleThreadRuntime::new(|flavor| {
-            let mut worker = WorkerBuilder::new(flavor, || false, NoPersistence::default());
-            let stream = worker.new_stream().source(
+        let rt = get_test_rt(|provider| {
+            let stream = provider.new_stream().source(
                 "source",
                 StatelessSource::new(SingleIteratorSource::new(0..10u64)),
             );
@@ -166,7 +163,6 @@ mod tests {
             let even = streams.pop().unwrap();
             even.sink("sink-even", StatelessSink::new(even_sink.clone()));
             odd.sink("sink-odd", StatelessSink::new(odd_sink.clone()));
-            worker
         });
         rt.execute().unwrap();
 

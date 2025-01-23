@@ -23,7 +23,7 @@ impl FinishedRouter {
             version,
             old_worker_set,
             new_worker_set,
-            trigger
+            trigger,
         }
     }
 
@@ -50,9 +50,9 @@ impl FinishedRouter {
 
     pub(crate) fn lifecycle<K, V, T>(
         self,
-        partitioner: WorkerPartitioner<K>,
+        _partitioner: WorkerPartitioner<K>,
         output: &mut Output<K, V, T>,
-        remotes: &Remotes<K, V, T>,
+        remotes: &mut Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T>
     where
         K: Key,
@@ -64,6 +64,10 @@ impl FinishedRouter {
             .values()
             .all(|(_, state)| state.last_version >= self.version)
         {
+            for wid in self.old_worker_set.difference(&self.new_worker_set) {
+                remotes.swap_remove(wid);
+            }
+            remotes.shrink_to_fit();
             let normal_router = NormalRouter::new(self.new_worker_set, self.version);
             output.send(Message::Rescale(self.trigger));
             MessageRouter::Normal(normal_router)
@@ -77,10 +81,13 @@ impl FinishedRouter {
 mod tests {
     use indexmap::IndexSet;
 
-    use crate::{channels::operator_io::{full_broadcast, link, Input, Output}, keyed::{distributed::Remotes, partitioners::rendezvous_select}, types::Message};
+    use crate::{
+        channels::operator_io::{full_broadcast, link, Input, Output},
+        keyed::{distributed::Remotes, partitioners::rendezvous_select},
+        types::Message,
+    };
 
     use super::{FinishedRouter, RescaleMessage};
-
 
     /// It should emit the original rescale message upon returning to the normal state
     #[test]
@@ -88,12 +95,14 @@ mod tests {
         let router = FinishedRouter::new(
             1,
             IndexSet::from([0]),
-            IndexSet::from([0, 1]), RescaleMessage::new_add(IndexSet::from([1])));
+            IndexSet::from([0, 1]),
+            RescaleMessage::new(IndexSet::from([1])),
+        );
         let mut output: Output<usize, usize, usize> = Output::new_unlinked(full_broadcast);
         let mut input = Input::new_unlinked();
         link(&mut output, &mut input);
-        let remotes = Remotes::new();
-        router.lifecycle(rendezvous_select, &mut output, &remotes);
+        let mut remotes = Remotes::new();
+        router.lifecycle(rendezvous_select, &mut output, &mut remotes);
         let msg = input.recv().unwrap();
         assert!(matches!(msg, Message::Rescale(_)))
     }

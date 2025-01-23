@@ -1,7 +1,6 @@
 use crate::{
-    operators::SinkFullImpl,
     sinks::StatelessSinkImpl,
-    types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message},
+    types::{Data, DataMessage, MaybeKey, MaybeTime},
 };
 use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 
@@ -63,17 +62,6 @@ where
     T: MaybeTime,
 {
     fn sink(&mut self, msg: DataMessage<K, V, T>) {
-        self.give(msg);
-    }
-}
-
-impl<K, V, T> SinkFullImpl<K, V, T> for VecSink<Message<K, V, T>>
-where
-    K: MaybeKey,
-    V: MaybeData,
-    T: MaybeTime,
-{
-    fn sink_full(&mut self, msg: Message<K, V, T>) {
         self.give(msg);
     }
 }

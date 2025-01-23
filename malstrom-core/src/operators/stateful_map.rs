@@ -116,28 +116,28 @@ mod test {
 
     use crate::sinks::{StatefulSink, StatelessSink};
     use crate::sources::{SingleIteratorSource, StatelessSource};
-    use crate::testing::{get_test_stream, VecSink};
+    use crate::testing::{get_test_rt, VecSink};
 
     use super::StatefulMap;
 
     /// Simple test to check we are keeping state
     #[test]
     fn keeps_state() {
-        let (builder, stream) = get_test_stream();
-
         let collector = VecSink::new();
 
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..100)),
-            )
-            // calculate a running total split by odd and even numbers
-            .key_local("key-local", |x| (x.value & 1) == 1)
-            .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
-            .sink("sink", StatelessSink::new(collector.clone()));
-
-        builder.build_and_run().unwrap().0.execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..100)),
+                )
+                // calculate a running total split by odd and even numbers
+                .key_local("key-local", |x| (x.value & 1) == 1)
+                .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
@@ -155,29 +155,30 @@ mod test {
     /// check we discard state when requested
     #[test]
     fn discards_state() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(
+                        ["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()),
+                    )),
+                )
+                // concat the words
+                .key_local("key-local", |x| x.value.len())
+                .stateful_map("concat", |_, x, mut s: String| {
+                    s.push_str(&x);
+                    if s.len() >= 6 {
+                        (s, None)
+                    } else {
+                        (s.clone(), Some(s))
+                    }
+                })
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
 
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(
-                    ["foo", "bar", "hello", "world", "baz"].map(|x| x.to_string()),
-                )),
-            )
-            // concat the words
-            .key_local("key-local", |x| x.value.len())
-            .stateful_map("concat", |_, x, mut s: String| {
-                s.push_str(&x);
-                if s.len() >= 6 {
-                    (s, None)
-                } else {
-                    (s.clone(), Some(s))
-                }
-            })
-            .sink("sink", StatelessSink::new(collector.clone()));
-
-        builder.build_and_run().unwrap().0.execute();
+        rt.execute().unwrap();
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec!["foo", "foobar", "hello", "helloworld", "baz"];

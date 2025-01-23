@@ -3,13 +3,12 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
-use crate::coordinator;
-use crate::coordinator::messages::{ActionWorkerClient, CoordinationMessage, ExecutionComplete, WorkerClient};
+use crate::coordinator::messages::{
+    ActionWorkerClient, CoordinationMessage, ExecutionComplete, WorkerClient,
+};
 use crate::snapshot::{PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
-use crate::stream::{
-    BuildContext, BuildableOperator, OperatorBuilder, RunnableOperator,
-};
+use crate::stream::{BuildContext, BuildableOperator, RunnableOperator};
 use crate::types::{MaybeData, MaybeKey, Message, NoData, NoKey, RescaleMessage, WorkerId};
 use crate::types::{MaybeTime, NoTime};
 use indexmap::IndexSet;
@@ -17,9 +16,7 @@ use thiserror::Error;
 use tracing::{info, span, Level};
 
 use super::runtime_flavor::CommunicationError;
-use super::{RuntimeFlavor, OperatorOperatorComm};
-
-type RootOperator = OperatorBuilder<NoKey, NoData, NoTime, NoKey, NoData, NoTime>;
+use super::{OperatorOperatorComm, RuntimeFlavor};
 
 /// Builder for a JetStream worker.
 /// The Worker is the core block of executing JetStream dataflows.
@@ -35,12 +32,9 @@ pub struct WorkerBuilder<F, P> {
 impl<F, P> WorkerBuilder<F, P>
 where
     F: RuntimeFlavor,
-    P: PersistenceBackend
+    P: PersistenceBackend,
 {
-    pub fn new(
-        flavor: F,
-        persistence: P
-    ) -> WorkerBuilder<F, P> {
+    pub fn new(flavor: F, persistence: P) -> WorkerBuilder<F, P> {
         let inner = Rc::new(Mutex::new(InnerRuntimeBuilder {
             operators: Vec::new(),
         }));
@@ -73,24 +67,27 @@ where
     F: RuntimeFlavor,
     P: PersistenceBackend,
 {
-
     pub fn build_and_run(mut self) -> Result<(), BuildError> {
         let this_worker = self.flavor.this_worker_id();
         let _span = span!(Level::INFO, "worker", worker_id = this_worker);
         let _span_guard = _span.enter();
-        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
         let ref_count = Rc::strong_count(&self.inner);
         let inner =
             Rc::try_unwrap(self.inner).map_err(|_| BuildError::UnfinishedStreams(ref_count - 1))?;
-        
-        
+
         let mut communication_backend = self.flavor.communication()?;
         let coordinator = WorkerClient::new(&communication_backend);
         info!("Waiting for Coordinator build info");
         let (build_info, coordinator) = rt.block_on(coordinator.get_build_info());
         info!("Obtained build info: {:?}", build_info);
         let cluster_size = build_info.scale;
-        let state_client = Rc::new(self.persistence.for_version(this_worker, &build_info.resume_snapshot)) as Rc<dyn PersistenceClient>;
+        let state_client = Rc::new(
+            self.persistence
+                .for_version(this_worker, &build_info.resume_snapshot),
+        ) as Rc<dyn PersistenceClient>;
 
         let mut operators = vec![];
         operators.extend(inner.into_inner().unwrap().finish().into_iter());
@@ -98,8 +95,7 @@ where
         let mut seen_ids = HashSet::new();
         let operators: Vec<RunnableOperator> = operators
             .into_iter()
-            .enumerate()
-            .map(|(i, x)| {
+            .map(|x| {
                 let operator_name = x.get_name().to_string();
                 let operator_id = x.get_id();
                 if !seen_ids.insert(operator_id) {
@@ -121,7 +117,7 @@ where
             operators,
             communication: communication_backend,
         };
-        
+
         let coordinator = rt.block_on(coordinator.await_start());
         let coordinator = worker.execute(&mut self.root_stream, coordinator);
         info!("Finished execution");
@@ -144,7 +140,7 @@ pub enum BuildError {
     #[error("Operator name '{0}' is not unique. Rename this operator.")]
     NonUniqueName(String),
     #[error("Error starting async runtime: {0:?}")]
-    AsyncRuntime(#[from] std::io::Error)
+    AsyncRuntime(#[from] std::io::Error),
 }
 
 #[derive(Default)]
@@ -180,7 +176,7 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     JetStreamBuilder::from_receiver(merged, runtime)
 }
 
-pub struct Worker<C> {
+struct Worker<C> {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,
     communication: C,
@@ -189,11 +185,11 @@ impl<C> Worker<C>
 where
     C: OperatorOperatorComm,
 {
-    pub fn step(&mut self) -> bool {
+    fn step(&mut self) -> bool {
         let span = tracing::debug_span!("scheduling::run_graph", worker_id = self.worker_id);
         let _span_guard = span.enter();
         let mut all_done = true;
-        for (i, op) in self.operators.iter_mut().enumerate().rev() {
+        for op in self.operators.iter_mut().rev() {
             if op.is_suspended() {
                 continue;
             }
@@ -209,20 +205,28 @@ where
     /// Repeatedly schedule all operators until all have reached a finished state
     /// Note that depending on the specific operator implementations this may never
     /// be the case
-    pub fn execute(&mut self, root: &mut Output<NoKey, NoData, NoTime>, mut coordinator: WorkerClient<ExecutionComplete, CoordinationMessage>) -> WorkerClient<ExecutionComplete, CoordinationMessage> {
+    fn execute(
+        &mut self,
+        root: &mut Output<NoKey, NoData, NoTime>,
+        mut coordinator: WorkerClient<ExecutionComplete, CoordinationMessage>,
+    ) -> WorkerClient<ExecutionComplete, CoordinationMessage> {
         while !self.step() {
             coordinator = match coordinator.recv() {
                 ActionWorkerClient::Idle(worker_client) => worker_client,
-                ActionWorkerClient::Snapshot(worker_client, _) => todo!(),
+                ActionWorkerClient::Snapshot(_worker_client, _) => todo!(),
                 ActionWorkerClient::ScaleAdd(worker_client, index_set) => {
-                    run_rescale(root, RescaleOperation::ScaleAdd(index_set), &mut || self.step());
+                    run_rescale(root, RescaleOperation::ScaleAdd(index_set), &mut || {
+                        self.step()
+                    });
                     worker_client.complete_scale_add()
-                },
+                }
                 ActionWorkerClient::ScaleRemove(worker_client, index_set) => {
-                    run_rescale(root, RescaleOperation::ScaleRemove(index_set), &mut || self.step());
+                    run_rescale(root, RescaleOperation::ScaleRemove(index_set), &mut || {
+                        self.step()
+                    });
                     worker_client.complete_scale_add()
-                },
-                ActionWorkerClient::Suspend(worker_client) => todo!(),
+                }
+                ActionWorkerClient::Suspend(_worker_client) => todo!(),
             }
         }
 
@@ -238,34 +242,14 @@ enum RescaleOperation {
 fn run_rescale(
     output: &mut Output<NoKey, NoData, NoTime>,
     trigger: RescaleOperation,
-    schedule_fn: &mut impl FnMut() -> bool
+    schedule_fn: &mut impl FnMut() -> bool,
 ) -> () {
     let in_progress_rescale: RescaleMessage = match trigger {
-        RescaleOperation::ScaleAdd(index_set) => RescaleMessage::new_add(index_set),
-        RescaleOperation::ScaleRemove(index_set) => RescaleMessage::new_remove(index_set),
+        RescaleOperation::ScaleAdd(index_set) => RescaleMessage::new(index_set),
+        RescaleOperation::ScaleRemove(index_set) => RescaleMessage::new(index_set),
     };
     output.send(Message::Rescale(in_progress_rescale.clone()));
     while in_progress_rescale.strong_count() > 1 {
         schedule_fn();
-    }
-
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-    use crate::snapshot::{NoPersistence, NoSnapshots};
-
-    /// check we can build the most basic runtime
-    #[test]
-    fn builds_basic_rt() {
-        WorkerBuilder::new(
-            SingleThreadRuntimeFlavor,
-            NoSnapshots,
-            NoPersistence::default(),
-        )
-        .build()
-        .unwrap();
     }
 }

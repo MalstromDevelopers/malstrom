@@ -14,16 +14,19 @@ fn main() {
         .persistence(NoPersistence::default())
         .build(build_dataflow);
     let api_handle = rt.api_handle();
-    
+
     std::thread::spawn(move || {
-        let tokio_rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tokio_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         std::thread::sleep(Duration::from_secs(5));
         println!("Rescaling to 10 workers");
         tokio_rt.block_on(api_handle.rescale(10)).unwrap();
-        
+
         println!("Rescale complete!");
     });
-    
+
     rt.execute().unwrap();
 }
 

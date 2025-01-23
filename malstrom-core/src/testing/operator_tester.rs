@@ -11,8 +11,10 @@ use crate::types::*;
 use crate::{
     channels::operator_io::{full_broadcast, link, Input, Output},
     runtime::{
-        communication::{CommunicationBackendError, Distributable, BiStreamTransport, TransportError},
-        OperatorOperatorComm, BiCommunicationClient,
+        communication::{
+            BiStreamTransport, CommunicationBackendError, Distributable, TransportError,
+        },
+        BiCommunicationClient, OperatorOperatorComm,
     },
     snapshot::NoPersistence,
     stream::{BuildContext, Logic, OperatorContext},
@@ -236,7 +238,7 @@ mod tests {
     use std::{rc::Rc, sync::Mutex};
 
     use crate::{
-        runtime::{OperatorOperatorComm, BiCommunicationClient},
+        runtime::{BiCommunicationClient, OperatorOperatorComm},
         testing::operator_tester::SentMessage,
         types::Message,
     };
@@ -247,7 +249,7 @@ mod tests {
     /// using our fake communication
     #[test]
     fn test_fake_comm_send_to_operator() {
-        let mut fake_comm = FakeCommunication::<i32>::default();
+        let fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
         let client = fake_comm.operator_to_operator(1, 0).unwrap();
 
@@ -262,7 +264,7 @@ mod tests {
     /// We should be able to receive messages from our operator under test
     #[test]
     fn test_fake_comm_receive() {
-        let mut fake_comm = FakeCommunication::<i32>::default();
+        let fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
         let client = fake_comm.operator_to_operator(1, 0).unwrap();
         client.send(BiCommunicationClient::encode(42)).unwrap();
