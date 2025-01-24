@@ -83,7 +83,7 @@ where
                         sender.send(msg);
                     }
                 }
-            },
+            }
             x => {
                 if matches!(x, Message::SuspendMarker(_)) {
                     self.suspended = true

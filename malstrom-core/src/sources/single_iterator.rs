@@ -132,6 +132,7 @@ mod tests {
     use proptest::bits::usize;
 
     use crate::{
+        channels::operator_io::Input,
         operators::*,
         runtime::{threaded::MultiThreadRuntime, WorkerBuilder},
         sinks::StatelessSink,
@@ -139,7 +140,7 @@ mod tests {
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::{get_test_rt, VecSink},
-        types::Message,
+        types::{Message, NoKey},
     };
 
     /// The into_iter source should emit the iterator values
@@ -225,8 +226,11 @@ mod tests {
                 )
                 .then(OperatorBuilder::direct(
                     "sink-epochs",
-                    move |input, output, _ctx| match input.recv() {
-                        Some(Message::Epoch(x)) => sink.give(x),
+                    move |input: &mut Input<NoKey, i32, usize>, output, _ctx| match input.recv() {
+                        Some(Message::Epoch(x)) => {
+                            sink.give(x.clone());
+                            output.send(Message::Epoch(x));
+                        }
                         Some(msg) => output.send(msg),
                         None => (),
                     },

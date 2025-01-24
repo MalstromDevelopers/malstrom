@@ -110,11 +110,11 @@ mod tests {
     #[test]
     fn create_new_worker_set() {
         // scale up
-        let trigger = RescaleMessage::new(IndexSet::from([1, 2, 3]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1, 2, 3]));
         let (router, _) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1, 2, 3]));
 
-        let trigger = RescaleMessage::new(IndexSet::from([2, 3]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1]));
         let (router, _) =
             InterrogateRouter::new(0, IndexSet::from([0, 1, 2, 3]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1]));
@@ -124,7 +124,7 @@ mod tests {
     /// which only accepts keys, that need redistribution
     #[test]
     fn creates_interrogate() {
-        let trigger = RescaleMessage::new(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1]));
         let (mut router, mut interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 

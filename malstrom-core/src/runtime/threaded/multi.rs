@@ -168,35 +168,3 @@ impl MultiThreadRuntimeApiHandle {
             .await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{atomic::AtomicU64, Arc};
-
-    use crate::{
-        runtime::WorkerBuilder,
-        snapshot::{NoPersistence, NoSnapshots},
-    };
-
-    use super::{MultiThreadRuntime, MultiThreadRuntimeFlavor, Shared};
-
-    // #[test]
-    // fn test_can_build() {
-    //     let rt = MultiThreadRuntime::new_with_args(
-    //         |flavor, _| WorkerBuilder::new(flavor, NoSnapshots, NoPersistence::default()),
-    //         [(); 2],
-    //     );
-    //     rt.execute().unwrap();
-    // }
-
-    /// It should increment the runtime size by 1 when instantiated and decrement by one when
-    /// dropped
-    #[test]
-    fn update_runtime_size() {
-        let rt_size = Arc::new(AtomicU64::new(5));
-        let flavor = MultiThreadRuntimeFlavor::new(Shared::default(), 2);
-        assert_eq!(rt_size.load(std::sync::atomic::Ordering::SeqCst), 6);
-        drop(flavor);
-        assert_eq!(rt_size.load(std::sync::atomic::Ordering::SeqCst), 5);
-    }
-}

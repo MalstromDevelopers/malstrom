@@ -68,11 +68,33 @@ mod tests {
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::{get_test_rt, VecSink},
-        types::{Message, NoKey},
+        types::{MaybeData, MaybeTime, Message, NoKey},
     };
     use itertools::Itertools;
 
     use super::*;
+
+    fn epoch_collector<K, V, T>(
+        name: &str,
+        collector: VecSink<T>,
+    ) -> OperatorBuilder<K, V, T, K, V, T>
+    where
+        K: MaybeKey,
+        V: MaybeData,
+        T: MaybeTime + Clone,
+    {
+        OperatorBuilder::direct(name, move |input: &mut Input<K, V, T>, output, _| {
+            if let Some(msg) = input.recv() {
+                match msg {
+                    Message::Epoch(e) => {
+                        collector.give(e.clone());
+                        output.send(Message::Epoch(e));
+                    }
+                    x => output.send(x),
+                }
+            };
+        })
+    }
 
     /// Check that the assigner assigns a timestamp to every record
     #[test]
@@ -117,28 +139,8 @@ mod tests {
                     Some(msg.timestamp + epoch.unwrap_or(0))
                 });
 
-            stream.then(OperatorBuilder::direct(
-                "get-epoch",
-                move |input, output, _| {
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Epoch(e) => collector.give(e),
-                            x => output.send(x),
-                        }
-                    };
-                },
-            ));
-            late.then(OperatorBuilder::direct(
-                "get-epoch",
-                move |input, output, _| {
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Epoch(e) => late_collector.give(e),
-                            x => output.send(x),
-                        }
-                    };
-                },
-            ));
+            stream.then(epoch_collector("get-epoch", collector));
+            late.then(epoch_collector("get-epoch-late", late_collector));
         });
 
         rt.execute().unwrap();
@@ -170,17 +172,7 @@ mod tests {
                 .assign_timestamps("ts-as-i32", |x| x.timestamp as i32)
                 .generate_epochs("no-epochs", |_x, _y| None);
 
-            stream.then(OperatorBuilder::direct(
-                "get-epoch",
-                move |input, output, _| {
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Epoch(e) => time_collector.give(e),
-                            x => output.send(x),
-                        }
-                    };
-                },
-            ));
+            stream.then(epoch_collector("get-epoch", time_collector));
         });
 
         rt.execute().unwrap();
@@ -288,17 +280,7 @@ mod tests {
                         x => Some(x),
                     }
                 });
-            ontime.then(OperatorBuilder::direct(
-                "get-epoch",
-                move |input, output, _| {
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Epoch(e) => collector_ontime.give(e),
-                            x => output.send(x),
-                        }
-                    };
-                },
-            ));
+            ontime.then(epoch_collector("get-epoch", collector_ontime));
         });
         rt.execute().unwrap();
         let epochs = collector_ontime.drain_vec(..);
