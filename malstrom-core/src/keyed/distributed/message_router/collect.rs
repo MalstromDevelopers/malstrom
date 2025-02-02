@@ -29,14 +29,13 @@ where
     K: Key,
 {
     pub(super) fn new(
-        version: Version,
         whitelist: IndexSet<K>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         trigger: RescaleMessage,
     ) -> Self {
         Self {
-            version: version + 1,
+            version: trigger.get_version(),
             whitelist,
             old_worker_set,
             new_worker_set,
@@ -125,7 +124,6 @@ where
                 NetworkMessage::Upgrade(self.version),
             );
             MessageRouter::Finished(FinishedRouter::new(
-                self.version,
                 self.old_worker_set,
                 self.new_worker_set,
                 self.trigger,
@@ -170,15 +168,14 @@ mod test {
     }
 
     #[test]
-    fn increases_version_on_new() {
+    fn sets_version_to_trigger() {
         let dist: CollectRouter<i32, NoData, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::new(),
             IndexSet::new(),
-            RescaleMessage::new(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1]), 13),
         );
-        assert_eq!(dist.version, 1)
+        assert_eq!(dist.version, 13)
     }
 
     /// Should respect Rule 1.1
@@ -189,11 +186,10 @@ mod test {
     fn handle_data_rule_1_1() {
         let key = 15;
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let msg = DataMessage {
@@ -220,11 +216,10 @@ mod test {
     fn handle_data_rule_1_2() {
         let key = 15;
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -269,11 +264,10 @@ mod test {
     #[test]
     fn handle_data_rule_2() {
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([3]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
         let msg = DataMessage {
             key: 7,
@@ -294,11 +288,10 @@ mod test {
     #[test]
     fn handle_data_rule_3() {
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([3]),
             IndexSet::from([0, 1]),
             IndexSet::from([0]),
-            RescaleMessage::new(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1]), 0),
         );
 
         // this should go downstream
@@ -330,11 +323,10 @@ mod test {
     #[test]
     fn creates_collectors() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([1, 3, 5]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([])),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -369,11 +361,10 @@ mod test {
     #[test]
     fn creates_acquire_and_emits_buffers() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -433,11 +424,10 @@ mod test {
     #[test]
     fn broadcast_update() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::new(IndexSet::from([1, 2])),
+            RescaleMessage::new(IndexSet::from([1, 2]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -496,11 +486,10 @@ mod test {
     #[test]
     fn transitions_to_normal() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();

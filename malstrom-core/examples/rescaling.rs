@@ -8,7 +8,6 @@ use malstrom::snapshot::{NoPersistence, NoSnapshots};
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    tracing_subscriber::fmt::init();
     let rt = MultiThreadRuntime::builder()
         .parrallelism(2)
         .persistence(NoPersistence::default())
@@ -20,11 +19,16 @@ fn main() {
             .enable_all()
             .build()
             .unwrap();
-        std::thread::sleep(Duration::from_secs(5));
-        println!("Rescaling to 10 workers");
-        tokio_rt.block_on(api_handle.rescale(10)).unwrap();
-
-        println!("Rescale complete!");
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            println!("Rescaling to 3 workers");
+            tokio_rt.block_on(api_handle.rescale(3)).unwrap();
+            println!("Rescale complete!");
+            std::thread::sleep(Duration::from_secs(5));
+            println!("Rescaling to 1 workers");
+            tokio_rt.block_on(api_handle.rescale(1)).unwrap();
+            println!("Rescale complete!");
+        }
     });
 
     rt.execute().unwrap();

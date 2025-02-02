@@ -267,7 +267,7 @@ where
         let new_workers = rescale_message.get_new_workers();
         self.comm_clients.retain(|wid, _| new_workers.contains(wid));
         for wid in new_workers.iter() {
-            if !self.comm_clients.contains_key(wid) {
+            if !self.comm_clients.contains_key(wid) && !wid == ctx.worker_id {
                 let client = ctx.create_communication_client(*wid);
                 self.comm_clients.insert(wid.clone(), client);
             }

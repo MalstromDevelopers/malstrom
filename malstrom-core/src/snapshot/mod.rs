@@ -20,7 +20,7 @@ pub(crate) fn deserialize_state<S: DeserializeOwned>(state: Vec<u8>) -> S {
 
 pub trait PersistenceBackend: 'static {
     type Client: PersistenceClient;
-    fn last_commited(&self, worker_id: WorkerId) -> Self::Client;
+    fn last_commited(&self) -> Option<SnapshotVersion>;
     fn for_version(&self, worker_id: WorkerId, snapshot_version: &SnapshotVersion) -> Self::Client;
     // mark a specific snapshot version as finished
     fn commit_version(&self, snapshot_version: &SnapshotVersion);
@@ -79,8 +79,8 @@ pub struct NoPersistence {
 }
 impl PersistenceBackend for NoPersistence {
     type Client = NoPersistence;
-    fn last_commited(&self, _worker_id: WorkerId) -> Self {
-        self.clone()
+    fn last_commited(&self) -> Option<SnapshotVersion> {
+        None
     }
 
     fn for_version(&self, _worker_id: WorkerId, snapshot_epoch: &SnapshotVersion) -> Self {

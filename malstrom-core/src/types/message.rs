@@ -92,13 +92,15 @@ pub struct RescaleMessage {
     /// Set of workers in the computation AFTER the rescale
     /// will have concluded
     workers: IndexSet<WorkerId>,
+    version: u64,
     rc: Rc<()>,
 }
 
 impl RescaleMessage {
-    pub(crate) fn new(workers: IndexSet<WorkerId>) -> Self {
+    pub(crate) fn new(workers: IndexSet<WorkerId>, version: u64) -> Self {
         Self {
             workers,
+            version,
             rc: Rc::new(()),
         }
     }
@@ -107,6 +109,11 @@ impl RescaleMessage {
     /// has concluded
     pub fn get_new_workers(&self) -> &IndexSet<WorkerId> {
         &self.workers
+    }
+
+    /// Get the version of this rescaling
+    pub fn get_version(&self) -> u64 {
+        self.version
     }
 
     /// Get the count of strong reference to the inner Rc

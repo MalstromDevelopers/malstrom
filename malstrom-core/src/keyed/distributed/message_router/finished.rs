@@ -14,13 +14,12 @@ pub(crate) struct FinishedRouter {
 
 impl FinishedRouter {
     pub(super) fn new(
-        version: Version,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         trigger: RescaleMessage,
     ) -> Self {
         Self {
-            version,
+            version: trigger.get_version(),
             old_worker_set,
             new_worker_set,
             trigger,
@@ -93,10 +92,9 @@ mod tests {
     #[test]
     fn emit_original_rescale() {
         let router = FinishedRouter::new(
-            1,
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([1])),
+            RescaleMessage::new(IndexSet::from([1]), 0),
         );
         let mut output: Output<usize, usize, usize> = Output::new_unlinked(full_broadcast);
         let mut input = Input::new_unlinked();

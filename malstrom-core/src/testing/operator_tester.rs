@@ -187,6 +187,7 @@ where
         Ok(Box::new(transport))
     }
 }
+
 struct FakeCommunicationTransport<R> {
     // these are the messages the operator under test sent
     sent_by_operator: Arc<Mutex<VecDeque<SentMessage<R>>>>,
@@ -222,14 +223,8 @@ where
         }
     }
 
-    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError> {
-        // TODO not a good implementation since it is essentially sync
-        let mut guard = self.sent_to_operator.lock().unwrap();
-        let queue = guard.get_mut(&self.impersonate);
-        match queue {
-            Some(q) => Ok(q.pop_front().map(BiCommunicationClient::encode)),
-            None => Ok(None),
-        }
+    async fn recv_async(&self) -> Result<Vec<u8>, TransportError> {
+        todo!()
     }
 }
 

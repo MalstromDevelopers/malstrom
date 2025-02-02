@@ -27,9 +27,8 @@ pub struct SlateDbBackend {
 impl PersistenceBackend for SlateDbBackend {
     type Client = SlateDbClient;
 
-    fn last_commited(&self, worker_id: WorkerId) -> Self::Client {
-        let last_commit = self.commits.get_last_commited().unwrap_or(0);
-        self.for_version(worker_id, &last_commit)
+    fn last_commited(&self) -> Option<SnapshotVersion> {
+        self.commits.get_last_commited()
     }
 
     fn for_version(&self, worker_id: WorkerId, snapshot_version: &SnapshotVersion) -> Self::Client {
@@ -237,7 +236,7 @@ mod tests {
     use crate::{
         keyed::KeyLocal,
         operators::*,
-        runtime::{threaded::SingleThreadRuntime, WorkerBuilder},
+        runtime::{threaded::SingleThreadRuntime, StreamProvider, WorkerBuilder},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::VecSink,
@@ -246,35 +245,34 @@ mod tests {
     use super::*;
     use object_store::{memory::InMemory, path::Path};
 
-    /// check we return a client for version 0 if there has not been a committed
+    /// check we return None if there has not been a committed
     /// version yet
     #[test]
-    fn client_0_if_no_committed() {
+    fn none_if_no_committed() {
         let store = InMemory::new();
         let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
-        let client = backend.last_commited(11);
-        assert_eq!(client.version, 0);
+        assert!(backend.last_commited().is_none());
     }
 
-    /// Check we return a client for the last committed version
+    /// Check we return the last committed version
     #[test]
     fn last_committed_client() {
         let store = InMemory::new();
         let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         backend.commit_version(&42);
-        let client = backend.last_commited(0);
-        assert_eq!(client.version, 42);
+        let version = backend.last_commited().unwrap();
+        assert_eq!(version, 42);
     }
 
-    /// Check we return a client for the last committed version, not the highest version
+    /// Check we return the last committed version, not the highest version
     #[test]
     fn last_committed_not_highest_client() {
         let store = InMemory::new();
         let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
         backend.commit_version(&42);
         backend.commit_version(&3);
-        let client = backend.last_commited(0);
-        assert_eq!(client.version, 3);
+        let version = backend.last_commited().unwrap();
+        assert_eq!(version, 3);
     }
 
     /// Check we return a client for the requested version
@@ -291,12 +289,12 @@ mod tests {
     fn store_and_retrieve() {
         let store = InMemory::new();
         let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
-        let mut client = backend.last_commited(0);
+        let mut client = backend.for_version(0, &0);
         let state = b"HelloWorld";
         client.persist(state, &1337);
         backend.commit_version(&client.get_version());
 
-        let load_client = backend.last_commited(0);
+        let load_client = backend.for_version(0, &0);
         let restored = load_client.load(&1337).unwrap();
         assert_eq!(state, &restored[..])
     }
@@ -306,11 +304,11 @@ mod tests {
     fn no_uncommitted_restored() {
         let store = InMemory::new();
         let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
-        let mut client = backend.last_commited(0);
+        let mut client = backend.for_version(0, &0);
         let state = b"HelloWorld";
         client.persist(state, &1337);
 
-        let load_client = backend.last_commited(0);
+        let load_client = backend.for_version(0, &0);
         let restored = load_client.load(&1337);
         assert!(restored.is_none())
     }
@@ -320,11 +318,10 @@ mod tests {
     fn full_test() {
         let fs = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
         let capture = VecSink::new();
-        for _ in 0..2 {
-            let backend = SlateDbBackend::new(Arc::clone(&fs), Path::from("/snapshots")).unwrap();
-            let rt = SingleThreadRuntime::new(|flavor| {
-                let mut worker = WorkerBuilder::new(flavor, || true, backend);
-                worker
+        let backend = SlateDbBackend::new(Arc::clone(&fs), Path::from("/snapshots")).unwrap();
+        let rt = SingleThreadRuntime::builder().persistence(backend).build(
+            |provider: &mut dyn StreamProvider| {
+                provider
                     .new_stream()
                     .source(
                         "source",
@@ -336,10 +333,9 @@ mod tests {
                         (sum, Some(sum))
                     })
                     .sink("sink", StatelessSink::new(capture.clone()));
-                worker
-            });
-            rt.execute().unwrap();
-        }
+            },
+        );
+        todo!();
         let expected = vec![0, 1, 1, 2];
         let result: Vec<i32> = capture.into_iter().map(|x| x.value).collect();
         assert_eq!(result, expected);

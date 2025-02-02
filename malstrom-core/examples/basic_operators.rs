@@ -11,7 +11,6 @@ use malstrom::sources::{SingleIteratorSource, StatelessSource};
 fn main() {
     tracing_subscriber::fmt::init();
     SingleThreadRuntime::builder()
-        .snapshots(Duration::from_secs(300))
         .persistence(NoPersistence::default())
         .build(build_dataflow)
         .execute()

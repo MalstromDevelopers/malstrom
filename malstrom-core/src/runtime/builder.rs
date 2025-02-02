@@ -3,20 +3,23 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
-use crate::coordinator::messages::{
-    ActionWorkerClient, CoordinationMessage, ExecutionComplete, WorkerClient,
+use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
+use crate::snapshot::{
+    Barrier, NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion,
 };
-use crate::snapshot::{PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
 use crate::stream::{BuildContext, BuildableOperator, RunnableOperator};
-use crate::types::{MaybeData, MaybeKey, Message, NoData, NoKey, RescaleMessage, WorkerId};
+use crate::types::{
+    MaybeData, MaybeKey, Message, NoData, NoKey, RescaleMessage, SuspendMarker, WorkerId,
+};
 use crate::types::{MaybeTime, NoTime};
 use indexmap::IndexSet;
 use thiserror::Error;
 use tracing::{info, span, Level};
 
+use super::communication::CommunicationBackendError;
 use super::runtime_flavor::CommunicationError;
-use super::{OperatorOperatorComm, RuntimeFlavor};
+use super::{CommunicationClient, OperatorOperatorComm, RuntimeFlavor};
 
 /// Builder for a JetStream worker.
 /// The Worker is the core block of executing JetStream dataflows.
@@ -79,15 +82,23 @@ where
             Rc::try_unwrap(self.inner).map_err(|_| BuildError::UnfinishedStreams(ref_count - 1))?;
 
         let mut communication_backend = self.flavor.communication()?;
-        let coordinator = WorkerClient::new(&communication_backend);
+        let coordinator = CommunicationClient::worker_to_coordinator(&communication_backend)?;
+
         info!("Waiting for Coordinator build info");
-        let (build_info, coordinator) = rt.block_on(coordinator.get_build_info());
-        info!("Obtained build info: {:?}", build_info);
-        let cluster_size = build_info.scale;
-        let state_client = Rc::new(
-            self.persistence
-                .for_version(this_worker, &build_info.resume_snapshot),
-        ) as Rc<dyn PersistenceClient>;
+        let (buildinfo, coordinator) = rt.block_on(async move {
+            match coordinator.recv_async().await {
+                CoordinationMessage::StartBuild(buildinfo) => (buildinfo, coordinator),
+                _ => unreachable!(),
+            }
+        });
+
+        info!("Obtained build info: {:?}", buildinfo);
+        let state_client = match buildinfo.resume_snapshot {
+            Some(v) => {
+                Rc::new(self.persistence.for_version(this_worker, &v)) as Rc<dyn PersistenceClient>
+            }
+            None => Rc::new(NoPersistence::default()) as Rc<dyn PersistenceClient>,
+        };
 
         let mut operators = vec![];
         operators.extend(inner.into_inner().unwrap().finish().into_iter());
@@ -107,7 +118,7 @@ where
                     operator_name,
                     Rc::clone(&state_client),
                     &mut communication_backend,
-                    (0..cluster_size).collect(),
+                    buildinfo.worker_set.clone(),
                 );
                 Result::<RunnableOperator, BuildError>::Ok(x.into_runnable(&mut ctx))
             })
@@ -116,13 +127,18 @@ where
             worker_id: this_worker,
             operators,
             communication: communication_backend,
+            persistence: self.persistence,
         };
+        coordinator.send(WorkerMessage::BuildComplete);
 
-        let coordinator = rt.block_on(coordinator.await_start());
-        let coordinator = worker.execute(&mut self.root_stream, coordinator);
+        let coordinator = rt.block_on(async move {
+            match coordinator.recv_async().await {
+                CoordinationMessage::StartExecution => coordinator,
+                _ => unreachable!(),
+            }
+        });
+        let _coordinator = worker.execute(&mut self.root_stream, coordinator);
         info!("Finished execution");
-        let coordinator = coordinator.signal_execution_complete();
-        rt.block_on(coordinator.await_execution_complete());
         Ok(())
     }
 }
@@ -131,6 +147,8 @@ where
 pub enum BuildError {
     #[error(transparent)]
     CommunicationError(#[from] CommunicationError),
+    #[error(transparent)]
+    CommunicationBackendError(#[from] CommunicationBackendError),
     #[error(
         "{0} Unfinished streams in this runtime.
     You must call `.finish()` on all streams created on this runtime
@@ -176,14 +194,16 @@ pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
     JetStreamBuilder::from_receiver(merged, runtime)
 }
 
-struct Worker<C> {
+struct Worker<C, P> {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,
     communication: C,
+    persistence: P,
 }
-impl<C> Worker<C>
+impl<C, P> Worker<C, P>
 where
     C: OperatorOperatorComm,
+    P: PersistenceBackend,
 {
     fn step(&mut self) -> bool {
         let span = tracing::debug_span!("scheduling::run_graph", worker_id = self.worker_id);
@@ -208,48 +228,79 @@ where
     fn execute(
         &mut self,
         root: &mut Output<NoKey, NoData, NoTime>,
-        mut coordinator: WorkerClient<ExecutionComplete, CoordinationMessage>,
-    ) -> WorkerClient<ExecutionComplete, CoordinationMessage> {
+        coordinator: CommunicationClient<WorkerMessage, CoordinationMessage>,
+    ) -> CommunicationClient<WorkerMessage, CoordinationMessage> {
+        coordinator.send(WorkerMessage::ExecutionStarted);
         while !self.step() {
-            coordinator = match coordinator.recv() {
-                ActionWorkerClient::Idle(worker_client) => worker_client,
-                ActionWorkerClient::Snapshot(_worker_client, _) => todo!(),
-                ActionWorkerClient::ScaleAdd(worker_client, index_set) => {
-                    run_rescale(root, RescaleOperation::ScaleAdd(index_set), &mut || {
-                        self.step()
-                    });
-                    worker_client.complete_scale_add()
+            if let Some(msg) = coordinator.recv() {
+                match msg {
+                    CoordinationMessage::StartBuild(_) => unreachable!(),
+                    CoordinationMessage::StartExecution => unreachable!(),
+                    CoordinationMessage::Snapshot(version) => {
+                        let persistence_client =
+                            self.persistence.for_version(self.worker_id, &version);
+                        coordinator.send(WorkerMessage::SnapshotStarted);
+                        perform_snapshot(root, persistence_client, &mut || self.step());
+                        coordinator.send(WorkerMessage::SnapshotComplete(version));
+                    }
+                    CoordinationMessage::Reconfigure((index_set, version)) => {
+                        let should_continue = index_set.contains(&self.worker_id);
+                        coordinator.send(WorkerMessage::ReconfigurationStarted);
+                        perform_reconfig(root, index_set, version, &mut || self.step());
+                        coordinator.send(WorkerMessage::ReconfigureComplete(version));
+                        if !should_continue {
+                            coordinator.send(WorkerMessage::Removed);
+                            return coordinator;
+                        }
+                    }
+                    CoordinationMessage::Suspend => {
+                        perform_suspend(root, &mut || self.step());
+                        coordinator.send(WorkerMessage::SuspendComplete);
+                        return coordinator;
+                    }
                 }
-                ActionWorkerClient::ScaleRemove(worker_client, index_set) => {
-                    run_rescale(root, RescaleOperation::ScaleRemove(index_set), &mut || {
-                        self.step()
-                    });
-                    worker_client.complete_scale_add()
-                }
-                ActionWorkerClient::Suspend(_worker_client) => todo!(),
             }
         }
-
+        coordinator.send(WorkerMessage::ExecutionComplete);
         coordinator
     }
 }
 
-enum RescaleOperation {
-    ScaleAdd(IndexSet<u64>),
-    ScaleRemove(IndexSet<u64>),
-}
-
-fn run_rescale(
+fn perform_reconfig(
     output: &mut Output<NoKey, NoData, NoTime>,
-    trigger: RescaleOperation,
+    new_set: IndexSet<WorkerId>,
+    new_version: u64,
     schedule_fn: &mut impl FnMut() -> bool,
 ) -> () {
-    let in_progress_rescale: RescaleMessage = match trigger {
-        RescaleOperation::ScaleAdd(index_set) => RescaleMessage::new(index_set),
-        RescaleOperation::ScaleRemove(index_set) => RescaleMessage::new(index_set),
-    };
+    let in_progress_rescale = RescaleMessage::new(new_set, new_version);
     output.send(Message::Rescale(in_progress_rescale.clone()));
     while in_progress_rescale.strong_count() > 1 {
+        schedule_fn();
+    }
+}
+
+fn perform_snapshot<P>(
+    output: &mut Output<NoKey, NoData, NoTime>,
+    persistence_client: P,
+    schedule_fn: &mut impl FnMut() -> bool,
+) -> ()
+where
+    P: PersistenceClient,
+{
+    let barrier = Barrier::new(Box::new(persistence_client));
+    output.send(Message::AbsBarrier(barrier.clone()));
+    while barrier.strong_count() > 1 {
+        schedule_fn();
+    }
+}
+
+fn perform_suspend(
+    output: &mut Output<NoKey, NoData, NoTime>,
+    schedule_fn: &mut impl FnMut() -> bool,
+) {
+    let suspend = SuspendMarker::default();
+    output.send(Message::SuspendMarker(suspend.clone()));
+    while suspend.strong_count() > 1 {
         schedule_fn();
     }
 }

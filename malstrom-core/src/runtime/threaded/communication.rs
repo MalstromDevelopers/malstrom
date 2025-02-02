@@ -138,11 +138,11 @@ impl BiStreamTransport for ChannelTransport {
             .map_err(|e| TransportError::SendError(Box::new(e)))
     }
 
-    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError> {
-        match self.receiver.recv_async().await {
-            Ok(x) => Ok(Some(x)),
-            Err(_) => Ok(None),
-        }
+    async fn recv_async(&self) -> Result<Vec<u8>, TransportError> {
+        self.receiver
+            .recv_async()
+            .await
+            .map_err(TransportError::recv_error)
     }
 
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError> {

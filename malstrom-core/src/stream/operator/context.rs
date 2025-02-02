@@ -1,7 +1,7 @@
 //! Build and runtime contexts used by operators
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -51,7 +51,7 @@ pub struct BuildContext<'a> {
     persistence_backend: Rc<dyn PersistenceClient>,
     // HACK: We need this in the ica tests
     pub(crate) communication: &'a mut dyn OperatorOperatorComm,
-    worker_ids: Vec<WorkerId>,
+    worker_ids: IndexSet<WorkerId>,
 }
 impl<'a> BuildContext<'a> {
     pub(crate) fn new(
@@ -60,7 +60,7 @@ impl<'a> BuildContext<'a> {
         name: String,
         persistence_backend: Rc<dyn PersistenceClient>,
         communication: &'a mut dyn OperatorOperatorComm,
-        worker_ids: Vec<WorkerId>,
+        worker_ids: IndexSet<WorkerId>,
     ) -> Self {
         Self {
             worker_id,
@@ -82,7 +82,7 @@ impl<'a> BuildContext<'a> {
     /// at build time.
     /// NOTE: JetStream is designed to scale dynamically, so this information may become outdated
     /// at runtime
-    pub fn get_worker_ids(&self) -> &[WorkerId] {
+    pub fn get_worker_ids(&self) -> &IndexSet<WorkerId> {
         &self.worker_ids
     }
 

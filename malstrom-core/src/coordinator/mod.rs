@@ -1,3 +1,7 @@
 mod coordinator;
-pub(crate) mod messages;
 pub use coordinator::{Coordinator, CoordinatorCreationError, CoordinatorError, CoordinatorStatus};
+mod communication;
+mod failfast;
+mod state;
+pub(crate) mod types;
+mod watchmap;

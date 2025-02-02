@@ -132,21 +132,26 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
-    /// Check messages are always returned locally if the have a higher version
+    /// Check messages are always returned locally if they have a higher version
     #[test]
     fn higher_version(this_worker in 0u64..3, sender in 0u64..3, key in 0u64..100) {
         let mut normal_router = MessageRouter::Normal(NormalRouter::new(IndexSet::from([0, 1, 2]), 33));
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::new(IndexSet::from([3])),
+            RescaleMessage::new(IndexSet::from([3]), 1),
             index_select,
         ).0);
         let mut collect_router = MessageRouter::Collect(
-            CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]
+            CollectRouter::new(IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]
 
-            ), RescaleMessage::new(IndexSet::from([4]))));
-        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), RescaleMessage::new(IndexSet::from([4]))));
+            ), RescaleMessage::new(IndexSet::from([4]), 33)));
+        let mut finished_router = MessageRouter::Finished(
+            FinishedRouter::new(
+                IndexSet::from([0, 1, 2]),
+                IndexSet::from([0, 1, 2, 3]),
+                RescaleMessage::new(IndexSet::from([4]), 33))
+            );
 
 
         let msg = DataMessage::new(key, 100, 0);

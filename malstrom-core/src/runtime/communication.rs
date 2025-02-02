@@ -67,7 +67,7 @@ pub trait BiStreamTransport: Send + Sync {
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError>;
 
     /// Wait until a message becomes available
-    async fn recv_async(&self) -> Result<Option<Vec<u8>>, TransportError>;
+    async fn recv_async(&self) -> Result<Vec<u8>, TransportError>;
 
     /// Receive all currently available messages for this operator.
     /// Some transport implementations may handle message reception more efficiently
@@ -167,11 +167,11 @@ where
         Some(Self::decode(&encoded))
     }
 
-    pub async fn recv_async(&self) -> Option<TRecv> {
-        let encoded = self.transport.recv_async().await.unwrap()?;
+    pub async fn recv_async(&self) -> TRecv {
+        let encoded = self.transport.recv_async().await.unwrap();
         // let (decoded, _) = bincode::serde::decode_from_slice(&encoded, BINCODE_CONFIG)
         //     .expect(&format!("Deserialize message, type: {typ}"));
-        Some(Self::decode(&encoded))
+        Self::decode(&encoded)
     }
 
     pub(crate) fn decode(msg: &[u8]) -> TRecv {

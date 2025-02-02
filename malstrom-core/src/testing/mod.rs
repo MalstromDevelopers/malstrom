@@ -5,7 +5,7 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 use crate::runtime::communication::Distributable;
 use crate::runtime::threaded::SingleThreadRuntimeFlavor;
 use crate::runtime::{SingleThreadRuntime, StreamProvider, WorkerBuilder};
-use crate::snapshot::Barrier;
+use crate::snapshot::{Barrier, SnapshotVersion};
 use crate::types::{Key, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};
 use crate::{
@@ -47,8 +47,8 @@ pub struct CapturingPersistenceBackend {
 impl PersistenceBackend for CapturingPersistenceBackend {
     type Client = CapturingPersistenceBackend;
 
-    fn last_commited(&self, _worker_id: WorkerId) -> Self::Client {
-        self.clone()
+    fn last_commited(&self) -> Option<SnapshotVersion> {
+        None
     }
 
     fn for_version(
@@ -61,6 +61,7 @@ impl PersistenceBackend for CapturingPersistenceBackend {
 
     fn commit_version(&self, _snapshot_version: &crate::snapshot::SnapshotVersion) {
         // TODO
+        todo!()
     }
 }
 
@@ -119,7 +120,7 @@ pub fn test_forward_system_messages<
         Message::Interrogate(_)
     ));
 
-    let msg = Message::Rescale(RescaleMessage::new(IndexSet::new()));
+    let msg = Message::Rescale(RescaleMessage::new(IndexSet::new(), 0));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(tester.recv_local().unwrap(), Message::Rescale(_)));
@@ -159,8 +160,8 @@ mod tests {
     #[test]
     fn capturing_persistence_backend() {
         let backend = CapturingPersistenceBackend::default();
-        let a = backend.last_commited(0);
-        let mut b = backend.last_commited(0);
+        let a = backend.for_version(0, &0);
+        let mut b = backend.for_version(0, &0);
 
         let val = "hello world".to_string();
         let ser = serialize_state(&val);
