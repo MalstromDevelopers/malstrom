@@ -1,6 +1,5 @@
 use indexmap::IndexSet;
-use itertools::Itertools;
-use tracing::{debug, info};
+use tracing::info;
 
 use super::{super::types::*, MessageRouter, NormalRouter};
 use crate::{channels::operator_io::Output, keyed::distributed::Remotes, types::*};
@@ -34,7 +33,7 @@ impl FinishedRouter {
         partitioner: WorkerPartitioner<K>,
         this_worker: WorkerId,
         sender: WorkerId,
-        remotes: &Remotes<K, V, T>
+        remotes: &Remotes<K, V, T>,
     ) -> WorkerId {
         let new_target = partitioner(key, &self.new_worker_set);
         if new_target == this_worker {
@@ -50,7 +49,14 @@ impl FinishedRouter {
             // if the old target is already at our version, we know it has already
             // given up the state for this key (or did not have it in the first place)
             // and we can safely keep the message
-            } else if remotes.get(&old_target).unwrap().1.last_version.map(|v| v == self.version).unwrap_or(false) {
+            } else if remotes
+                .get(&old_target)
+                .unwrap()
+                .1
+                .last_version
+                .map(|v| v == self.version)
+                .unwrap_or(false)
+            {
                 new_target
             } else {
                 old_target
@@ -71,15 +77,12 @@ impl FinishedRouter {
         V: MaybeData,
         T: MaybeTime,
     {
-        if remotes
-            .values()
-            .all(|(_, state)| {
-                state.last_version.map(|v| v == self.version).unwrap_or(false)
+        if remotes.values().all(|(_, state)| {
+            state.last_version.map(|v| v == self.version).unwrap_or(false)
                 // we cannot progress if they did not acknowledge our version because
                 // in that case they might still try to send us messages
                 && state.last_ack_version.map(|v| v == self.version).unwrap_or(false)
-            })
-        {
+        }) {
             for wid in self.old_worker_set.difference(&self.new_worker_set) {
                 remotes.swap_remove(wid);
             }

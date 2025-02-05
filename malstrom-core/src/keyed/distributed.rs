@@ -1,6 +1,5 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
-use tracing::{debug, info};
 
 mod message_router;
 pub mod types;
@@ -184,7 +183,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 ctx.worker_id,
-                &self.remotes
+                &self.remotes,
             )
         };
         if let Some((msg, target)) = routing {
@@ -206,7 +205,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 *sent_by,
-                &self.remotes
+                &self.remotes,
             )
         };
         if let Some((msg, target)) = routing {

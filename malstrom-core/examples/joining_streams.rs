@@ -1,8 +1,8 @@
 // main.rs
 use malstrom::operators::*;
-use malstrom::runtime::{RuntimeFlavor, SingleThreadRuntime, StreamProvider, WorkerBuilder};
+use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
 use malstrom::sinks::{StatelessSink, StdOutSink};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
+use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {

@@ -512,7 +512,7 @@ mod test {
         // should not change since 1 has not acknowledged us finishing yet
         assert!(matches!(dist, MessageRouter::Finished(_)));
         remotes.get_mut(&1).unwrap().1.last_ack_version = Some(555);
-        
+
         let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
     }

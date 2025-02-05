@@ -67,10 +67,6 @@ impl Barrier {
     pub(super) fn strong_count(&self) -> usize {
         Rc::strong_count(&self.backend)
     }
-
-    pub(super) fn get_version(&self) -> SnapshotVersion {
-        self.backend.lock().unwrap().get_version()
-    }
 }
 
 #[derive(Default, Clone, Debug)]

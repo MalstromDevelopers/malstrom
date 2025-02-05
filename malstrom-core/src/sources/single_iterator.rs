@@ -134,9 +134,7 @@ mod tests {
     use crate::{
         channels::operator_io::Input,
         operators::*,
-        runtime::{threaded::MultiThreadRuntime, WorkerBuilder},
         sinks::StatelessSink,
-        snapshot::{NoPersistence, NoSnapshots},
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::{get_test_rt, VecSink},

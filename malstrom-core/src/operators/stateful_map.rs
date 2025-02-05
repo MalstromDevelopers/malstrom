@@ -114,7 +114,7 @@ mod test {
     use crate::operators::source::Source;
     use crate::operators::{KeyLocal, Sink};
 
-    use crate::sinks::{StatefulSink, StatelessSink};
+    use crate::sinks::StatelessSink;
     use crate::sources::{SingleIteratorSource, StatelessSource};
     use crate::testing::{get_test_rt, VecSink};
 

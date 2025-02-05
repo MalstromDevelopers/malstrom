@@ -63,7 +63,7 @@ where
 mod tests {
     use crate::{
         channels::operator_io::Input,
-        operators::{GenerateEpochs, Inspect, Sink, Source},
+        operators::{GenerateEpochs, Sink, Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,

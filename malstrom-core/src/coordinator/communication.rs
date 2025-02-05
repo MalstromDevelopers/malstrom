@@ -61,7 +61,7 @@ pub(super) async fn worker_comm_inbound(
                     .await;
             }
             WorkerMessage::ReconfigurationStarted => set_phase(WorkerPhase::Reconfiguring).await,
-            WorkerMessage::ReconfigureComplete(version) => {
+            WorkerMessage::ReconfigureComplete(_version) => {
                 states
                     .apply_or_default(client.worker_id, |state| {
                         state.phase = WorkerPhase::Running;

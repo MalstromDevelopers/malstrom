@@ -100,9 +100,7 @@ mod tests {
     use super::*;
     use crate::{
         operators::*,
-        runtime::{threaded::SingleThreadRuntime, WorkerBuilder},
-        sinks::{StatefulSink, StatelessSink},
-        snapshot::NoPersistence,
+        sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         testing::{get_test_rt, VecSink},
     };

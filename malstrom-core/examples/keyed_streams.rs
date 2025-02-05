@@ -1,8 +1,8 @@
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 /// A multithreaded, keyed stream
-use malstrom::runtime::{MultiThreadRuntime, RuntimeFlavor, StreamProvider, WorkerBuilder};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
+use malstrom::runtime::{MultiThreadRuntime, StreamProvider};
+use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {

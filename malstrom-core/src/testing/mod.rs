@@ -3,15 +3,13 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
-use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-use crate::runtime::{SingleThreadRuntime, StreamProvider, WorkerBuilder};
+use crate::runtime::{SingleThreadRuntime, StreamProvider};
 use crate::snapshot::{Barrier, SnapshotVersion};
 use crate::types::{Key, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
-    stream::JetStreamBuilder,
-    types::{MaybeData, MaybeKey, Message, NoData, NoKey, NoTime, OperatorId, WorkerId},
+    types::{MaybeData, MaybeKey, Message, OperatorId, WorkerId},
 };
 use indexmap::{IndexMap, IndexSet};
 

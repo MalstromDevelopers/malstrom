@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use flume::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use indexmap::{map::Entry, IndexMap, IndexSet};
+use indexmap::IndexMap;
 use thiserror::Error;
 use tracing::debug;
 
@@ -46,11 +46,6 @@ pub(crate) type Shared = Arc<Mutex<AddressMap>>;
 pub struct InterThreadCommunication {
     shared: Shared,
     this_worker: WorkerId,
-    // this set contains the keys this worker has already taken
-    // the purpose is to prevent the worker from obtaining the same
-    // channel twice (which should not happen), as then they would have both
-    // ends, and the other worker would simply create a new Connection pair
-    burnt_keys: Arc<Mutex<IndexSet<ConnectionKey>>>,
 }
 impl InterThreadCommunication {
     pub(crate) fn new(shared: Shared, this_worker: WorkerId) -> Self {
@@ -61,7 +56,6 @@ impl InterThreadCommunication {
         Self {
             shared,
             this_worker,
-            burnt_keys: Default::default(),
         }
     }
 
@@ -77,7 +71,11 @@ impl InterThreadCommunication {
         let transport_container = shared.entry(key).or_insert_with(new_transport_pair);
         // We return a clone of the instantiated transport instead of the value to
         // allow reconnecting
-        let transport = if to_worker < from_worker {transport_container.to_low()} else {transport_container.to_high()};
+        let transport = if to_worker < from_worker {
+            transport_container.to_low()
+        } else {
+            transport_container.to_high()
+        };
         Ok(Box::new(transport))
     }
 }
@@ -179,7 +177,7 @@ fn new_transport_pair() -> ChannelTransportContainer {
         sender: tx2,
         receiver: rx1,
     };
-    ChannelTransportContainer{to_low, to_high}
+    ChannelTransportContainer { to_low, to_high }
 }
 
 #[derive(Error, Debug)]

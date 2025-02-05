@@ -1,5 +1,3 @@
-use tracing::debug_span;
-
 use crate::{
     runtime::OperatorOperatorComm,
     types::{OperatorId, WorkerId},

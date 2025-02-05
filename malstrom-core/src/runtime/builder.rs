@@ -4,9 +4,7 @@ use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
 use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
-use crate::snapshot::{
-    Barrier, NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion,
-};
+use crate::snapshot::{Barrier, NoPersistence, PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
 use crate::stream::{BuildContext, BuildableOperator, RunnableOperator};
 use crate::types::{

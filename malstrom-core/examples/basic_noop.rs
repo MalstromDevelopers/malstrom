@@ -1,10 +1,8 @@
 use std::time::Duration;
 
 /// A basic example which runs a no-op dataflow
-use malstrom::runtime::{
-    SingleThreadRuntime, SingleThreadRuntimeFlavor, StreamProvider, WorkerBuilder,
-};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
+use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::snapshot::NoPersistence;
 
 fn main() {
     tracing_subscriber::fmt::init();

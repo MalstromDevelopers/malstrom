@@ -1,13 +1,11 @@
-use std::{future::Future, hash::Hash, sync::Arc, time::Duration};
+use std::{hash::Hash, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::{future::join_all, stream::FuturesUnordered};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use thiserror::Error;
-use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -17,7 +15,6 @@ use crate::{
         types::BuildInformation,
         watchmap::ConditionIter,
     },
-    runtime::CommunicationClient,
     snapshot::{
         deserialize_state, serialize_state, PersistenceBackend, PersistenceClient, SnapshotVersion,
     },
@@ -27,10 +24,9 @@ use crate::{
 use crate::runtime::communication::{CommunicationBackendError, CoordinatorWorkerComm};
 
 use super::{
-    communication::{setup_comm, WorkerSender},
+    communication::setup_comm,
     state::{WorkerPhase, WorkerState},
-    types::{CoordinationMessage, WorkerMessage},
-    watchmap::WatchMap,
+    types::CoordinationMessage,
 };
 
 /// This way we do not need seperate IDs for worker and coordinator
@@ -421,7 +417,11 @@ where
         setup_comm(backend, &new_workers, &state.worker_states).await;
 
     for nw in new_workers.iter() {
-        state.worker_states.insert(*nw, WorkerState::default());
+        state
+            .worker_states
+            .insert(*nw, WorkerState::default())
+            .await
+            .unwrap();
     }
     merge_maps(&mut state.active_workers, new_senders);
 
@@ -457,7 +457,7 @@ where
         .cloned()
         .collect_vec();
     for wid in to_remove.into_iter() {
-        state.worker_states.remove(&wid);
+        state.worker_states.remove(&wid).await.unwrap();
         state.active_workers.swap_remove(&wid);
     }
     state.config_version = Some(next_version);

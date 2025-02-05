@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::info;
 
 use super::super::types::*;
 use crate::types::*;

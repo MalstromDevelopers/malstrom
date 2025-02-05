@@ -136,7 +136,7 @@ mod tests {
 
     use crate::{
         keyed::distributed::{Acquire, Collect, Interrogate},
-        runtime::{BiCommunicationClient, CommunicationClient},
+        runtime::BiCommunicationClient,
         snapshot::{Barrier, PersistenceClient},
         testing::{CapturingPersistenceBackend, OperatorTester},
         types::*,

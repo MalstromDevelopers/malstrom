@@ -3,8 +3,8 @@ use std::time::Duration;
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 /// A stateful program
-use malstrom::runtime::{RuntimeFlavor, SingleThreadRuntime, StreamProvider, WorkerBuilder};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
+use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {

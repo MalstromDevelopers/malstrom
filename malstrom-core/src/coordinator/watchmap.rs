@@ -7,10 +7,6 @@ use indexmap::IndexMap;
 use std::hash::Hash;
 use tokio::sync::{oneshot, Mutex};
 
-use crate::types::WorkerId;
-
-use super::state::WorkerState;
-
 #[derive(Default, Clone)]
 pub(crate) struct WatchMap<K: Send + Sync, V: Send + Sync> {
     inner: Arc<Mutex<WatchMapInner<K, V>>>,
@@ -135,7 +131,9 @@ where
 
     fn check(self, values: &mut ConditionIter<K, V>) -> Option<Self> {
         if self.condition.evaluate(values) {
-            self.on_complete.send(());
+            // ignoring the error here is fine. Simply means the receiver
+            // was dropped
+            let _ = self.on_complete.send(());
             None
         } else {
             Some(self)
@@ -198,7 +196,7 @@ mod tests {
         let db = WatchMap::default();
         db.insert(42, 42).await;
         let fut = db.notify(|values: &mut ConditionIter<i32, i32>| values.any(|(_k, v)| *v > 80));
-        db.apply_or_default(42, |x| *x *= 2);
+        db.apply_or_default(42, |x| *x *= 2).await;
         timeout(Duration::from_millis(10), fut).await.unwrap();
     }
 
@@ -210,6 +208,7 @@ mod tests {
         timeout(Duration::from_millis(10), fut).await.unwrap();
     }
 
+    #[tokio::test]
     async fn test_notify_remove() {
         let db = WatchMap::default();
         db.insert(42, 42).await;

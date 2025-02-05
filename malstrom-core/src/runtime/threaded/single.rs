@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{
     coordinator::Coordinator,
     runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder},
-    snapshot::{NoPersistence, PersistenceBackend},
+    snapshot::PersistenceBackend,
 };
 
 use super::{communication::InterThreadCommunication, Shared};

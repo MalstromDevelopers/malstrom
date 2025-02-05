@@ -1,17 +1,12 @@
-use std::sync::Arc;
-
 use indexmap::{IndexMap, IndexSet};
-use serde::{ser::SerializeMap, Deserialize, Serialize};
-use tokio::task::JoinHandle;
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    runtime::{communication::CoordinatorWorkerComm, CommunicationClient},
-    snapshot::SnapshotVersion,
-    types::WorkerId,
+    runtime::communication::CoordinatorWorkerComm, snapshot::SnapshotVersion, types::WorkerId,
 };
 
 use super::{
-    communication::{setup_comm, WorkerReceiver, WorkerSender},
+    communication::{setup_comm, WorkerSender},
     watchmap::WatchMap,
 };
 

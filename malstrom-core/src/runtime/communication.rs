@@ -134,13 +134,6 @@ impl<TSend, TRecv> CommunicationClient<TSend, TRecv> {
             message_type: PhantomData,
         })
     }
-
-    pub(crate) fn transform<TSendNew, TRecvNew>(self) -> CommunicationClient<TSendNew, TRecvNew> {
-        CommunicationClient {
-            transport: self.transport,
-            message_type: PhantomData,
-        }
-    }
 }
 
 impl<TSend, TRecv> CommunicationClient<TSend, TRecv>

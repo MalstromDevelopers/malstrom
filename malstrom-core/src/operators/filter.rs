@@ -93,7 +93,7 @@ mod tests {
                 .filter("less-than-42", |x| *x < 42)
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
-        rt.execute();
+        rt.execute().unwrap();
 
         let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
         let expected: Vec<usize> = (0..42).collect();
