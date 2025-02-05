@@ -34,6 +34,7 @@ pub(super) enum NetworkMessage<K, V, T> {
     SuspendMarker,
     Acquire(NetworkAcquire<K>),
     Upgrade(Version),
+    AckUpgrade(Version),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,7 +84,11 @@ impl<K> TryFrom<Collect<K>> for NetworkAcquire<K> {
 pub(super) struct RemoteState<T> {
     pub is_barred: bool,
     pub frontier: Option<T>,
-    pub last_version: Version,
+    /// Last config version of this remote
+    pub last_version: Option<Version>,
+    /// Last config this remote acknowledged to use, essentially
+    /// what the remote thinks what version we are at
+    pub last_ack_version: Option<Version>,
 
     /// This is not persisted, as a worker which was shut down will by
     /// definition be back up and running if we restart the cluster
@@ -96,7 +101,8 @@ impl<T> Default for RemoteState<T> {
         Self {
             is_barred: Default::default(),
             frontier: Default::default(),
-            last_version: Version::default(),
+            last_ack_version: Default::default(),
+            last_version: None,
             sent_suspend: false,
         }
     }

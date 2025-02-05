@@ -38,7 +38,7 @@ impl ConnectionKey {
 /// When a worker attempts to create a connection and does not
 /// find it in this map, it generates a pair of 2 `ChannelTransport`s
 /// keeps one and places the other one in the map
-type AddressMap = IndexMap<ConnectionKey, ChannelTransport>;
+type AddressMap = IndexMap<ConnectionKey, ChannelTransportContainer>;
 /// AddressMap shared across multiple threads
 pub(crate) type Shared = Arc<Mutex<AddressMap>>;
 
@@ -71,26 +71,14 @@ impl InterThreadCommunication {
         from_worker: WorkerId,
         operator: OperatorId,
     ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
+        debug_assert_ne!(to_worker, from_worker);
         let key = ConnectionKey::new(to_worker, from_worker, operator);
 
-        let mut burnt_keys = self.burnt_keys.lock().unwrap();
-        if burnt_keys.contains(&key) {
-            return Err(CommunicationBackendError::ClientBuildError(Box::new(
-                InterThreadCommunicationError::TransportAlreadyEstablished(key),
-            )));
-        }
-        burnt_keys.insert(key);
-        drop(burnt_keys); // drop to not attempt locking 1 while holding the other
-
         let mut shared = self.shared.lock().unwrap();
-        let transport = match shared.entry(key) {
-            Entry::Occupied(o) => o.swap_remove(),
-            Entry::Vacant(v) => {
-                let (a, b) = new_transport_pair();
-                v.insert(a);
-                b
-            }
-        };
+        let transport_container = shared.entry(key).or_insert_with(new_transport_pair);
+        // We return a clone of the instantiated transport instead of the value to
+        // allow reconnecting
+        let transport = if to_worker < from_worker {transport_container.to_low()} else {transport_container.to_high()};
         Ok(Box::new(transport))
     }
 }
@@ -123,8 +111,28 @@ impl CoordinatorWorkerComm for InterThreadCommunication {
     }
 }
 
-/// MPSC Channel based transport
 #[derive(Debug)]
+pub(crate) struct ChannelTransportContainer {
+    /// Transport TO the lower ID worker
+    to_low: ChannelTransport,
+    // Transport TO the higher ID worker
+    to_high: ChannelTransport,
+}
+
+impl ChannelTransportContainer {
+    // Return a Clone of the inner transport
+    fn to_low(&self) -> ChannelTransport {
+        self.to_low.clone().clone()
+    }
+
+    // Return a Clone of the inner transport
+    fn to_high(&self) -> ChannelTransport {
+        self.to_high.clone().clone()
+    }
+}
+
+/// MPSC Channel based transport
+#[derive(Debug, Clone)]
 pub(crate) struct ChannelTransport {
     sender: Sender<Vec<u8>>,
     receiver: Receiver<Vec<u8>>,
@@ -161,18 +169,18 @@ impl BiStreamTransport for ChannelTransport {
 /// Generate a new pair of bi-directional transport clients.
 /// Each client can send messages to and receive messages from the
 /// other client
-fn new_transport_pair() -> (ChannelTransport, ChannelTransport) {
+fn new_transport_pair() -> ChannelTransportContainer {
     let (tx1, rx1) = flume::unbounded();
     let (tx2, rx2) = flume::unbounded();
-    let a = ChannelTransport {
+    let to_low = ChannelTransport {
         sender: tx1,
         receiver: rx2,
     };
-    let b = ChannelTransport {
+    let to_high = ChannelTransport {
         sender: tx2,
         receiver: rx1,
     };
-    (a, b)
+    ChannelTransportContainer{to_low, to_high}
 }
 
 #[derive(Error, Debug)]

@@ -47,7 +47,7 @@ pub(super) async fn worker_comm_inbound(
     };
     loop {
         let msg = client.recv_async().await;
-        debug!("Received message from worker {msg:?}");
+        debug!("Received message from worker {} {msg:?}", client.worker_id);
         match msg {
             WorkerMessage::BuildComplete => set_phase(WorkerPhase::BuildComplete).await,
             WorkerMessage::ExecutionStarted => set_phase(WorkerPhase::Running).await,

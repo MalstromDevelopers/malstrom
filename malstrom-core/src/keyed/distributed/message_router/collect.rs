@@ -504,7 +504,7 @@ mod test {
         let (mut sender, _receiver) = get_input_output();
 
         // tell it worker 1 is done with rescaling
-        remotes.get_mut(&1).unwrap().1.last_version = 1;
+        remotes.get_mut(&1).unwrap().1.last_version = Some(1);
 
         let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Finished(_)));

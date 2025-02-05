@@ -37,6 +37,7 @@ where
         partitioner: WorkerPartitioner<K>,
         this_worker: WorkerId,
         sender: WorkerId,
+        remotes: &Remotes<K, V, T>
     ) -> Option<(DataMessage<K, V, T>, WorkerId)> {
         if msg_version.map_or(false, |x| x > self.get_version()) {
             return Some((msg, this_worker));
@@ -55,7 +56,7 @@ where
             }
             MessageRouter::Finished(finished_state) => {
                 let target =
-                    finished_state.route_message(&msg.key, partitioner, this_worker, sender);
+                    finished_state.route_message(&msg.key, partitioner, this_worker, sender, remotes);
                 Some((msg, target))
             }
         }

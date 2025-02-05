@@ -210,6 +210,8 @@ where
         let _span_guard = span.enter();
         let mut all_done = true;
         for op in self.operators.iter_mut().rev() {
+            let span = span!(Level::INFO, "operator", operator_name = op.name());
+            let _span_guard = span.enter();
             if op.is_suspended() {
                 continue;
             }

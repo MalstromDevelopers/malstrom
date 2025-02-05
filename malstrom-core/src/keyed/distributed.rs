@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
+use tracing::{debug, info};
 
 mod message_router;
 pub mod types;
@@ -116,7 +117,12 @@ where
                     output.send(Message::Acquire(network_acquire.into()))
                 }
                 NetworkMessage::Upgrade(version) => {
-                    self.remotes.get_mut(&wid).unwrap().1.last_version = version
+                    let remote = self.remotes.get_mut(&wid).unwrap();
+                    remote.1.last_version = Some(version);
+                    remote.0.send(NetworkMessage::AckUpgrade(version));
+                }
+                NetworkMessage::AckUpgrade(version) => {
+                    self.remotes.get_mut(&wid).unwrap().1.last_ack_version = Some(version);
                 }
             }
         }
@@ -178,6 +184,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 ctx.worker_id,
+                &self.remotes
             )
         };
         if let Some((msg, target)) = routing {
@@ -199,6 +206,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 *sent_by,
+                &self.remotes
             )
         };
         if let Some((msg, target)) = routing {
@@ -211,7 +219,6 @@ where
         message: DataMessage<K, V, T>,
         target: WorkerId,
         output: &mut Output<K, V, T>,
-
         ctx: &OperatorContext,
     ) {
         match target == ctx.worker_id {
@@ -261,9 +268,8 @@ where
     ) {
         // we can not remove clients of workers here because we need them during the rescale
         // process. They are removed in the final step of the "Finished" distributor
-
         for wid in message.get_new_workers() {
-            if !self.remotes.contains_key(wid) && *wid != ctx.worker_id {
+            if (!self.remotes.contains_key(wid)) && (*wid != ctx.worker_id) {
                 let comm_client = ctx.create_communication_client(*wid);
                 let remote_state = RemoteState::default();
                 self.remotes.insert(*wid, (comm_client, remote_state));

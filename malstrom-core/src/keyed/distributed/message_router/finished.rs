@@ -1,4 +1,6 @@
 use indexmap::IndexSet;
+use itertools::Itertools;
+use tracing::{debug, info};
 
 use super::{super::types::*, MessageRouter, NormalRouter};
 use crate::{channels::operator_io::Output, keyed::distributed::Remotes, types::*};
@@ -26,19 +28,30 @@ impl FinishedRouter {
         }
     }
 
-    pub(super) fn route_message<K>(
+    pub(super) fn route_message<K, V, T>(
         &mut self,
         key: &K,
         partitioner: WorkerPartitioner<K>,
         this_worker: WorkerId,
         sender: WorkerId,
+        remotes: &Remotes<K, V, T>
     ) -> WorkerId {
         let new_target = partitioner(key, &self.new_worker_set);
         if new_target == this_worker {
             let old_target = partitioner(key, &self.old_worker_set);
-            // TODO: memoize these keys
-            if old_target == sender {
+            let old_target_version = remotes.get(&old_target).map(|x| x.1.last_version);
+            info!(?new_target, ?old_target, ?old_target_version, ?self.version);
+            if old_target == new_target {
+                new_target
+            }
+            // TODO: I think we might not need this condition
+            else if old_target == sender {
                 this_worker
+            // if the old target is already at our version, we know it has already
+            // given up the state for this key (or did not have it in the first place)
+            // and we can safely keep the message
+            } else if remotes.get(&old_target).unwrap().1.last_version.map(|v| v == self.version).unwrap_or(false) {
+                new_target
             } else {
                 old_target
             }
@@ -58,10 +71,14 @@ impl FinishedRouter {
         V: MaybeData,
         T: MaybeTime,
     {
-        // TODO: Remove removed remotes
         if remotes
             .values()
-            .all(|(_, state)| state.last_version >= self.version)
+            .all(|(_, state)| {
+                state.last_version.map(|v| v == self.version).unwrap_or(false)
+                // we cannot progress if they did not acknowledge our version because
+                // in that case they might still try to send us messages
+                && state.last_ack_version.map(|v| v == self.version).unwrap_or(false)
+            })
         {
             for wid in self.old_worker_set.difference(&self.new_worker_set) {
                 remotes.swap_remove(wid);

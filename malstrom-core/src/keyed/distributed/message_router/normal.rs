@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 use super::super::types::*;
 use crate::types::*;
@@ -25,7 +25,9 @@ impl NormalRouter {
         }
     }
     pub(super) fn route_message<K>(&self, key: &K, partitioner: WorkerPartitioner<K>) -> WorkerId {
-        partitioner(key, &self.worker_set)
+        let target = partitioner(key, &self.worker_set);
+        debug_assert!(self.worker_set.contains(&target));
+        target
     }
 }
 

@@ -30,8 +30,6 @@ impl RunnableOperator {
             operator_id: self.operator_id,
             communication,
         };
-        let span = debug_span!("scheduling::run_operator", operator_name = self.name);
-        let _span_guard = span.enter();
         self.operator.step(&mut context)
     }
     pub fn has_queued_work(&self) -> bool {
@@ -45,5 +43,9 @@ impl RunnableOperator {
 
     pub(crate) fn is_suspended(&self) -> bool {
         self.operator.is_suspended()
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 }

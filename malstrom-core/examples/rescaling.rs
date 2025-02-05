@@ -8,6 +8,7 @@ use malstrom::snapshot::{NoPersistence, NoSnapshots};
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
+    // tracing_subscriber::fmt::init();
     let rt = MultiThreadRuntime::builder()
         .parrallelism(2)
         .persistence(NoPersistence::default())
@@ -20,11 +21,11 @@ fn main() {
             .build()
             .unwrap();
         loop {
-            std::thread::sleep(Duration::from_secs(5));
-            println!("Rescaling to 3 workers");
-            tokio_rt.block_on(api_handle.rescale(3)).unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+            println!("Rescaling to 2 workers");
+            tokio_rt.block_on(api_handle.rescale(2)).unwrap();
             println!("Rescale complete!");
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(2));
             println!("Rescaling to 1 workers");
             tokio_rt.block_on(api_handle.rescale(1)).unwrap();
             println!("Rescale complete!");
@@ -41,10 +42,13 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             "iter-source",
             StatelessSource::new(SingleIteratorSource::new((0..=100).cycle())),
         )
-        .key_distribute("key-by-value", |x| x.value, rendezvous_select)
-        .map("double", |x| x * 2)
+        .key_distribute("key-odd-even", |x| x.value & 1 == 0, rendezvous_select)
+        .stateful_map("keyed-sum", |_, num, mut sum: i32| {
+            sum += num;
+            (sum, Some(sum))
+        })
         .inspect("print", |x, ctx| {
-            println!("{} @ Worker {}", x.key, ctx.worker_id);
-            std::thread::sleep(Duration::from_millis(100));
+            println!("{} @ Worker {}", x.value, ctx.worker_id);
+            std::thread::sleep(Duration::from_millis(300)); // slowing things down a bit
         });
 }
