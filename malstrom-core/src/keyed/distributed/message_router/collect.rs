@@ -240,7 +240,7 @@ mod test {
         assert!(matches!(collector, Message::Collect(_)));
 
         let msg = DataMessage::new(key, 22, 555);
-        let out = dist.route_message(msg, None, partiton_index, 0, 0);
+        let out = dist.route_message(msg, None, partiton_index, 0, 0, &remotes);
         assert!(out.is_none());
 
         // drop the collector, next lifecycle should emit the acquire
@@ -364,7 +364,7 @@ mod test {
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([1]), 0),
+            RescaleMessage::new(IndexSet::from([1]), 1),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -388,7 +388,7 @@ mod test {
 
         // this message should get buffered
         let buffered_msg = DataMessage::new(1, 22, 33);
-        dist.route_message(buffered_msg.clone(), None, partiton_index, 0, 0);
+        dist.route_message(buffered_msg.clone(), None, partiton_index, 0, 0, &remotes);
 
         collector.add_state(25, "foobar".to_string());
         // drop it to trigger the acquire
@@ -427,7 +427,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::new(IndexSet::from([1, 2]), 0),
+            RescaleMessage::new(IndexSet::from([1, 2]), 1),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -489,7 +489,7 @@ mod test {
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            RescaleMessage::new(IndexSet::from([1]), 0),
+            RescaleMessage::new(IndexSet::from([1]), 555),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -503,11 +503,16 @@ mod test {
         );
         let (mut sender, _receiver) = get_input_output();
 
-        // tell it worker 1 is done with rescaling
-        remotes.get_mut(&1).unwrap().1.last_version = Some(1);
-
         let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Finished(_)));
+
+        // tell it worker 1 is done with rescaling
+        remotes.get_mut(&1).unwrap().1.last_version = Some(555);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
+        // should not change since 1 has not acknowledged us finishing yet
+        assert!(matches!(dist, MessageRouter::Finished(_)));
+        remotes.get_mut(&1).unwrap().1.last_ack_version = Some(555);
+        
         let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
     }

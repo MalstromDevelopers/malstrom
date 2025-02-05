@@ -131,11 +131,13 @@ mod tests {
     use super::*;
     use crate::keyed::partitioners::index_select;
     use proptest::prelude::*;
+    use super::super::message_router::Remotes;
 
     proptest! {
     /// Check messages are always returned locally if they have a higher version
     #[test]
     fn higher_version(this_worker in 0u64..3, sender in 0u64..3, key in 0u64..100) {
+        let remotes = Remotes::default();
         let mut normal_router = MessageRouter::Normal(NormalRouter::new(IndexSet::from([0, 1, 2]), 33));
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,
@@ -157,17 +159,17 @@ mod tests {
 
         let msg = DataMessage::new(key, 100, 0);
 
-        let (msg, target) = normal_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
+        let (msg, target) = normal_router.route_message(msg, Some(34), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
-        let (msg, target) = interrogate_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
+        let (msg, target) = interrogate_router.route_message(msg, Some(34), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
         // must increase the version here since the collect increases it on construction
-        let (msg, target) = collect_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
+        let (msg, target) = collect_router.route_message(msg, Some(35), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
-        let (_msg, target) = finished_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
+        let (_msg, target) = finished_router.route_message(msg, Some(35), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
     }
     }

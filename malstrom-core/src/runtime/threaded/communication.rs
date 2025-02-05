@@ -71,7 +71,6 @@ impl InterThreadCommunication {
         from_worker: WorkerId,
         operator: OperatorId,
     ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
-        debug_assert_ne!(to_worker, from_worker);
         let key = ConnectionKey::new(to_worker, from_worker, operator);
 
         let mut shared = self.shared.lock().unwrap();
@@ -184,10 +183,7 @@ fn new_transport_pair() -> ChannelTransportContainer {
 }
 
 #[derive(Error, Debug)]
-pub enum InterThreadCommunicationError {
-    #[error("Transport for {0:?} was already established. Listener already taken")]
-    TransportAlreadyEstablished(ConnectionKey),
-}
+pub enum InterThreadCommunicationError {}
 
 #[cfg(test)]
 mod test {
@@ -213,30 +209,6 @@ mod test {
         assert_eq!(operator_0_42.recv().unwrap().unwrap(), val);
     }
 
-    /// If a receiver attempts to subscribe twice, we should error
-    #[test]
-    fn error_on_double_listen() {
-        let shared = Shared::default();
-        let worker0 = InterThreadCommunication::new(shared.clone(), 0);
-
-        worker0.operator_to_operator(1, 0).unwrap();
-        // this should work
-        worker0.operator_to_operator(0, 0).unwrap();
-
-        // but this should err since we already made the connection
-        let err = worker0.operator_to_operator(1, 0);
-        match err {
-            Err(CommunicationBackendError::ClientBuildError(e)) => {
-                let concrete = *e.downcast::<InterThreadCommunicationError>().unwrap();
-                assert!(matches!(
-                    concrete,
-                    InterThreadCommunicationError::TransportAlreadyEstablished(_)
-                ));
-            }
-            Ok(_) => panic!("OK IS NOT OK"),
-        };
-    }
-
     /// Check we don't give out an error on recv if the other side disconnected in
     /// an orderly way (e.g because it is done)
     #[test]
@@ -253,5 +225,33 @@ mod test {
 
         assert!(operator_1_42.recv().is_ok());
         assert!(operator_1_42.recv_all().all(|x| x.is_ok()));
+    }
+
+    /// Check we can reconnect channels
+    #[test]
+    fn reconnect() {
+        let shared = Shared::default();
+        let worker0 = InterThreadCommunication::new(shared.clone(), 0);
+        let worker1 = InterThreadCommunication::new(shared.clone(), 1);
+
+        let operator_0_42 = worker0.operator_to_operator(1, 1337).unwrap();
+        let operator_1_1337 = worker1.operator_to_operator(0, 1337).unwrap();
+
+        let val = vec![1, 8, 8, 7];
+        operator_0_42.send(val.clone()).unwrap();
+        assert_eq!(operator_1_1337.recv().unwrap().unwrap(), val);
+
+        drop(operator_0_42);
+        let operator_0_42 = worker0.operator_to_operator(1, 1337).unwrap();
+        let val = vec![22];
+        operator_0_42.send(val.clone()).unwrap();
+        assert_eq!(operator_1_1337.recv().unwrap().unwrap(), val);
+
+        // other way around
+        drop(operator_1_1337);
+        let operator_1_1337 = worker1.operator_to_operator(0, 1337).unwrap();
+        let val = vec![100];
+        operator_1_1337.send(val.clone()).unwrap();
+        assert_eq!(operator_0_42.recv().unwrap().unwrap(), val);
     }
 }
