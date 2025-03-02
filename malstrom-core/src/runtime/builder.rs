@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use crate::channels::operator_io::{full_broadcast, link, merge_receiver_groups, Input, Output};
 use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
+use crate::coordinator::CoordinatorCreationError;
 use crate::snapshot::{Barrier, NoPersistence, PersistenceBackend, PersistenceClient};
 use crate::stream::JetStreamBuilder;
 use crate::stream::{BuildContext, BuildableOperator, RunnableOperator};
@@ -157,6 +158,8 @@ pub enum BuildError {
     NonUniqueName(String),
     #[error("Error starting async runtime: {0:?}")]
     AsyncRuntime(#[from] std::io::Error),
+    #[error(transparent)]
+    Coordinator(#[from] CoordinatorCreationError)
 }
 
 #[derive(Default)]

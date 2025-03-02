@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration, u64};
 use bon::Builder;
 
 use crate::{
-    coordinator::{Coordinator, CoordinatorError},
+    coordinator::{Coordinator, CoordinatorApi, CoordinatorError},
     runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder},
     snapshot::PersistenceBackend,
     types::WorkerId,
@@ -46,7 +46,7 @@ pub struct MultiThreadRuntime<P> {
     snapshots: Option<Duration>,
     parrallelism: u64,
     #[builder(default = tokio::sync::watch::Sender::new(None))]
-    api_handles: tokio::sync::watch::Sender<Option<Coordinator>>,
+    api_handles: tokio::sync::watch::Sender<Option<CoordinatorApi>>,
     #[builder(default = std::sync::mpsc::channel())]
     rescale_req: (std::sync::mpsc::Sender<u64>, std::sync::mpsc::Receiver<u64>),
 }
@@ -65,15 +65,14 @@ where
             threads.push(thread);
         }
 
-        let coordinator = Coordinator::new(
+        let (_coordinator, coordinator_api) = Coordinator::new(
             self.parrallelism,
             self.snapshots,
             self.persistence.clone(),
             InterThreadCommunication::new(Arc::clone(&shared), u64::MAX),
-        )
-        .unwrap();
+        )?;
         // fails if there are no API handles
-        let _ = self.api_handles.send(Some(coordinator));
+        let _ = self.api_handles.send(Some(coordinator_api));
         // Err(_) would mean all senders dropped i.e. all threads finished, which would be
         // perfectly fine with us
 
@@ -151,7 +150,7 @@ impl RuntimeFlavor for MultiThreadRuntimeFlavor {
 }
 
 pub struct MultiThreadRuntimeApiHandle {
-    coord_channel: tokio::sync::watch::Receiver<Option<Coordinator>>,
+    coord_channel: tokio::sync::watch::Receiver<Option<CoordinatorApi>>,
     rescale_req: std::sync::mpsc::Sender<u64>,
 }
 

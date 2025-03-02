@@ -35,6 +35,9 @@ const COORDINATOR_ID: WorkerId = WorkerId::MAX;
 pub struct Coordinator {
     _rt: tokio::runtime::Runtime,
     _tasks: tokio::task::JoinHandle<()>,
+}
+
+pub struct CoordinatorApi {
     req_tx: flume::Sender<CoordinatorRequest>,
 }
 
@@ -44,7 +47,7 @@ impl Coordinator {
         snapshot_interval: Option<Duration>,
         persistence: P,
         communication: C,
-    ) -> Result<Coordinator, CoordinatorCreationError> {
+    ) -> Result<(Coordinator, CoordinatorApi), CoordinatorCreationError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_time()
             .build()?;
@@ -89,12 +92,12 @@ impl Coordinator {
             subtasks.push(rt.spawn(auto_snapshot(s, req_tx.clone())));
         }
         let tasks = rt.spawn(async move { subtasks.failfast().await.unwrap().unwrap() });
-
-        Ok(Self {
+        let coordinator = Self {
             _rt: rt,
             _tasks: tasks,
-            req_tx,
-        })
+        };
+        let api = CoordinatorApi{req_tx};
+        Ok((coordinator, api))
     }
      
     /// block until the job is either finished or suspended
@@ -122,7 +125,7 @@ async fn auto_snapshot(
     }
 }
 
-impl Coordinator {
+impl CoordinatorApi {
     pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
         CoordinatorRequest::send(RequestOperation::Scale(desired), self.req_tx.clone()).await
     }

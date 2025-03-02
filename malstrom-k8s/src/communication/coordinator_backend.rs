@@ -6,7 +6,8 @@ use crate::CONFIG;
 use super::exchange::coordinator_service_server::CoordinatorService;
 use super::k8s_operator::coordinator_operator_service_server::{CoordinatorOperatorService, CoordinatorOperatorServiceServer};
 
-use super::k8s_operator::{GetStatusRequest, GetStatusResponse, RescaleRequest, RescaleResponse, RescaleResult};
+use super::k8s_operator::{GetStatusRequest, GetStatusResponse, RescaleRequest, RescaleResponse};
+use super::{APICommand, RescaleCommand};
 use super::{
     client::GrpcTransport,
     exchange::{
@@ -16,7 +17,6 @@ use super::{
     util::{decode_id, new_channel},
 };
 use flume::{Receiver, Sender};
-use futures::channel::oneshot;
 use futures::StreamExt;
 use malstrom::{
     runtime::communication::{BiStreamTransport, CoordinatorWorkerComm},
@@ -44,14 +44,6 @@ struct CoordinatorGrpcServer {
 
     /// channel to send commands to coordinator
     command_tx: Sender<APICommand>
-}
-
-enum APICommand {
-    Rescale(RescaleCommand)
-}
-struct RescaleCommand {
-    desired: u64,
-    on_finish: tokio::sync::oneshot::Sender<()>
 }
 
 impl CoordinatorGrpcBackend {

@@ -16,3 +16,12 @@ mod util;
 
 pub(crate) use coordinator_backend::CoordinatorGrpcBackend;
 pub(crate) use worker_backend::WorkerGrpcBackend;
+
+
+pub enum APICommand {
+    Rescale(RescaleCommand)
+}
+pub struct RescaleCommand {
+    pub desired: u64,
+    pub on_finish: tokio::sync::oneshot::Sender<()>
+}

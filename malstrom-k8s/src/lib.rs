@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bon::Builder;
-use communication::WorkerGrpcBackend;
+use communication::{APICommand, WorkerGrpcBackend};
 use config::CONFIG;
 use malstrom::{
     coordinator::{Coordinator, CoordinatorCreationError},
@@ -42,9 +42,30 @@ where
     }
 
     pub fn execute_coordinator(self) -> Result<(), CoordinatorCreationError> {
+        // channel to connect the GRPC server API to the coordinator API
         let (api_tx, api_rx) = flume::unbounded();
-        let communication = CoordinatorGrpcBackend::new().unwrap();
-        let coordinator = Coordinator::new(CONFIG.initial_scale, self.snapshots, self.persistence, communication)?;
+        
+        let communication = CoordinatorGrpcBackend::new(api_tx).unwrap();
+        let (coordinator, coordinator_api) = Coordinator::new(CONFIG.initial_scale, self.snapshots, self.persistence, communication)?;
+        
+        let coord_thread = std::thread::spawn(move || coordinator.until_finished());
+        
+        let api_thread = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            while let Ok(req) = api_rx.recv() {
+                match req {
+                    APICommand::Rescale(rescale_command) => {
+                        // TODO: Error handling
+                        rt.block_on(async {coordinator_api.rescale(rescale_command.desired).await}).unwrap();
+                        let _ = rescale_command.on_finish.send(());
+                    },
+                }
+            }
+        });
+
+        api_thread.join().unwrap();
+        coord_thread.join().unwrap();
+
         Ok(())
     }
 }
