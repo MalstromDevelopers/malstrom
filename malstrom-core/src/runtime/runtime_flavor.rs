@@ -2,7 +2,7 @@ use super::communication::{CoordinatorWorkerComm, OperatorOperatorComm, WorkerCo
 
 pub trait RuntimeFlavor {
     /// The type of backend this runtime uses for inter-worker communication
-    type Communication: OperatorOperatorComm + WorkerCoordinatorComm + CoordinatorWorkerComm;
+    type Communication: OperatorOperatorComm + WorkerCoordinatorComm;
 
     /// Establish communication between multiple JetStream workers,
     /// possibly on different machines

@@ -65,8 +65,6 @@ where
             threads.push(thread);
         }
 
-        // TODO: Rescale immediatly when default_scale != last_scale
-
         let coordinator = Coordinator::new(
             self.parrallelism,
             self.snapshots,
@@ -159,7 +157,9 @@ pub struct MultiThreadRuntimeApiHandle {
 
 impl MultiThreadRuntimeApiHandle {
     pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
+        // instruct the runtime to spawn another thread if needed
         self.rescale_req.send(desired).unwrap();
+        // instruct the coordinator to re-distribute computation
         self.coord_channel
             .borrow()
             .as_ref()

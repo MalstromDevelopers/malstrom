@@ -1,18 +1,25 @@
 syntax = "proto3";
+
 package malstrom_k8s;
 
-service Exchange {
-    rpc UniStream(StreamRequest) returns (stream StreamResponse) {}
+service WorkerService {
+    // Stream from one operator to the same operator on a different worker
+    rpc OperatorOperator(stream OperatorOperatorRequest) returns (OperatorOperatorResponse) {}
+
+    // stream of the coordinator to the worker
+    rpc CoordinatorWorker(stream CoordinatorWorkerRequest) returns (CoordinatorWorkerResponse) {}
 }
 
-message StreamRequest {
-    // id of the worker initiating this request    
-    uint64 worker_id = 1;
-    // id of the operator it wants to receive messages from
-    uint64 operator_id = 2;
+service CoordinatorService {
+    /// Stream of worker to coordinator
+    rpc WorkerCoordinator(stream WorkerCoordinatorRequest) returns (WorkerCoordinatorResponse) {}
 }
 
-message StreamResponse {
-    // message data
-    bytes data = 1;
-}
+message OperatorOperatorRequest {bytes data = 1;}
+message OperatorOperatorResponse {}
+
+message CoordinatorWorkerRequest {bytes data =1;}
+message CoordinatorWorkerResponse {}
+
+message WorkerCoordinatorRequest {bytes data = 1;}
+message WorkerCoordinatorResponse {}

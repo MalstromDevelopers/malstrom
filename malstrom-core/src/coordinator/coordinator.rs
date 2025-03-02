@@ -96,6 +96,11 @@ impl Coordinator {
             req_tx,
         })
     }
+     
+    /// block until the job is either finished or suspended
+    pub fn until_finished(self) -> () {
+        self._rt.block_on(self._tasks).unwrap();
+    }
 }
 
 async fn auto_snapshot(
