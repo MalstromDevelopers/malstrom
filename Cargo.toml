@@ -5,7 +5,7 @@ members = [
     "k8s-app",
     "malstrom-k8s",
     "malstrom-k8s-operator",
-    "malstrom-kafka",
+    "malstrom-kafka", "malstrom-windows",
 ]
 
 
