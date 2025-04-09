@@ -8,7 +8,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     SingleThreadRuntime::builder()
         .snapshots(Duration::from_secs(300))
-        .persistence(NoPersistence::default())
+        .persistence(NoPersistence)
         .build(build_dataflow)
         .execute()
         .unwrap()

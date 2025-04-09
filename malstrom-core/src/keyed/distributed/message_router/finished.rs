@@ -46,15 +46,13 @@ impl FinishedRouter {
             // TODO: I think we might not need this condition
             else if old_target == sender {
                 this_worker
-            // if the old target is already at our version, we know it has already
+            // if the old target is already at our version (or does not exist),
+            // we know it has already
             // given up the state for this key (or did not have it in the first place)
             // and we can safely keep the message
             } else if remotes
                 .get(&old_target)
-                .unwrap()
-                .1
-                .last_version
-                .map(|v| v == self.version)
+                .map(|v| v.1.last_version == Some(self.version))
                 .unwrap_or(false)
             {
                 new_target

@@ -1,8 +1,9 @@
 use crate::{
-    stream::{JetStreamBuilder, OperatorBuilder, OperatorContext},
+    stream::{OperatorBuilder, OperatorContext, StreamBuilder},
     types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
+/// Inspect messages in a stream without modifying them
 pub trait Inspect<K, V, T>: super::sealed::Sealed {
     /// Observe values in a stream without modifying them.
     /// This is often done for debugging purposes or to record metrics.
@@ -39,11 +40,11 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
         self,
         name: &str,
 
-        inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
-    ) -> JetStreamBuilder<K, V, T>;
+        inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
+    ) -> StreamBuilder<K, V, T>;
 }
 
-impl<K, V, T> Inspect<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, V, T> Inspect<K, V, T> for StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
@@ -53,8 +54,8 @@ where
         self,
         name: &str,
 
-        mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) -> () + 'static,
-    ) -> JetStreamBuilder<K, V, T> {
+        mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
+    ) -> StreamBuilder<K, V, T> {
         let operator =
             OperatorBuilder::direct(name, move |input, output, ctx| match input.recv() {
                 Some(Message::Data(d)) => {

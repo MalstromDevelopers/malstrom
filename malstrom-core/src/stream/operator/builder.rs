@@ -25,6 +25,10 @@ pub struct OperatorBuilder<KI, VI, TI, KO, VO, TO> {
     name: String, // human readable name for debugging
 }
 
+/// A schedulable logic, usually a function, which will repeatedly be called by the worker
+/// to progress the Malstrom job.
+/// Usually it does not make sense to implement this trait directly. Consider using
+/// [malstrom::operators::StatefulLogic](StatefulLogic) instead.
 pub trait Logic<KI, VI, TI, KO, VO, TO>:
     FnMut(&mut Input<KI, VI, TI>, &mut Output<KO, VO, TO>, &mut OperatorContext) + 'static
 {
@@ -50,10 +54,16 @@ where
     TI: MaybeTime,
     TO: MaybeTime,
 {
+    /// Create a new stream operator directly by supplying a name and a function which will
+    /// repeatedly be called (scheduled) by the worker
     pub fn direct<M: Logic<KI, VI, TI, KO, VO, TO>>(name: &str, logic: M) -> Self {
         Self::built_by(name, |_| Box::new(logic))
     }
 
+    /// Create a new stream operator from the given name and a function which will return the
+    /// actually scheduled function at build time. This is useful to utilize information from the
+    /// [BuildContext]. If information from the [BuildContext] is not needed, consider calling
+    /// [Self::direct] instead.
     pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
         name: &str,
         logic_builder: impl FnOnce(&mut BuildContext) -> M + 'static,
@@ -84,7 +94,7 @@ where
         }
     }
 
-    pub fn get_input_mut(&mut self) -> &mut Input<KI, VI, TI> {
+    pub(crate) fn get_input_mut(&mut self) -> &mut Input<KI, VI, TI> {
         &mut self.input
     }
 }

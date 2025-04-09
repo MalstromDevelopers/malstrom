@@ -5,25 +5,28 @@ use std::{iter, rc::Rc, sync::Mutex};
 use super::operator::{AppendableOperator, BuildableOperator, OperatorBuilder};
 use crate::{
     channels::operator_io::{link, Input},
-    runtime::{union, InnerRuntimeBuilder},
     types::{Data, MaybeKey, MaybeTime},
+    worker::{union, InnerRuntimeBuilder},
 };
 
-pub struct JetStreamBuilder<K, V, T> {
+/// The StreamBuilder allows building datastreams by calling operator methods like `.map` or
+/// `.filter` on it. The StreamBuilder needs to be finished by dropping it, which will automatically
+/// add it to the worker's execution schedule.
+pub struct StreamBuilder<K, V, T> {
     operators: Vec<Box<dyn BuildableOperator>>,
     tail: Input<K, V, T>,
     // the runtime this stream is registered to
     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 
-impl<K, V, T> JetStreamBuilder<K, V, T> {
+impl<K, V, T> StreamBuilder<K, V, T> {
     /// Get a reference to the runtime this stream belongs to
     pub(crate) fn get_runtime(&self) -> Rc<Mutex<InnerRuntimeBuilder>> {
         Rc::clone(&self.runtime)
     }
 }
 
-impl<K, V, T> JetStreamBuilder<K, V, T>
+impl<K, V, T> StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
@@ -32,8 +35,8 @@ where
     pub(crate) fn from_receiver(
         receiver: Input<K, V, T>,
         runtime: Rc<Mutex<InnerRuntimeBuilder>>,
-    ) -> JetStreamBuilder<K, V, T> {
-        JetStreamBuilder {
+    ) -> StreamBuilder<K, V, T> {
+        StreamBuilder {
             operators: Vec::new(),
             tail: receiver,
             runtime,
@@ -41,7 +44,7 @@ where
     }
 }
 
-impl<K, V, T> JetStreamBuilder<K, V, T>
+impl<K, V, T> StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
@@ -52,56 +55,43 @@ where
     pub fn then<KO: MaybeKey, VO: Data, TO: MaybeTime>(
         mut self,
         mut operator: OperatorBuilder<K, V, T, KO, VO, TO>,
-    ) -> JetStreamBuilder<KO, VO, TO> {
+    ) -> StreamBuilder<KO, VO, TO> {
         // TODO: kinda hacky
         std::mem::swap(&mut self.tail, operator.get_input_mut());
         let mut new_tail = Input::new_unlinked();
         link(operator.get_output_mut(), &mut new_tail);
         self.operators.push(Box::new(operator).into_buildable());
 
-        JetStreamBuilder {
+        StreamBuilder {
             tail: new_tail,
             operators: self.operators.drain(..).collect(),
             runtime: Rc::clone(&self.runtime),
         }
     }
 
-    // pub(crate) fn into_operators(self) -> Vec<Box<dyn BuildableOperator>> {
-    //     self.operators
-    // }
-
-    /// Add a label to the last operator in this stream.
-    /// This can be useful when tracing operator execution
-    // pub fn label(mut self, label: &str) -> Self {
-    //     self.tail.label(label.into());
-    //     self
-    // }
-
-    // pub fn finish(self) {
-    //     let rt = self.runtime.clone();
-    //     rt.lock().unwrap().add_operators(self.operators);
-    // }
-
     pub(crate) fn finish_pop_tail(mut self) -> Input<K, V, T> {
         let rt = self.runtime.clone();
+        #[allow(clippy::unwrap_used)]
         rt.lock().unwrap().add_operators(self.operators.drain(..));
         let mut placeholder = Input::new_unlinked();
         std::mem::swap(&mut placeholder, &mut self.tail);
         placeholder
     }
 
+    /// Combine multiple streams into a single stream of all messages
     pub fn union(
         self,
-        others: impl Iterator<Item = JetStreamBuilder<K, V, T>>,
-    ) -> JetStreamBuilder<K, V, T> {
+        others: impl Iterator<Item = StreamBuilder<K, V, T>>,
+    ) -> StreamBuilder<K, V, T> {
         let runtime = self.runtime.clone();
         union(runtime, iter::once(self).chain(others))
     }
 }
 
-impl<K, V, T> Drop for JetStreamBuilder<K, V, T> {
+impl<K, V, T> Drop for StreamBuilder<K, V, T> {
     fn drop(&mut self) {
         let rt = self.runtime.clone();
+        #[allow(clippy::unwrap_used)]
         rt.lock().unwrap().add_operators(self.operators.drain(..));
     }
 }

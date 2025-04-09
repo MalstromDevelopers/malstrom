@@ -1,15 +1,12 @@
+//! Snapshot storage on any cloud store or local filesystem with [SlateDB](https://slatedb.io/)
 use std::cell::RefCell;
-use std::time::Duration;
 use std::{pin::pin, sync::Arc};
 
 use super::{PersistenceBackend, PersistenceClient, SnapshotVersion};
 use crate::types::WorkerId;
-use bytes::Buf;
 use object_store::PutPayload;
 use object_store::{path::Path, ObjectStore};
-use slatedb::config::DbOptions;
 use slatedb::db::Db;
-use slatedb::error::SlateDBError;
 use thiserror::Error;
 use tokio::runtime::{Handle, Runtime};
 use tokio_stream::StreamExt;
@@ -53,11 +50,7 @@ impl PersistenceBackend for SlateDbBackend {
             .rt
             .block_on(db_open)
             .expect("Expected to open snapshot db");
-        SlateDbClient::new(
-            snapshot_db,
-            *snapshot_version,
-            self.rt.handle().clone().to_owned(),
-        )
+        SlateDbClient::new(snapshot_db, self.rt.handle().clone().to_owned())
     }
 
     fn commit_version(&self, snapshot_version: &SnapshotVersion) {
@@ -68,7 +61,7 @@ impl PersistenceBackend for SlateDbBackend {
 }
 
 impl SlateDbBackend {
-    // create a new backend at the given path and filesystem
+    /// Create a new backend at the given path and filesystem
     pub fn new(
         object_store: Arc<dyn ObjectStore>,
         base_path: Path,
@@ -147,11 +140,13 @@ impl Commits {
     }
 }
 
+/// Error opening the commit store
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum OpenCommitsError {
     #[error(transparent)]
     ObjectStore(#[from] object_store::Error),
-    #[error("DecodingError: Commit file is corrupt or incompatible {0}")]
+    #[error("DecodingError: Commit file is corrupt or incompatible.")]
     Decoding(#[from] rmp_serde::decode::Error),
 }
 
@@ -182,31 +177,29 @@ async fn delete<S: ObjectStore>(
     store.delete(path).await
 }
 
+/// Possible errors from SlateDB persistence backend
+#[allow(missing_docs)]
 #[derive(Debug, Error)]
 pub enum BackendInitError {
-    #[error("Error starting Tokio runtime: {0}")]
+    #[error("Error starting Tokio runtime")]
     TokioRuntime(#[from] std::io::Error),
     #[error("Error opening commits")]
     OpenCommits(#[from] OpenCommitsError),
 }
 
+/// A persistence client which stores snapshots to [SlateDB](https://slatedb.io/)
 pub struct SlateDbClient {
     db: Db,
-    version: SnapshotVersion,
     rt: Handle,
 }
 
 impl SlateDbClient {
-    fn new(db: Db, version: SnapshotVersion, rt: Handle) -> Self {
-        Self { db, version, rt }
+    fn new(db: Db, rt: Handle) -> Self {
+        Self { db, rt }
     }
 }
 
 impl PersistenceClient for SlateDbClient {
-    fn get_version(&self) -> SnapshotVersion {
-        self.version
-    }
-
     fn load(&self, operator_id: &crate::types::OperatorId) -> Option<Vec<u8>> {
         debug!("Restoring state for operator {}", operator_id);
         self.rt
@@ -231,15 +224,15 @@ impl Drop for SlateDbClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{sync::Arc};
 
     use crate::{
         keyed::KeyLocal,
         operators::*,
-        runtime::{threaded::SingleThreadRuntime, StreamProvider, WorkerBuilder},
+        runtime::threaded::SingleThreadRuntime,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::VecSink,
+        testing::VecSink, worker::StreamProvider,
     };
 
     use super::*;
@@ -275,15 +268,6 @@ mod tests {
         assert_eq!(version, 3);
     }
 
-    /// Check we return a client for the requested version
-    #[test]
-    fn for_specific_version() {
-        let store = InMemory::new();
-        let backend = SlateDbBackend::new(Arc::new(store), Path::default()).unwrap();
-        let client = backend.for_version(0, &7);
-        assert_eq!(client.version, 7);
-    }
-
     /// Check we can store data with a client and then retrieve it again
     #[test]
     fn store_and_retrieve() {
@@ -292,7 +276,7 @@ mod tests {
         let mut client = backend.for_version(0, &0);
         let state = b"HelloWorld";
         client.persist(state, &1337);
-        backend.commit_version(&client.get_version());
+        backend.commit_version(&0);
 
         let load_client = backend.for_version(0, &0);
         let restored = load_client.load(&1337).unwrap();
@@ -319,7 +303,7 @@ mod tests {
         let fs = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
         let capture = VecSink::new();
         let backend = SlateDbBackend::new(Arc::clone(&fs), Path::from("/snapshots")).unwrap();
-        let rt = SingleThreadRuntime::builder().persistence(backend).build(
+        let _rt = SingleThreadRuntime::builder().persistence(backend).build(
             |provider: &mut dyn StreamProvider| {
                 provider
                     .new_stream()

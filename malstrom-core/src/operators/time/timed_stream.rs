@@ -1,19 +1,23 @@
 use crate::{
-    stream::{JetStreamBuilder, OperatorBuilder},
+    operators::sealed::Sealed,
+    stream::{OperatorBuilder, StreamBuilder},
     types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
 use super::NeedsEpochs;
-
+/// Wrapper for messages which are either before the last epoch (on time)
+/// or equal to or after the last epoch (late)
 #[derive(Clone)]
 pub(super) enum OnTimeLate<V> {
     OnTime(V),
     Late(V),
 }
 
-pub trait TimelyStream<K, V, T> {
+/// Assign timestamps to stream messages
+pub trait AssignTimestamps<K, V, T>: Sealed {
     /// Assigns a new timestamp to every message.
-    /// NOTE: Any Epochs arriving at this operator are dropped
+    /// NOTE: Any Epochs arriving at this operator are dropped with the exception
+    /// of the `MAX` epoch. See [Timestamp::MAX]
     fn assign_timestamps<TO: Timestamp>(
         self,
         name: &str,
@@ -21,7 +25,7 @@ pub trait TimelyStream<K, V, T> {
     ) -> NeedsEpochs<K, V, TO>;
 }
 
-impl<K, V, T> TimelyStream<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, V, T> AssignTimestamps<K, V, T> for StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
@@ -67,7 +71,8 @@ mod tests {
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
-        testing::{get_test_rt, VecSink},
+        testing::get_test_rt,
+        testing::vec_sink::VecSink,
         types::{MaybeData, MaybeTime, Message, NoKey},
     };
     use itertools::Itertools;

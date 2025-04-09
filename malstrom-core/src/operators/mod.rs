@@ -1,3 +1,4 @@
+//! Operators for performing various operations on data in a job
 // public API operators
 mod cloned;
 mod filter;
@@ -34,8 +35,11 @@ pub(crate) mod stateless_op;
 // marker used to seal the traits implementing operators
 // on JetStreamBuilder
 mod sealed {
-    use crate::stream::JetStreamBuilder;
+    use crate::stream::StreamBuilder;
+
+    use super::NeedsEpochs;
     pub trait Sealed {}
 
-    impl<K, V, T> Sealed for JetStreamBuilder<K, V, T> {}
+    impl<K, V, T> Sealed for StreamBuilder<K, V, T> {}
+    impl<K, V, T> Sealed for NeedsEpochs<K, V, T> {}
 }

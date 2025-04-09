@@ -59,7 +59,7 @@ where
         let to_be_buffered = self
             .current_collect
             .as_ref()
-            .map_or(false, |collect| &collect.key == key);
+            .is_some_and(|collect| &collect.key == key);
 
         match (new_target == this_worker, in_whitelist, to_be_buffered) {
             // Rule 1.1, non-local && in_whitelist
@@ -135,9 +135,8 @@ where
 
     fn set_and_emit_collect(&mut self, output: &mut Output<K, V, T>) {
         if self.current_collect.is_none() {
-            self.current_collect = self.whitelist.pop().map(Collect::new).map(|collect| {
+            self.current_collect = self.whitelist.pop().map(Collect::new).inspect(|collect| {
                 output.send(Message::Collect(collect.clone()));
-                collect
             });
         }
     }

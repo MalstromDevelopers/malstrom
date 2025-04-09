@@ -1,12 +1,16 @@
-use std::{sync::Arc, time::Duration, u64};
+use std::{sync::Arc, time::Duration};
 
 use bon::Builder;
+use thiserror::Error;
 
 use crate::{
-    coordinator::{Coordinator, CoordinatorApi, CoordinatorError},
-    runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder},
+    coordinator::{
+        Coordinator, CoordinatorApi, CoordinatorExecutionError, CoordinatorRequestError,
+    },
+    runtime::RuntimeFlavor,
     snapshot::PersistenceBackend,
     types::WorkerId,
+    worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
 use super::{communication::InterThreadCommunication, Shared};
@@ -55,7 +59,8 @@ impl<P> MultiThreadRuntime<P>
 where
     P: PersistenceBackend + Clone + Send + Sync,
 {
-    pub fn execute(self) -> Result<(), BuildError> {
+    /// Start job execution an all workers in this runtime.
+    pub fn execute(self) -> Result<(), WorkerExecutionError> {
         let mut threads = Vec::with_capacity(self.parrallelism as usize);
         let shared = Shared::default();
 
@@ -65,12 +70,23 @@ where
             threads.push(thread);
         }
 
-        let (_coordinator, coordinator_api) = Coordinator::new(
-            self.parrallelism,
-            self.snapshots,
-            self.persistence.clone(),
-            InterThreadCommunication::new(Arc::clone(&shared), u64::MAX),
-        )?;
+        let (coordinator, coordinator_api) = Coordinator::new();
+
+        let coordinator_thread = {
+            let persistence = self.persistence.clone();
+            let shared = Arc::clone(&shared);
+            std::thread::spawn(move || {
+                coordinator
+                    .execute(
+                        self.parrallelism,
+                        self.snapshots,
+                        persistence,
+                        InterThreadCommunication::new(shared, u64::MAX),
+                    )
+                    .map_err(ExecutionError::Coordinator)
+            })
+        };
+        threads.push(coordinator_thread);
         // fails if there are no API handles
         let _ = self.api_handles.send(Some(coordinator_api));
         // Err(_) would mean all senders dropped i.e. all threads finished, which would be
@@ -92,7 +108,7 @@ where
                 }
             }
             threads.retain(|x| !x.is_finished());
-            if threads.len() == 0 {
+            if threads.is_empty() {
                 return Ok(());
             }
         }
@@ -103,21 +119,30 @@ where
         persistence: P,
         shared: Shared,
         thread_id: u64,
-    ) -> std::thread::JoinHandle<()> {
+    ) -> std::thread::JoinHandle<Result<(), ExecutionError>> {
         std::thread::spawn(move || {
             let flavor = MultiThreadRuntimeFlavor::new(shared, thread_id);
             let mut worker_builder = WorkerBuilder::new(flavor, persistence);
             build_fn(&mut worker_builder);
-            worker_builder.build_and_run().unwrap();
+            worker_builder.execute().map_err(ExecutionError::Worker)
         })
     }
 
+    /// Get an API handle for interacting with the Malstrom job, e.g. for triggering rescales.
     pub fn api_handle(&self) -> MultiThreadRuntimeApiHandle {
         MultiThreadRuntimeApiHandle {
             coord_channel: self.api_handles.subscribe(),
             rescale_req: self.rescale_req.0.clone(),
         }
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ExecutionError {
+    #[error("Error executing worker")]
+    Worker(#[from] WorkerExecutionError),
+    #[error("Error executing coordinator")]
+    Coordinator(#[from] CoordinatorExecutionError),
 }
 
 /// This is passed to the worker
@@ -155,14 +180,16 @@ pub struct MultiThreadRuntimeApiHandle {
 }
 
 impl MultiThreadRuntimeApiHandle {
-    pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorError> {
+    pub async fn rescale(&self, desired: u64) -> Result<(), CoordinatorRequestError> {
         // instruct the runtime to spawn another thread if needed
-        self.rescale_req.send(desired).unwrap();
+        self.rescale_req
+            .send(desired)
+            .map_err(|_| CoordinatorRequestError::NotRunning)?;
         // instruct the coordinator to re-distribute computation
         self.coord_channel
             .borrow()
             .as_ref()
-            .unwrap()
+            .ok_or(CoordinatorRequestError::NotRunning)?
             .rescale(desired)
             .await
     }

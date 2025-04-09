@@ -1,13 +1,15 @@
 use std::time::Duration;
 
 use crate::{
-    coordinator::Coordinator,
-    runtime::{builder::BuildError, RuntimeFlavor, StreamProvider, WorkerBuilder},
+    coordinator::{Coordinator, CoordinatorExecutionError},
+    runtime::RuntimeFlavor,
     snapshot::PersistenceBackend,
+    worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
 use super::{communication::InterThreadCommunication, Shared};
 use bon::Builder;
+use thiserror::Error;
 
 /// Runs all dataflows in a single thread on a
 /// single machine with no parrallelism.
@@ -22,27 +24,44 @@ pub struct SingleThreadRuntime<P, F> {
 impl<P, F> SingleThreadRuntime<P, F>
 where
     P: PersistenceBackend + Clone + Send,
-    F: FnMut(&mut dyn StreamProvider) -> (),
+    F: FnMut(&mut dyn StreamProvider),
 {
     /// Start execution on this runtime, returning a build error if building the
     /// JetStream worker fails
-    pub fn execute(mut self) -> Result<(), BuildError> {
+    pub fn execute(mut self) -> Result<(), ExecutionError> {
         let mut flavor = SingleThreadRuntimeFlavor::default();
 
         let mut worker = WorkerBuilder::new(flavor.clone(), self.persistence.clone());
         (self.build)(&mut worker);
 
-        let _coordinator = Coordinator::new(
+        let (coordinator, _) = Coordinator::new();
+        let communication = flavor.communication().expect("SingleThread communication is infallible");
+        let _coord_thread = std::thread::spawn(move || coordinator.execute(
             1,
             self.snapshots,
             self.persistence,
-            flavor.communication().unwrap(),
-        );
-        println!("{:?}", flavor.comm_shared);
-        worker.build_and_run()
+            communication,
+        ));
+        worker.execute()?;
+        // TODO: Coordinator thread does not terminate, which messes with the tests
+        //coord_thread.join().map_err(ExecutionError::CoordinatorJoin)??;
+        Ok(())
     }
 }
 
+#[derive(Debug, Error)]
+pub enum ExecutionError {
+    #[error("Error executing worker")]
+    Worker(#[from] WorkerExecutionError),
+    #[error("Error executing coordinator")]
+    Coordinator(#[from] CoordinatorExecutionError),
+    #[error("Error joining coordinator thread: {0:?}")]
+    CoordinatorJoin(Box<dyn std::any::Any + std::marker::Send>)
+}
+
+/// Runtime which only provides a single thread for a single worker.
+/// This runtime is usually not very performant, but very simple.
+/// Useful for unit-tests.
 #[derive(Debug, Default, Clone)]
 pub struct SingleThreadRuntimeFlavor {
     comm_shared: Shared,

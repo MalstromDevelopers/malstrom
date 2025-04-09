@@ -7,14 +7,18 @@ use indexmap::IndexMap;
 use std::hash::Hash;
 use tokio::sync::{oneshot, Mutex};
 
+/// A Send + Sync map which evaluates given conditions upon every change
 #[derive(Default, Clone)]
 pub(crate) struct WatchMap<K: Send + Sync, V: Send + Sync> {
     inner: Arc<Mutex<WatchMapInner<K, V>>>,
 }
 
+/// [WatchMap] inner type
 #[derive(Default)]
 struct WatchMapInner<K, V> {
+    /// stored data
     store: IndexMap<K, V>,
+    /// Conditions to be evaluated on changes and notified if satisfied
     notifications: Vec<Notification<K, V>>,
 }
 
@@ -23,7 +27,8 @@ where
     K: 'static,
     V: 'static,
 {
-    fn fire_notifications(&mut self) -> () {
+    /// Check all notifications and fire thos with satisfied conditions
+    fn fire_notifications(&mut self) {
         self.notifications = self
             .notifications
             .drain(..)
@@ -52,6 +57,7 @@ where
         on_complete
     }
 
+    /// Remove a key, possibly returning it's value if it was in the map
     pub(crate) async fn remove(&self, key: &K) -> Option<V> {
         let mut guard = self.inner.lock().await;
         let value = guard.store.swap_remove(key);
@@ -69,14 +75,15 @@ where
     /// value and applies the function if the key is not already present.
     /// # Arguments
     ///
-    /// * `key` - The key associated with the value to be applied or defaulted.
-    /// * `func` - A function that is applied to the value if the key exists, or to the default
+    /// - `key` - The key associated with the value to be applied or defaulted.
+    /// - `func` - A function that is applied to the value if the key exists, or to the default
     ///            value if the key does not exist. It takes a mutable reference to the value.
+    ///
     /// After applying the function or inserting a default value, it triggers any pending
     /// notifications that depend on changes to the map.
-    pub(crate) async fn apply_or_default<F>(&self, key: K, func: F) -> ()
+    pub(crate) async fn apply_or_default<F>(&self, key: K, func: F)
     where
-        F: FnOnce(&mut V) -> (),
+        F: FnOnce(&mut V),
     {
         let mut guard = self.inner.lock().await;
         let value = guard.store.entry(key).or_default();
@@ -90,6 +97,7 @@ where
     K: Clone + Send + Sync,
     V: Clone + Send + Sync,
 {
+    /// Clone the contained inner data store
     pub(crate) async fn clone_inner_map(&self) -> IndexMap<K, V> {
         self.inner.lock().await.store.clone()
     }
@@ -100,6 +108,8 @@ where
     K: Send + Sync,
     V: Send + Sync,
 {
+    /// Create a [WatchMap] from an [IndexMap]. The created map will have no notifications
+    /// registered.
     fn from(value: IndexMap<K, V>) -> Self {
         let inner = WatchMapInner {
             store: value,
@@ -111,6 +121,8 @@ where
     }
 }
 
+/// A Notification consisting of a condition to evaluate and a oneshot to complete once
+/// the condition has been satisfied
 struct Notification<K, V> {
     condition: Box<dyn Condition<K, V>>,
     on_complete: oneshot::Sender<()>,
@@ -120,6 +132,11 @@ where
     K: 'static,
     V: 'static,
 {
+    /// Create a new [Notification]
+    ///
+    /// # Returns
+    /// - Self: The Notification
+    /// - [oneshot::Receiver]: Resolves once condition is satisfied
     fn new(condition: impl Condition<K, V>) -> (Self, oneshot::Receiver<()>) {
         let (tx, rx) = oneshot::channel();
         let notification = Self {
@@ -129,6 +146,8 @@ where
         (notification, rx)
     }
 
+    /// Check if condition is satisfied and fire notification if true.
+    /// Firing the notification destroys it, hence this returns `Option<Self>`
     fn check(self, values: &mut ConditionIter<K, V>) -> Option<Self> {
         if self.condition.evaluate(values) {
             // ignoring the error here is fine. Simply means the receiver

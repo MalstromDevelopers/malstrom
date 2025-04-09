@@ -9,7 +9,7 @@ fn main() {
     tracing_subscriber::fmt::init();
     MultiThreadRuntime::builder()
         .parrallelism(4)
-        .persistence(NoPersistence::default())
+        .persistence(NoPersistence)
         .build(build_dataflow)
         .execute()
         .unwrap()

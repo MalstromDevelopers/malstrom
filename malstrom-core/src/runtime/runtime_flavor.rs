@@ -1,5 +1,7 @@
-use super::communication::{CoordinatorWorkerComm, OperatorOperatorComm, WorkerCoordinatorComm};
+use super::communication::{OperatorOperatorComm, WorkerCoordinatorComm};
 
+/// A specific implementation of a runtime. A runtime is anything, where a Malstrom job can be
+/// executed, for example the [MultiThreadRuntime](super::threaded::MultiThreadRuntime)
 pub trait RuntimeFlavor {
     /// The type of backend this runtime uses for inter-worker communication
     type Communication: OperatorOperatorComm + WorkerCoordinatorComm;
@@ -18,6 +20,7 @@ pub trait RuntimeFlavor {
 pub struct CommunicationError(#[from] Box<dyn std::error::Error + Send + Sync>);
 
 impl CommunicationError {
+    /// Create a CommunicationError from any type implementing [std::error::Error]
     pub fn from_error<E>(err: E) -> Self
     where
         E: std::error::Error + 'static + Send + Sync,

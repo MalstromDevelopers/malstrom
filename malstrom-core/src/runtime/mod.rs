@@ -1,12 +1,9 @@
-mod builder;
+//! Runtimes determine where Malstrom jobs are executed. Runtimes provide the necessary
+//! infrastructure and communication channels for Malstrom to run jobs.
 pub mod communication;
-mod runtime_flavor;
+pub(crate) mod runtime_flavor;
 pub mod threaded;
-// mod rescaling;
 
-pub use builder::{StreamProvider, WorkerBuilder, BuildError};
 pub use communication::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
 pub use runtime_flavor::{CommunicationError, RuntimeFlavor};
 pub use threaded::{MultiThreadRuntime, SingleThreadRuntime, SingleThreadRuntimeFlavor};
-
-pub(crate) use builder::{union, InnerRuntimeBuilder};

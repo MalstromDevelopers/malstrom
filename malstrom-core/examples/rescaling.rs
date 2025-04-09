@@ -11,7 +11,7 @@ fn main() {
     // tracing_subscriber::fmt::init();
     let rt = MultiThreadRuntime::builder()
         .parrallelism(2)
-        .persistence(NoPersistence::default())
+        .persistence(NoPersistence)
         .build(build_dataflow);
     let api_handle = rt.api_handle();
 

@@ -64,7 +64,7 @@ where
             worker_id,
             operator_id,
             "test".to_owned(),
-            Rc::new(NoPersistence::default()),
+            Rc::new(NoPersistence),
             &mut comm_shim,
             worker_ids.collect(),
         );
