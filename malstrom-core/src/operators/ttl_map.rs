@@ -79,7 +79,7 @@ where
     ///     .execute()
     ///     .unwrap();
     ///
-    /// let expected: Vec<i32> = (0..10).scan(0, |state, x| {*state = *state + x; Some(*state)}).collect();
+    /// let expected: Vec<i32> = (0..50).scan(0, |state, x| {*state = *state + x; Some(*state)}).collect();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
