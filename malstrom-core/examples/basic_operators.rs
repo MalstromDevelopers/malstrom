@@ -1,8 +1,9 @@
+//! A basic example which runs a no-op dataflow
 use malstrom::operators::*;
-/// A basic example which runs a no-op dataflow
-use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::runtime::SingleThreadRuntime;
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::worker::StreamProvider;
 
 fn main() {
     tracing_subscriber::fmt::init();
