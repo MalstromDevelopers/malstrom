@@ -16,8 +16,7 @@ use indexmap::{IndexMap, IndexSet};
 
 pub(crate) mod communication;
 pub(crate) mod operator_tester;
-pub(crate) mod vec_sink;
-pub(crate) use vec_sink::VecSink;
+pub(crate) use crate::sinks::VecSink;
 
 pub use operator_tester::{FakeCommunication, OperatorTester, SentMessage};
 

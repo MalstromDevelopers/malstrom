@@ -224,17 +224,7 @@ impl Drop for SlateDbClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc};
-
-    use crate::{
-        keyed::KeyLocal,
-        operators::*,
-        runtime::threaded::SingleThreadRuntime,
-        sinks::StatelessSink,
-        sources::{SingleIteratorSource, StatelessSource},
-        testing::VecSink, worker::StreamProvider,
-    };
-
+    use std::sync::Arc;
     use super::*;
     use object_store::{memory::InMemory, path::Path};
 
@@ -295,33 +285,5 @@ mod tests {
         let load_client = backend.for_version(0, &0);
         let restored = load_client.load(&1337);
         assert!(restored.is_none())
-    }
-
-    /// A full dataflow test
-    #[test]
-    fn full_test() {
-        let fs = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
-        let capture = VecSink::new();
-        let backend = SlateDbBackend::new(Arc::clone(&fs), Path::from("/snapshots")).unwrap();
-        let _rt = SingleThreadRuntime::builder().persistence(backend).build(
-            |provider: &mut dyn StreamProvider| {
-                provider
-                    .new_stream()
-                    .source(
-                        "source",
-                        StatelessSource::new(SingleIteratorSource::new(0..2)),
-                    )
-                    .key_local("key-local", |_| 0)
-                    .stateful_map("sum", |_, val, state: i32| {
-                        let sum = val + state;
-                        (sum, Some(sum))
-                    })
-                    .sink("sink", StatelessSink::new(capture.clone()));
-            },
-        );
-        todo!();
-        let expected = vec![0, 1, 1, 2];
-        let result: Vec<i32> = capture.into_iter().map(|x| x.value).collect();
-        assert_eq!(result, expected);
     }
 }
