@@ -1,9 +1,10 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::JetStreamBuilder;
+use crate::stream::StreamBuilder;
 
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
+/// Apply a function to every message in a stream
 pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
@@ -32,11 +33,10 @@ pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn map(self, name: &str, mapper: impl (FnMut(V) -> VO) + 'static)
-        -> JetStreamBuilder<K, VO, T>;
+    fn map(self, name: &str, mapper: impl (FnMut(V) -> VO) + 'static) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, V, T, VO> Map<K, V, T, VO> for JetStreamBuilder<K, V, T>
+impl<K, V, T, VO> Map<K, V, T, VO> for StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     V: Data,
@@ -47,7 +47,7 @@ where
         self,
         name: &str,
         mut mapper: impl (FnMut(V) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.stateless_op(
             name,
             move |item: DataMessage<K, V, T>, out: &mut Output<K, VO, T>| {

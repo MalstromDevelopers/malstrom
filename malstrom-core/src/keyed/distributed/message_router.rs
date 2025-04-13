@@ -39,7 +39,7 @@ where
         sender: WorkerId,
         remotes: &Remotes<K, V, T>,
     ) -> Option<(DataMessage<K, V, T>, WorkerId)> {
-        if msg_version.map_or(false, |x| x > self.get_version()) {
+        if msg_version.is_some_and(|x| x > self.get_version()) {
             return Some((msg, this_worker));
         }
         match self {

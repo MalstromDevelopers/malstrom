@@ -5,13 +5,23 @@ members = [
     "k8s-app",
     "malstrom-k8s",
     "malstrom-k8s-operator",
-    "malstrom-kafka", "malstrom-windows",
+    "malstrom-kafka", 
+    "malstrom-windows",
+    "malstrom-k8s/artifact-downloader",
+    "malstrom-k8s/artifact-manager",
+    "malstrom-k8s/operator",
+    "malstrom-k8s/operator/crds",
+    "malstrom-k8s/runtime",
+    "malstrom-kafka",
 ]
 
+[workspace.lints.rust]
+missing-docs = "warn"
 
-[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
-# Install libssl-dev:arm64, see <https://github.com/cross-rs/cross/blob/main/docs/custom_images.md#adding-dependencies-to-existing-images>
-pre-build = [
-    "dpkg --add-architecture $CROSS_DEB_ARCH",
-    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH protobuf-compiler",
-]
+[workspace.lints.clippy]
+correctness = "deny"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+unwrap_used = {level = "warn", priority = 1}

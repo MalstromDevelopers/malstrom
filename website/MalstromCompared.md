@@ -88,3 +88,7 @@ Fluvio does not have an event-time system.
 
 ## Timely Dataflow
 
+## Arroyo
+
+## denormalized
+

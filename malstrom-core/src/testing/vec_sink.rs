@@ -35,14 +35,6 @@ impl<T> VecSink<T> {
     pub fn drain_vec<R: RangeBounds<usize>>(&self, range: R) -> Vec<T> {
         self.inner.lock().unwrap().drain(range).collect()
     }
-    /// Returns the len of the contained vec
-    pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
-    }
 }
 
 impl<T> IntoIterator for VecSink<T> {

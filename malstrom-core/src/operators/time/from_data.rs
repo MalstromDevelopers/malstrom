@@ -1,7 +1,8 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
-    stream::{JetStreamBuilder, OperatorBuilder},
+    operators::sealed::Sealed,
+    stream::{OperatorBuilder, StreamBuilder},
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
@@ -10,7 +11,8 @@ use super::{
     NeedsEpochs,
 };
 
-pub trait GenerateEpochs<K, V, T> {
+/// Generate Epochs for a stream.
+pub trait GenerateEpochs<K, V, T>: Sealed {
     /// Generates Epochs from data. This operator takes a function which may create a new epoch for any
     /// DataMessage arriving at this Operator. To not create a new Epoch, the function must return `None`.
     ///
@@ -26,7 +28,7 @@ pub trait GenerateEpochs<K, V, T> {
         name: &str,
         // previously issued epoch and time elapsed since last epoch
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>);
+    ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>);
 }
 
 impl<K, V, T> GenerateEpochs<K, V, T> for NeedsEpochs<K, V, T>
@@ -39,12 +41,12 @@ where
         self,
         name: &str,
         gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
+    ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
         self.0.generate_epochs(name, gen)
     }
 }
 
-impl<K, V, T> GenerateEpochs<K, V, T> for JetStreamBuilder<K, V, T>
+impl<K, V, T> GenerateEpochs<K, V, T> for StreamBuilder<K, V, T>
 where
     K: MaybeKey,
     T: Timestamp + Serialize + DeserializeOwned,
@@ -54,7 +56,7 @@ where
         self,
         name: &str,
         mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
-    ) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
+    ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
         let operator = OperatorBuilder::built_by(name, |build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
 
@@ -91,7 +93,7 @@ where
                             output.send(Message::AbsBarrier(b))
                         }
                         Message::Epoch(e) => {
-                            if prev_epoch.as_ref().map_or(true, |prev| *prev < e) {
+                            if prev_epoch.as_ref().is_none_or(|prev| *prev < e) {
                                 let _ = prev_epoch.insert(e.clone());
                                 output.send(Message::Epoch(e))
                             }

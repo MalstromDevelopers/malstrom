@@ -5,12 +5,27 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::operator_io::{Input, Output},
-    stream::{BuildContext, JetStreamBuilder, OperatorBuilder, OperatorContext},
+    stream::{BuildContext, Logic, OperatorBuilder, StreamBuilder},
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
 
+/// Helper trait for implementing arbitrary stateful operators for datastreams.
+/// For simpler stateful operations see [malstrom::operators::stateful_map]
 pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
-    /// Return Some to retain the key-state and None to discard it
+    /// Process a single datamessage.
+    /// This function receives an owned value of the given message and the state for the message's
+    /// key. If there is no state for the key, the default state is given.
+    /// Returning `Some(x)` retains `x` as the new key state, returning `None` discards the state
+    /// for this key.
+    ///
+    /// This function is essentially free to do almost anythingg: The message value may be changed,
+    /// the entire message dropped or mutliple output messages produced. Two important restrictions
+    /// apply though:
+    ///
+    /// 1. All output messages must be of the same key as the input message
+    /// 2. The timestamp of any output message may not be smaller than the timestamp of the last
+    ///    Epoch received at this operator. If the value of the last Epoch is unknown, it is always
+    ///    safe to produce timestamps equal to or greater than the current input message.
     fn on_data(
         &mut self,
         msg: DataMessage<K, VI, T>,
@@ -18,16 +33,31 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
         output: &mut Output<K, VO, T>,
     ) -> Option<S>;
 
+    /// Handle an epoch arriving at this operator.
+    ///
+    /// # Arguments
+    /// - epoch: Current Epoch
+    /// - state: States of all keys currently located at this worker and this operator
+    /// - output: Operator output
+    ///
+    /// **NOTE:** It **is** allowed to emit messages with a timestamp smaller or equal to the epoch
+    /// from this function, as the epoch will be sent into the output **after** the function
+    /// returns.
+    ///
+    /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_epoch(
-        &mut self,
-        epoch: &T,
-        state: &mut IndexMap<K, S>,
-        output: &mut Output<K, VO, T>,
-    ) -> () {}
+    fn on_epoch(&mut self, epoch: &T, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) {}
 
+    /// Called whenever this operator is scheduled. There is no guarantee on whether this function
+    /// will be called before or after other handler functions.
+    ///
+    /// # Arguments
+    /// - state: States of all keys currently located at this worker and this operator
+    /// - output: Operator output
+    ///
+    /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) -> () {}
+    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) {}
 }
 impl<X, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for X
 where
@@ -46,15 +76,17 @@ where
     }
 }
 
+/// Append a stateful operator to the stream
 pub trait StatefulOp<K, VI, T>: super::sealed::Sealed {
+    /// Append an arbitrary stateful operator to the datastream.
     fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
         self,
         name: &str,
         logic: impl StatefulLogic<K, VI, T, VO, S>,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T> StatefulOp<K, VI, T> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T> StatefulOp<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
     VI: Data + Serialize + DeserializeOwned,
@@ -64,7 +96,7 @@ where
         self,
         name: &str,
         logic: impl StatefulLogic<K, VI, T, VO, S>,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         let op = OperatorBuilder::built_by(name, move |ctx| build_stateful_logic(ctx, logic));
         self.then(op)
     }
@@ -75,11 +107,11 @@ fn build_stateful_logic<
     VI,
     T: MaybeTime,
     VO: Clone,
-    S: Default + Serialize + DeserializeOwned,
+    S: Default + Serialize + DeserializeOwned + 'static,
 >(
     context: &BuildContext,
     mut logic: impl StatefulLogic<K, VI, T, VO, S>,
-) -> impl FnMut(&mut Input<K, VI, T>, &mut Output<K, VO, T>, &mut OperatorContext) {
+) -> impl Logic<K, VI, T, K, VO, T> {
     let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
 
     move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, ctx| {

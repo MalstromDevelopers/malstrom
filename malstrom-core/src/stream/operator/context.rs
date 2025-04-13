@@ -6,6 +6,7 @@ use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use crate::errorhandling::MalstromFatal;
 use crate::runtime::communication::Distributable;
 use crate::runtime::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
 use crate::snapshot::{deserialize_state, PersistenceClient};
@@ -15,38 +16,49 @@ use crate::types::{OperatorId, WorkerId};
 /// and cotains context, whicht the logic generally can not change
 /// but utilize
 pub struct OperatorContext<'a> {
+    /// ID of this worker
     pub worker_id: WorkerId,
+    /// ID of this operator
     pub operator_id: OperatorId,
     pub(super) communication: &'a mut dyn OperatorOperatorComm,
 }
 
 impl<'a> OperatorContext<'a> {
+    #[cfg(test)]
+    pub(crate) fn new(
+        worker_id: WorkerId,
+        operator_id: OperatorId,
+        communication: &'a mut dyn OperatorOperatorComm,
+    ) -> Self {
+        Self {
+            worker_id,
+            operator_id,
+            communication,
+        }
+    }
+
     /// Create a client for inter-worker communication
+    ///
+    /// PANIC: This function panics if the given WorkerID is the ID of the worker it is called on.
     pub fn create_communication_client<T: Distributable>(
         &self,
         other_worker: WorkerId,
     ) -> BiCommunicationClient<T> {
         // Assert is kinda ugly here, but this situation is a programming error
         assert!(other_worker != self.worker_id);
-        BiCommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
-    }
-
-    pub fn new(
-        worker_id: WorkerId,
-        operator_id: OperatorId,
-        communication: &'a mut dyn OperatorOperatorComm,
-    ) -> Self {
-        OperatorContext {
-            worker_id,
-            operator_id,
-            communication,
-        }
+        BiCommunicationClient::new(other_worker, self.operator_id, self.communication)
+            .malstrom_fatal()
     }
 }
 
+/// Build context which is injected into the builder function of an operator at computation graph
+/// build time. This happens shortly before execution.
 pub struct BuildContext<'a> {
+    /// ID of this worker
     pub worker_id: WorkerId,
+    /// ID of this operator
     pub operator_id: OperatorId,
+    /// User given name of this operator
     pub operator_name: String,
     persistence_backend: Rc<dyn PersistenceClient>,
     // HACK: We need this in the ica tests
@@ -72,6 +84,8 @@ impl<'a> BuildContext<'a> {
         }
     }
 
+    /// Load the persisted state for this operator.
+    /// If no persisted state exists, this returns `None`
     pub fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
         self.persistence_backend
             .load(&self.operator_id)
@@ -91,7 +105,8 @@ impl<'a> BuildContext<'a> {
         &mut self,
         other_worker: WorkerId,
     ) -> BiCommunicationClient<T> {
-        CommunicationClient::new(other_worker, self.operator_id, self.communication).unwrap()
+        CommunicationClient::new(other_worker, self.operator_id, self.communication)
+            .malstrom_fatal()
     }
 
     /// Create clients for all workers active at build_time

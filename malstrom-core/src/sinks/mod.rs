@@ -1,3 +1,4 @@
+//! Sinks for writing data from a Malstrom job
 mod stateful;
 mod stateless;
 mod stdout;

@@ -2,12 +2,13 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::operator_io::Output,
-    stream::JetStreamBuilder,
+    stream::StreamBuilder,
     types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
+/// Apply a stateful function to every message in the stream
 pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
     /// Transforms data utilizing some managed state.
     ///
@@ -58,7 +59,7 @@ pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
         self,
         name: &str,
         mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
 struct MapperOp<F> {
@@ -91,7 +92,7 @@ where
     }
 }
 
-impl<K, VI, T> StatefulMap<K, VI, T> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T> StatefulMap<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
     VI: Data + Serialize + DeserializeOwned,
@@ -101,7 +102,7 @@ where
         self,
         name: &str,
         mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.stateful_op(name, MapperOp::new(mapper))
     }
 }

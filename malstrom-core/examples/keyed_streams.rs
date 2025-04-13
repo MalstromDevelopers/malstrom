@@ -8,7 +8,7 @@ use malstrom::sources::{SingleIteratorSource, StatelessSource};
 fn main() {
     MultiThreadRuntime::builder()
         .parrallelism(2)
-        .persistence(NoPersistence::default())
+        .persistence(NoPersistence)
         .build(build_dataflow)
         .execute()
         .unwrap()

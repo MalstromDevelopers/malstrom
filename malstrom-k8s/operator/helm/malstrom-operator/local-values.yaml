@@ -1,0 +1,33 @@
+# Values for local development
+name: malstrom-operator
+namespace: default
+
+logLevel: info
+
+operator:
+  image:
+    repository: localhost:5001/malstromdevelopers/k8s-operator
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+
+artifactManager:
+  deploy: true
+  image:
+    repository: localhost:5001/malstromdevelopers/artifact-manager
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 80
+  storageClassName: null
+  size: 1Gi
+
+serviceAccount:
+  name: malstrom-operator
+  namespaces: ["default"]
+
+imagePullSecrets: []
+
+affinity: {}

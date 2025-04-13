@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package malstrom_k8s.k8s_operator;
+
+// Job coordinator hosts this service to interact with the
+// K8S operator
+service CoordinatorOperatorService {
+    // request a rescale from the job coordinator
+    // the response is sent as soon as the rescale completed
+    rpc Rescale (RescaleRequest) returns (RescaleResponse);
+  }
+
+message RescaleRequest {
+    uint64 desired_scale = 1;
+}
+
+message RescaleResponse {}

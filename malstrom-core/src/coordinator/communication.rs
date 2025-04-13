@@ -1,45 +1,51 @@
-use std::sync::Arc;
-
-use indexmap::{IndexMap, IndexSet};
-use tokio::task::JoinHandle;
-use tracing::debug;
-
-use crate::{
-    runtime::{communication::CoordinatorWorkerComm, CommunicationClient},
-    types::WorkerId,
-};
-
+//! Communication from Coordinator to workers and vice-versa
 use super::{
     state::{WorkerPhase, WorkerState},
     types::{CoordinationMessage, WorkerMessage},
     watchmap::WatchMap,
 };
+use crate::{
+    runtime::{
+        communication::{CommunicationBackendError, CoordinatorWorkerComm},
+        CommunicationClient,
+    },
+    types::WorkerId,
+};
+use indexmap::{IndexMap, IndexSet};
+use std::sync::Arc;
+use thiserror::Error;
+use tokio::task::JoinHandle;
+use tracing::debug;
 
+/// Receiver for receiving messages from a specific worker
 pub(super) struct WorkerReceiver {
     worker_id: WorkerId,
     inner: Arc<CommunicationClient<CoordinationMessage, WorkerMessage>>,
 }
-
 impl WorkerReceiver {
+    /// Asynchronously receive a message from the Worker. Finishes once a message has been received.
     async fn recv_async(&self) -> WorkerMessage {
         self.inner.recv_async().await
     }
 }
 
+/// Sender for sending messages to a specific worker via the runtime's communication
 #[derive(Clone)]
 pub(super) struct WorkerSender {
     inner: Arc<CommunicationClient<CoordinationMessage, WorkerMessage>>,
 }
 impl WorkerSender {
-    pub(super) fn send(&self, msg: CoordinationMessage) -> () {
+    /// Send a message to the worker
+    pub(super) fn send(&self, msg: CoordinationMessage) {
         self.inner.send(msg);
     }
 }
 
+/// Thread for handling the incoming communication from a worker
 pub(super) async fn worker_comm_inbound(
     states: WatchMap<WorkerId, WorkerState>,
     client: WorkerReceiver,
-) -> () {
+) {
     let set_phase = |phase| {
         states.apply_or_default(client.worker_id, |state| {
             state.phase = phase;
@@ -79,14 +85,19 @@ pub(super) async fn worker_comm_inbound(
     }
 }
 
+/// Set up communications with all workers.
+/// The given global state will be kept up-to-date using the Messages exchanged with workers.
 pub(super) async fn setup_comm<C>(
     comm: &C,
     worker_ids: &IndexSet<WorkerId>,
     global_state: &WatchMap<WorkerId, WorkerState>,
-) -> (
-    IndexMap<WorkerId, WorkerSender>,
-    IndexMap<WorkerId, JoinHandle<()>>,
-)
+) -> Result<
+    (
+        IndexMap<WorkerId, WorkerSender>,
+        IndexMap<WorkerId, JoinHandle<()>>,
+    ),
+    SetupCommunicationError,
+>
 where
     C: CoordinatorWorkerComm,
 {
@@ -94,7 +105,7 @@ where
     let mut receiver_tasks = IndexMap::with_capacity(worker_ids.len());
 
     for wid in worker_ids.iter() {
-        let client = Arc::new(CommunicationClient::coordinator_to_worker(*wid, comm).unwrap());
+        let client = Arc::new(CommunicationClient::coordinator_to_worker(*wid, comm)?);
         let sender = WorkerSender {
             inner: Arc::clone(&client),
         };
@@ -110,5 +121,11 @@ where
             tokio::spawn(worker_comm_inbound(global_state.clone(), receiver)),
         );
     }
-    (senders, receiver_tasks)
+    Ok((senders, receiver_tasks))
+}
+
+#[derive(Debug, Error)]
+pub enum SetupCommunicationError {
+    #[error("Error from communication backend")]
+    Backend(#[from] CommunicationBackendError),
 }

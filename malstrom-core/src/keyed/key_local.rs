@@ -1,8 +1,9 @@
 use crate::channels::operator_io::{Input, Output};
 
-use crate::stream::{JetStreamBuilder, OperatorBuilder};
+use crate::stream::{OperatorBuilder, StreamBuilder};
 use crate::types::{Data, DataMessage, Key, MaybeKey, MaybeTime, Message};
 
+/// Create a keyed stream **without** distributing messages.
 pub trait KeyLocal<X, K: Key, V, T> {
     /// Turn a stream into a keyed stream and **do not** distribute
     /// messages across workers.
@@ -17,10 +18,10 @@ pub trait KeyLocal<X, K: Key, V, T> {
         name: &str,
 
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-    ) -> JetStreamBuilder<K, V, T>;
+    ) -> StreamBuilder<K, V, T>;
 }
 
-impl<X, K, V, T> KeyLocal<X, K, V, T> for JetStreamBuilder<X, V, T>
+impl<X, K, V, T> KeyLocal<X, K, V, T> for StreamBuilder<X, V, T>
 where
     X: MaybeKey,
     K: Key,
@@ -31,7 +32,7 @@ where
         self,
         name: &str,
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-    ) -> JetStreamBuilder<K, V, T> {
+    ) -> StreamBuilder<K, V, T> {
         let op = OperatorBuilder::direct(
             name,
             move |input: &mut Input<X, V, T>, output: &mut Output<K, V, T>, _ctx| {
@@ -51,7 +52,6 @@ where
                     Some(Message::Acquire(_)) => (),
                     // necessary to convince Rust it is a different generic type now
                     Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
-                    // Some(Message::Load(l)) => output.send(Message::Load(l)),
                     Some(Message::Rescale(x)) => output.send(Message::Rescale(x)),
                     Some(Message::SuspendMarker(x)) => output.send(Message::SuspendMarker(x)),
                     Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),

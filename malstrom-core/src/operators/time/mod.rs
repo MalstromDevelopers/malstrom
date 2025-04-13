@@ -6,4 +6,4 @@ mod util;
 pub use self::from_data::GenerateEpochs;
 pub use self::inspect_frontier::InspectFrontier;
 pub use self::needs_epochs::NeedsEpochs;
-pub use timed_stream::TimelyStream;
+pub use timed_stream::AssignTimestamps;

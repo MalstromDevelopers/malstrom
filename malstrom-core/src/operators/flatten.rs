@@ -1,8 +1,9 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::JetStreamBuilder;
+use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
+/// Flatten a stream of iterables by emitting each element of every iterable as a distinct message.
 pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// Flatten a datastream. Given a stream of some iterables, this function consumes
     /// each iterable and emits each of its elements downstream.
@@ -38,10 +39,10 @@ pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn flatten(self, name: &str) -> JetStreamBuilder<K, VO, T>;
+    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T, VO, I> Flatten<K, VI, T, VO, I> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T, VO, I> Flatten<K, VI, T, VO, I> for StreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     I: Iterator<Item = VO>,
@@ -49,7 +50,7 @@ where
     VO: Data,
     T: Timestamp,
 {
-    fn flatten(self, name: &str) -> JetStreamBuilder<K, VO, T> {
+    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T> {
         self.stateless_op(
             name,
             move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {

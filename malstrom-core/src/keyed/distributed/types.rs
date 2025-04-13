@@ -1,3 +1,4 @@
+//! Types and type aliases commonly used throughout Malstrom
 use std::fmt::Debug;
 use std::{
     ops::{Deref, DerefMut},
@@ -20,7 +21,7 @@ impl<T: Key + Distributable> DistKey for T {}
 /// Marker trait for distributable value
 pub trait DistData: MaybeData + Distributable {}
 impl<T: MaybeData + Distributable> DistData for T {}
-
+/// A timestamp which can be sent to other workers
 pub trait DistTimestamp: MaybeTime + Distributable {}
 impl<T: MaybeTime + Distributable> DistTimestamp for T {}
 
@@ -126,26 +127,28 @@ impl<T> Container<T> {
     }
 
     pub(super) fn apply(&mut self, func: impl FnOnce(T) -> T) {
-        let new_value = func(self.inner.take().unwrap());
+        let new_value = func(self.inner.take().expect("Always Some"));
         self.inner = Some(new_value);
     }
 }
 impl<T> Deref for Container<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap()
+        self.inner.as_ref().expect("Always Some")
     }
 }
 impl<T> DerefMut for Container<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.as_mut().unwrap()
+        self.inner.as_mut().expect("Always Some")
     }
 }
 
+/// A pratitioning function for selecting which worker a keyed message will go to
 pub type WorkerPartitioner<K> = fn(&K, &IndexSet<WorkerId>) -> WorkerId;
 
 use crate::types::OperatorId;
 
+/// An interrogation message for inquiring which keys are associated with state on a worker
 #[derive(Clone)]
 pub struct Interrogate<K> {
     shared: Rc<Mutex<IndexSet<K>>>,
@@ -163,10 +166,12 @@ where
         Self { shared, tester }
     }
 
+    /// Add all keys for which the caller holds state to this interrogator
     pub fn add_keys<'a>(&mut self, keys: impl IntoIterator<Item = &'a K>) {
+        #[allow(clippy::unwrap_used)]
         let mut guard = self.shared.lock().unwrap();
         for key in keys {
-            if (self.tester)(&key) {
+            if (self.tester)(key) {
                 guard.insert(key.clone());
             }
         }
@@ -177,6 +182,7 @@ where
     ///
     /// PANICS: If the Mutex is poisened
     pub(crate) fn try_unwrap(self) -> Result<IndexSet<K>, Self> {
+        #[allow(clippy::unwrap_used)]
         Rc::try_unwrap(self.shared)
             .map(|x| Mutex::into_inner(x).unwrap())
             .map_err(|x| Self {
@@ -186,8 +192,10 @@ where
     }
 }
 
+/// A collect message collecting key-state for redistribution
 #[derive(Clone, Debug)]
 pub struct Collect<K> {
+    /// The key for which state is being collected
     pub key: K,
     collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
 }
@@ -201,7 +209,10 @@ where
             collection: Rc::new(Mutex::new(IndexMap::new())),
         }
     }
+
+    /// Add the given state to the collection, allowing it to be transferred to another worker
     pub fn add_state<S: Distributable>(&mut self, operator_id: OperatorId, state: S) {
+        #[allow(clippy::unwrap_used)]
         self.collection
             .lock()
             .unwrap()
@@ -214,6 +225,7 @@ impl<K> Collect<K> {
     ///
     /// PANICS: If the Mutex is poisoned
     pub(crate) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
+        #[allow(clippy::unwrap_used)]
         match Rc::try_unwrap(self.collection).map(|mutex| mutex.into_inner().unwrap()) {
             Ok(collection) => Ok((self.key, collection)),
             Err(collection) => Err(Self {
@@ -236,13 +248,16 @@ where
     }
 }
 
+/// Acquire message of the ICA rescale process which is sent to operators for them to take the
+/// state they will manage under the new configuration
 #[derive(Debug, Clone)]
 pub struct Acquire<K> {
     key: K,
     collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
 }
 impl<K> Acquire<K> {
-    pub fn new(key: K, collection: IndexMap<OperatorId, Vec<u8>>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new(key: K, collection: IndexMap<OperatorId, Vec<u8>>) -> Self {
         Self {
             key,
             collection: Rc::new(Mutex::new(collection)),
@@ -254,7 +269,10 @@ impl<K> Acquire<K>
 where
     K: Key,
 {
+    /// Try taking state for this operator from this Acquire message, returning the state and
+    /// its key, if the message holds any for the given operator
     pub fn take_state<S: Distributable>(&self, operator_id: &OperatorId) -> Option<(K, S)> {
+        #[allow(clippy::unwrap_used)]
         self.collection
             .lock()
             .unwrap()

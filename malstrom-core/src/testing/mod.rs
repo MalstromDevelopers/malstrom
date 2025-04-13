@@ -3,24 +3,22 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
-use crate::runtime::{SingleThreadRuntime, StreamProvider};
+use crate::runtime::SingleThreadRuntime;
 use crate::snapshot::{Barrier, SnapshotVersion};
 use crate::types::{Key, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};
+use crate::worker::StreamProvider;
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
     types::{MaybeData, MaybeKey, Message, OperatorId, WorkerId},
 };
 use indexmap::{IndexMap, IndexSet};
 
-mod communication;
-mod operator_tester;
-mod vec_sink;
-// mod iterator_source;
+pub(crate) mod communication;
+pub(crate) mod operator_tester;
+pub(crate) mod vec_sink;
+pub(crate) use vec_sink::VecSink;
 
-pub use vec_sink::VecSink;
-// pub use iterator_source::SingleIteratorSource;
-pub use communication::{NoCommunication, NoCommunicationError};
 pub use operator_tester::{FakeCommunication, OperatorTester, SentMessage};
 
 /// Creates a JetStream worker with no persistence and
@@ -30,7 +28,7 @@ where
     F: FnMut(&mut dyn StreamProvider) -> (),
 {
     SingleThreadRuntime::builder()
-        .persistence(NoPersistence::default())
+        .persistence(NoPersistence)
         .build(stream)
 }
 
@@ -64,10 +62,6 @@ impl PersistenceBackend for CapturingPersistenceBackend {
 }
 
 impl PersistenceClient for CapturingPersistenceBackend {
-    fn get_version(&self) -> crate::snapshot::SnapshotVersion {
-        0
-    }
-
     fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>> {
         self.capture.lock().unwrap().remove(operator_id)
     }
@@ -92,7 +86,7 @@ pub fn test_forward_system_messages<
 >(
     tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
 ) {
-    let msg = Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default()));
+    let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence)));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(
@@ -137,7 +131,10 @@ mod tests {
 
     use itertools::Itertools;
 
-    use crate::snapshot::{deserialize_state, serialize_state};
+    use crate::{
+        snapshot::{deserialize_state, serialize_state},
+        testing::vec_sink::VecSink,
+    };
 
     use super::*;
 

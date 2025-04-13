@@ -1,8 +1,9 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::JetStreamBuilder;
+use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
+/// Filter messages in a stream while at the same time applying a function to all values.
 pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
     /// Applies a function to every element of the stream.
     /// All elements for which the function returns `Some(x)` are emitted downstream
@@ -41,10 +42,10 @@ pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
         name: &str,
 
         mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T> FilterMap<K, VI, T> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T> FilterMap<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     VI: Data,
@@ -55,7 +56,7 @@ where
         name: &str,
 
         mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.stateless_op(
             name,
             move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {

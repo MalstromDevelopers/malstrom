@@ -38,6 +38,7 @@ pub fn rendezvous_select<V: Hash, T: Hash + Copy>(value: &V, options: &IndexSet<
 ///
 /// **PANIC:** if the set is empty
 pub fn index_select<T: Copy>(i: &u64, s: &IndexSet<T>) -> T {
-    let idx: usize = (*i).try_into().unwrap();
-    *s.get_index(idx % s.len()).unwrap()
+    let idx = *i as usize;
+    *s.get_index(idx % s.len())
+        .expect("Expected a non-empty set")
 }

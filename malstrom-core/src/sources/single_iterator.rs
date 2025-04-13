@@ -38,6 +38,7 @@ use super::{StatelessSourceImpl, StatelessSourcePartition};
 pub struct SingleIteratorSource<T>(Option<Box<dyn Iterator<Item = T>>>);
 
 impl<T> SingleIteratorSource<T> {
+    /// Create a new source from an iterable value
     pub fn new<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -137,7 +138,8 @@ mod tests {
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
-        testing::{get_test_rt, VecSink},
+        testing::get_test_rt,
+        testing::vec_sink::VecSink,
         types::{Message, NoKey},
     };
 
@@ -161,33 +163,6 @@ mod tests {
         let c = collector.into_iter().map(|x| x.value).collect_vec();
         assert_eq!(c, (0..100).collect_vec())
     }
-
-    // /// It should only emit records on worker 0 to avoid duplicates
-    // #[test]
-    // fn emits_only_on_worker_0() {
-    //     let sink = VecSink::new();
-
-    //     let args = [sink.clone(), sink.clone()];
-
-    //     let rt = MultiThreadRuntime::new_with_args(
-    //         |flavor, this_sink| {
-    //             let mut builder = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence::default());
-    //             builder
-    //                 .new_stream()
-    //                 .source(
-    //                     "source",
-    //                     StatelessSource::new(SingleIteratorSource::new(0..10)),
-    //                 )
-    //                 .sink("sink", StatelessSink::new(this_sink));
-    //             builder
-    //         },
-    //         args,
-    //     );
-
-    //     rt.execute().unwrap();
-    //     // if both threads emitted values, we would expect this to contain 20 values, not 10
-    //     assert_eq!(sink.len(), 10);
-    // }
 
     /// values should be timestamped with their iterator index
     #[test]

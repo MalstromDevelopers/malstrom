@@ -1,4 +1,5 @@
-pub mod distributed;
+//! Keyed streams for logical and physical partitioning of data
+pub(crate) mod distributed;
 mod key_distribute;
 mod key_local;
 pub mod partitioners;

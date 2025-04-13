@@ -13,7 +13,6 @@ use flume::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
-use thiserror::Error;
 use tracing::debug;
 
 /// uniquely identifies a connection
@@ -67,6 +66,7 @@ impl InterThreadCommunication {
     ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         let key = ConnectionKey::new(to_worker, from_worker, operator);
 
+        #[allow(clippy::unwrap_used)]
         let mut shared = self.shared.lock().unwrap();
         let transport_container = shared.entry(key).or_insert_with(new_transport_pair);
         // We return a clone of the instantiated transport instead of the value to
@@ -147,7 +147,7 @@ impl BiStreamTransport for ChannelTransport {
         self.receiver
             .recv_async()
             .await
-            .map_err(TransportError::recv_error)
+            .map_err(|x| TransportError::RecvError(Box::new(x)))
     }
 
     fn recv(&self) -> Result<Option<Vec<u8>>, TransportError> {
@@ -180,12 +180,8 @@ fn new_transport_pair() -> ChannelTransportContainer {
     ChannelTransportContainer { to_low, to_high }
 }
 
-#[derive(Error, Debug)]
-pub enum InterThreadCommunicationError {}
-
-#[cfg(test)]
 mod test {
-    use super::*;
+    use crate::runtime::{threaded::{InterThreadCommunication, Shared}, OperatorOperatorComm as _};
 
     /// check we can send and recv a single message on two transports
     #[test]

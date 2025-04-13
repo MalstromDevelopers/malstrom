@@ -1,0 +1,38 @@
+[package]
+name = "k8s-operator"
+version = "0.2.0"
+edition = "2021"
+description = "Kubernetes operator for Malstrom kubernetes runtime."
+repository = "https://github.com/JetStreamDevelopers/k8s-operator"
+license = "AGPL-3.0"
+keywords = ["kubernetes", "stream", "processing", "malstrom"]
+categories = ["command-line-utilities"]
+readme = "Readme.md"
+authors = [
+    "nico@acupof.xyz"
+]
+[lints]
+workspace = true
+
+[[bin]]
+name = "k8s-operator"
+path = "src/main.rs"
+
+[dependencies]
+crds = { path = "./crds" }
+futures = "0.3"
+k8s-openapi = { version = "0.23.0", features = ["v1_30", "schemars"] }
+kube = { version = "0.97.0", features = ["runtime", "derive"] }
+kube-runtime = "0.97.0"
+prost = "0.13.5"
+serde_json = "1.0.132"
+thiserror = "2.0.3"
+tokio = { version = "1.41.0", features = ["macros", "rt-multi-thread"] }
+tonic = "0.12.3"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+
+[build-dependencies]
+serde_yaml = "0.9.34"
+tonic-build = "0.12.3"
+crds = { path = "./crds" }
