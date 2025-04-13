@@ -4,7 +4,10 @@ use std::{
 };
 
 use malstrom::{
-    operators::RichFunction, runtime::communication::Distributable, stream::StreamBuilder, types::{DataMessage, Key, MaybeData, Message, Timestamp},
+    operators::RichFunction,
+    runtime::communication::Distributable,
+    stream::StreamBuilder,
+    types::{DataMessage, Key, MaybeData, Message, Timestamp},
 };
 
 pub trait TumblingWindow<K, V, T, VO> {
@@ -15,30 +18,35 @@ pub trait TumblingWindow<K, V, T, VO> {
     /// # Example
     /// ```rust
     /// use malstrom::operators::*;
-    /// use malstrom::operators::Source;
-    /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::testing::VecSink;
-    /// use malstrom::sources::SingleIteratorSource;
-    /// use malstrom::runtime::StreamProvider;
+    /// use malstrom::runtime::SingleThreadRuntime;
+    /// use malstrom::snapshot::NoPersistence;
+    /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+    /// use malstrom::worker::StreamProvider;
+    /// use malstrom::sinks::{VecSink, StatelessSink};
+    /// use malstrom_windows::tumbling::TumblingWindow;
     ///
     /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
     ///
-    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    /// SingleThreadRuntime::builder()
+    ///     .persistence(NoPersistence)
+    ///     .build(move |provider: &mut dyn StreamProvider| {
+    ///         let (on_time, _late) = provider
+    ///             .new_stream()
+    ///             .source("source", StatelessSource::new(SingleIteratorSource::new(0..100)))
+    ///             .assign_timestamps("assigner", |msg| msg.timestamp)
+    ///             .generate_epochs("generate", |_, t| t.to_owned());
     ///
-    /// let (on_time, _late) = worker
-    ///     .new_stream()
-    ///     .source("source", SingleIteratorSource::new(0..100))
-    ///     .assign_timestamps("assigner", |msg| msg.timestamp)
-    ///     .generate_epochs("generate", |_, t| t.to_owned());
-    ///
-    /// on_time
-    ///     .key_local("key", |_| false)
-    ///     .tumbling_window("count", 50, 0, |x| x.into_iter().sum())
-    ///     .sink("sink", sink.clone())
-    ///     .finish();
-    /// worker.build().expect("can build").execute();
+    ///         on_time
+    ///             .key_local("key", |_| false)
+    ///             .tumbling_window("count", 50, 0, |x| x.into_iter().sum())
+    ///             .sink("sink", StatelessSink::new(sink_clone));
+    ///      })
+    ///      .execute()
+    ///      .unwrap();
+    /// let expected: Vec<i32> = vec![(0..50).sum(), (50..100).sum()];
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
-    /// assert_eq!(out, vec![(0..49).iter().sum(), (50..100).iter().sum()]);
+    /// assert_eq!(out, expected);
     /// ```
     fn tumbling_window(
         self,
@@ -108,7 +116,8 @@ mod tests {
         runtime::SingleThreadRuntime,
         sinks::{StatelessSink, VecSink},
         snapshot::NoPersistence,
-        sources::{SingleIteratorSource, StatelessSource}, worker::StreamProvider,
+        sources::{SingleIteratorSource, StatelessSource},
+        worker::StreamProvider,
     };
 
     use crate::tumbling::TumblingWindow;
