@@ -78,7 +78,7 @@ where
         zero_alignemt: T,
         mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
     ) -> StreamBuilder<K, VO, T> {
-        self.ttl_function(
+        self.ttl_map(
             name,
             move |_, inp, ts, mut state, _| {
                 // TODO: +size or +size-1?

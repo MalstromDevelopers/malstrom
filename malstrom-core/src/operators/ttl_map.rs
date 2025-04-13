@@ -58,7 +58,7 @@ where
     ///         // stateful operators require a keyed stream
     ///         .key_local("key", |_| false)
     ///         // sum up all numbers and thus far
-    ///         .ttl_function(
+    ///         .ttl_map(
     ///             "ttl", |key, inp, ts, mut state: ExpireMap<String, i32, usize>, out: &mut Output<bool, i32, usize>| {
     ///                 let g = state.get(&"key".to_owned());
     ///                 let val = if let Some(val) = g {
@@ -83,7 +83,7 @@ where
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn ttl_function<
+    fn ttl_map<
         VO: Data,
         S: Default + Serialize + DeserializeOwned + 'static,
         UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
@@ -157,7 +157,7 @@ where
     VI: Data + Serialize + DeserializeOwned,
     T: Timestamp + Serialize + DeserializeOwned,
 {
-    fn ttl_function<
+    fn ttl_map<
         VO: Data,
         S: Default + Serialize + DeserializeOwned + 'static,
         UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
@@ -214,7 +214,7 @@ mod test {
             // calculate a running total split by odd and even numbers
             on_time
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .ttl_function(
+                .ttl_map(
                     "add",
                     |key,
                      inp,
@@ -273,7 +273,7 @@ mod test {
 
             on_time
                 .key_local("key-local", |_| 0)
-                .ttl_function(
+                .ttl_map(
                     "concat",
                     |key,
                      inp,
