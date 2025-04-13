@@ -2,9 +2,6 @@
 resolver = "2"
 members = [
     "malstrom-core",
-    "k8s-app",
-    "malstrom-k8s",
-    "malstrom-k8s-operator",
     "malstrom-kafka", 
     "malstrom-windows",
     "malstrom-k8s/artifact-downloader",
