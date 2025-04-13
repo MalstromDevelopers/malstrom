@@ -139,7 +139,7 @@ mod tests {
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::get_test_rt,
-        testing::vec_sink::VecSink,
+        testing::VecSink,
         types::{Message, NoKey},
     };
 
