@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
-use expiremap::ExpiredIterator;
-pub use expiremap::{ExpireMap, ExpiryEntry};
+use expiremap::{ExpireMap, ExpiredIterator, ExpiryEntry};
+pub use expiremap;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
@@ -14,6 +14,7 @@ use super::stateful_op::{StatefulLogic, StatefulOp};
 
 // TODO: Documentation ENUM to support variants
 
+/// Map with automatic state clean up based on ttl.
 pub trait TtlMap<K, VI, T>: super::sealed::Sealed
 where
     T: Serialize + DeserializeOwned,
