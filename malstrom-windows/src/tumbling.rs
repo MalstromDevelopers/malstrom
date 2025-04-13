@@ -4,17 +4,17 @@ use std::{
 };
 
 use malstrom::{
-    keyed::distributed::{DistData, DistKey, DistTimestamp},
+    keyed::distributed::{DistData, DistKey},
     operators::RichFunction,
     runtime::communication::Distributable,
     stream::JetStreamBuilder,
     types::{DataMessage, Message, Timestamp},
 };
 
-pub trait TumblingWindow<K, V, T, VO> {
-    // TODO: Update doc string
-    /// Map transforms every value in a datastream into a different value
-    /// by applying a given function or closure.
+pub trait TumblingWindow<K, V, Duration, VO> {
+    /// Tumbling event time window which provides the owned values arrived on time
+    /// during the windows duration to the aggregator function. The window is triggered as soon
+    /// as the epoch advances past the windows end time.
     ///
     /// # Example
     /// ```rust
@@ -23,41 +23,45 @@ pub trait TumblingWindow<K, V, T, VO> {
     /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
     /// use malstrom::testing::VecSink;
     /// use malstrom::sources::SingleIteratorSource;
+    /// use malstrom::runtime::StreamProvider;
     ///
     /// let sink = VecSink::new();
     ///
     /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
-    ///
-    /// worker
+    /// 
+    /// let (on_time, _late) = worker
     ///     .new_stream()
-    ///     .source(SingleIteratorSource::new(0..100))
-    ///     .map(|x| x * 2)
-    ///     .sink(sink.clone())
-    ///     .finish();
+    ///     .source("source", SingleIteratorSource::new(0..100))
+    ///     .assign_timestamps("assigner", |msg| msg.timestamp)
+    ///     .generate_epochs("generate", |_, t| t.to_owned());
     ///
+    /// on_time
+    ///     .key_local("key", |_| false)
+    ///     .tumbling_window("count", 50, |x| x.into_iter().sum())
+    ///     .sink("sink", sink.clone())
+    ///     .finish();
     /// worker.build().expect("can build").execute();
-    /// let expected: Vec<i32> = (0..100).map(|x| x * 2).collect();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
-    /// assert_eq!(out, expected);
+    /// assert_eq!(out, vec![0..49.iter().sum(), 50..100.iter().sum()]);
     /// ```
     fn tumbling_window(
         self,
         name: &str,
-        size: T,
+        size: Duration,
         aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> JetStreamBuilder<K, VO, Duration>;
 }
 
-impl<K, V, T, VO> TumblingWindow<K, V, T, VO> for JetStreamBuilder<K, V, T>
+impl<K, V, Duration, VO> TumblingWindow<K, V, Duration, VO> for JetStreamBuilder<K, V, Duration>
 where
     K: DistKey,
     V: DistData,
     VO: DistData,
-    T: Timestamp
+    Duration: Timestamp
         + Distributable
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Rem<Output = T>
+        + Add<Output = Duration>
+        + Sub<Output = Duration>
+        + Rem<Output = Duration>
         + Hash
         + Eq
         + Copy,
@@ -65,9 +69,9 @@ where
     fn tumbling_window(
         self,
         name: &str,
-        size: T,
+        size: Duration,
         mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> JetStreamBuilder<K, VO, Duration> {
         self.rich_function(
             name,
             move |_, inp, ts, mut state, _| {
@@ -111,7 +115,7 @@ mod tests {
     use crate::tumbling::TumblingWindow;
 
     #[test]
-    fn test_map() {
+    fn test_tumbling_window() {
         let collector = VecSink::new();
 
         let rt = get_test_rt(|provider| {
@@ -120,7 +124,6 @@ mod tests {
                 .source(
                     "source",
                     StatelessSource::new(SingleIteratorSource::new([
-                        // TODO: String slices do not work (&str) Then lifetime issues
                         "hello".to_owned(),
                         "world".to_owned(),
                         "foo".to_owned(),
@@ -134,7 +137,7 @@ mod tests {
 
             on_time
                 .key_local("key", |_| false)
-                .tumbling_window("get-len", 2, |x| x.join("|"))
+                .tumbling_window("join-two", 2, |x| x.join("|"))
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();
