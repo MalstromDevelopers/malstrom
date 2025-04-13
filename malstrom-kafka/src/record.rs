@@ -4,7 +4,7 @@ use rdkafka::{
 };
 
 /// A single record as received by or sent to Kafka
-#[derive(Builder)]
+#[derive(Builder, Debug, Clone)]
 pub struct KafkaRecord {
     pub topic: String,
     pub partition: Option<i32>,

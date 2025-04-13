@@ -20,7 +20,15 @@ export default defineConfig({
           { text: 'Stateful Programs', link: '/guide/StatefulPrograms' },
           { text: 'Joining and Splitting Streams', link: '/guide/JoiningSplitting' },
           { text: 'Timely Processing', link: '/guide/TimelyProcessing' },
+          { text: 'Connecting to Kafka', link: '/guide/Kafka' },
           { text: 'Deploying to Kubernetes', link: '/guide/Kubernetes' },
+          { text: 'Custom Sources', link: '/guide/CustomSources' },
+        ]
+      },
+      {
+        text: 'About Malstrom',
+        items: [
+          { text: 'What is Malstrom?', link: '/WhatIsMalstrom' },
           { text: 'Malstrom compared to other frameworks', link: '/MalstromCompared' },
         ]
       }

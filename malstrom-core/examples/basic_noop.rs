@@ -6,7 +6,6 @@ use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
 
 fn main() {
-    tracing_subscriber::fmt::init();
     SingleThreadRuntime::builder()
         .snapshots(Duration::from_secs(300))
         .persistence(NoPersistence)

@@ -7,7 +7,6 @@ use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    tracing_subscriber::fmt::init();
     MultiThreadRuntime::builder()
         .parrallelism(4)
         .persistence(NoPersistence)

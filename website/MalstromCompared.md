@@ -42,15 +42,12 @@ Flink uses a task-parallel model to parallelize computation, while Malstrom uses
 The task-parallel model is more flexible in terms of graph layout, while the data-parallel model is potentially
 more efficient and easier to understand. For more details see [this blogpost](https://bytewax.io/blog/data-parallel-task-parallel-and-agent-actor-architectures) by the excellent people from [bytewax](bytewax.io).
 
-Flink runs on the JVM, Malstrom compiles to native code.
-
-Flink supports larger than memory state, while Malstrom does not (yet!).
-
-Flink favors higher level APIs while Malstrom exposes both high and low level APIs.
-
-Flink clusters can not rescale without downtime, Malstrom can.
-
-Malstrom can be extended with custom runtimes and snapshot storage
+Aside from this:
+- Flink runs on the JVM, Malstrom compiles to native code.
+- Flink supports larger than memory state, while Malstrom does not (yet!).
+- Flink favors higher level APIs while Malstrom exposes both high and low level APIs.
+- Flink clusters can not rescale without downtime, Malstrom can.
+- Malstrom can be extended with custom runtimes and snapshot storage
 
 ## Bytewax
 

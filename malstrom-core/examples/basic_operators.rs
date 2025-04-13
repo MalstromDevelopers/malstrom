@@ -6,7 +6,6 @@ use malstrom::sources::{SingleIteratorSource, StatelessSource};
 use malstrom::worker::StreamProvider;
 
 fn main() {
-    tracing_subscriber::fmt::init();
     SingleThreadRuntime::builder()
         .persistence(NoPersistence)
         .build(build_dataflow)

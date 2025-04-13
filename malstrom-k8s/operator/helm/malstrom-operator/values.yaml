@@ -1,19 +1,19 @@
 # Default values for malstrom-operator.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
 
-name: malstrom-operator
-namespace: default
+name: malstrom-operator # operator name
+namespace: default # deployment namespace for operator pods
 
-logLevel: info
+logLevel: info # logging level, operator will log at this level to std out
 
 operator:
   image:
-    repository: ghcr.io/malstromdevelopers/k8s-operator
+    repository: ghcr.io/malstromdevelopers/malstrom-operator
     tag: latest
     imagePullPolicy: IfNotPresent
   resources: {}
 
+# artifact manager allows directly uploading malstrom jobs as binaries
+# not recommended for production
 artifactManager:
   deploy: false
   image:
@@ -27,10 +27,10 @@ artifactManager:
   storageClassName: null
   size: 1Gi
 
-serviceAccount:
+serviceAccount: # service account used by operator
   name: malstrom-operator
   namespaces: ["default"]
 
-imagePullSecrets: []
+imagePullSecrets: [] # names of Kubernetes secrets used for pulling the operator images
 
 affinity: {}

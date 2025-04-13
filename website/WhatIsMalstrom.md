@@ -16,32 +16,13 @@ Malstrom's goal is to offer best-in-class usability, reliability and performance
 
 # Code Example
 
-```rust
-use malstrom::operators::*;
-use malstrom::runtime::MultiThreadRuntime;
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-use malstrom::sink::{StatelessSink, StdOutSink};
+<<< @../../malstrom-core/examples/look_ma_im_streaming.rs
 
-fn main() {
-	MultiThreadRuntime::new(
-	|runtime| {
-		let worker = WorkerBuilder::new(runtime, NoSnapshots, NoPersistence);
-		worker.new_stream()
-		.source(
-			"iter-source",
-			StatelessSource::new(
-				SingleIteratorSource::new(["Look", "ma'", "I'm" "streaming"])
-				)
-			)
-		.map("upper", |x| x.to_uppercase())
-		.sink("stdout", StatelessSink::new(StdOutSink::default()))
-		.finish();
-		worker
-	}
-	).unwrap().execute()
-}
+This outputs
 
->>> LOOK MA' I'M STREAMING
 ```
-
+{ key: NoKey, value: "LOOK", timestamp: 0 }
+{ key: NoKey, value: "MA'", timestamp: 1 }
+{ key: NoKey, value: "I'M", timestamp: 2 }
+{ key: NoKey, value: "STREAMING", timestamp: 3 }
+```

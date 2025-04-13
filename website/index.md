@@ -15,7 +15,7 @@ hero:
       link: /guide/GettingStarted.md
     - theme: alt
       text: API Documentation
-      link: docs.rs/malstrom
+      link: https://docs.rs/malstrom
     - theme: alt
       text: What is Stream Processing?
       link: https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=0s
@@ -23,7 +23,7 @@ hero:
 features:
   - title: Distributed
     details: >
-      Malstrom supports Kubernetes out-of-the-box, just deploy your job as a CRD and you are done!
+      Malstrom supports Kubernetes out of the box, just deploy your job as a CRD and you are done!
     link: /kubernetes/index.md
 
   - title: Stateful
@@ -46,7 +46,7 @@ features:
 
   - title: Extensible
     details: >
-      Want to store checkpoints on floppy disks? Need encrypted communication? You can!
+      Want to store checkpoints on floppy disks? Read data from FTP? You can!
       Malstrom exposes low level APIs so you can adapt it to your demands.
 
   - title: Rust API
