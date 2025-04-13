@@ -3,41 +3,33 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::communication::Distributable;
-use crate::runtime::threaded::SingleThreadRuntimeFlavor;
-use crate::runtime::WorkerBuilder;
-use crate::snapshot::{Barrier, NoSnapshots};
-use crate::types::MaybeTime;
-use crate::types::{Key, RescaleMessage, SuspendMarker};
+use crate::runtime::SingleThreadRuntime;
+use crate::snapshot::{Barrier, SnapshotVersion};
+use crate::types::{Key, SuspendMarker};
+use crate::types::{MaybeTime, RescaleMessage};
+use crate::worker::StreamProvider;
 use crate::{
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient},
-    stream::JetStreamBuilder,
-    types::{MaybeData, MaybeKey, Message, NoData, NoKey, NoTime, OperatorId, WorkerId},
+    types::{MaybeData, MaybeKey, Message, OperatorId, WorkerId},
 };
 use indexmap::{IndexMap, IndexSet};
 
-mod communication;
-mod operator_tester;
-mod vec_sink;
-// mod iterator_source;
+pub(crate) mod communication;
+pub(crate) mod operator_tester;
+pub(crate) mod vec_sink;
+pub(crate) use vec_sink::VecSink;
 
-pub use vec_sink::VecSink;
-// pub use iterator_source::SingleIteratorSource;
-pub use communication::{NoCommunication, NoCommunicationError};
 pub use operator_tester::{FakeCommunication, OperatorTester, SentMessage};
 
 /// Creates a JetStream worker with no persistence and
 /// a JetStream stream, which does not produce any messages
-pub fn get_test_stream() -> (
-    WorkerBuilder<SingleThreadRuntimeFlavor, NoPersistence>,
-    JetStreamBuilder<NoKey, NoData, NoTime>,
-) {
-    let mut worker = WorkerBuilder::new(
-        SingleThreadRuntimeFlavor,
-        NoSnapshots,
-        NoPersistence::default(),
-    );
-    let stream = worker.new_stream();
-    (worker, stream)
+pub fn get_test_rt<F>(stream: F) -> SingleThreadRuntime<NoPersistence, F>
+where
+    F: FnMut(&mut dyn StreamProvider) -> (),
+{
+    SingleThreadRuntime::builder()
+        .persistence(NoPersistence)
+        .build(stream)
 }
 
 #[derive(Default, Clone, Debug)]
@@ -51,8 +43,8 @@ pub struct CapturingPersistenceBackend {
 impl PersistenceBackend for CapturingPersistenceBackend {
     type Client = CapturingPersistenceBackend;
 
-    fn last_commited(&self, _worker_id: WorkerId) -> Self::Client {
-        self.clone()
+    fn last_commited(&self) -> Option<SnapshotVersion> {
+        None
     }
 
     fn for_version(
@@ -65,16 +57,12 @@ impl PersistenceBackend for CapturingPersistenceBackend {
 
     fn commit_version(&self, _snapshot_version: &crate::snapshot::SnapshotVersion) {
         // TODO
+        todo!()
     }
 }
 
 impl PersistenceClient for CapturingPersistenceBackend {
-    fn get_version(&self) -> crate::snapshot::SnapshotVersion {
-        0
-    }
-
     fn load(&self, operator_id: &OperatorId) -> Option<Vec<u8>> {
-        println!("CPB loading state for {operator_id}");
         self.capture.lock().unwrap().remove(operator_id)
     }
 
@@ -94,11 +82,11 @@ pub fn test_forward_system_messages<
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: Distributable + 'static,
+    R: Distributable + Send + Sync + 'static,
 >(
     tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
 ) {
-    let msg = Message::AbsBarrier(Barrier::new(Box::<NoPersistence>::default()));
+    let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence)));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(
@@ -124,21 +112,10 @@ pub fn test_forward_system_messages<
         Message::Interrogate(_)
     ));
 
-    let msg = Message::Rescale(RescaleMessage::ScaleAddWorker(IndexSet::new()));
+    let msg = Message::Rescale(RescaleMessage::new(IndexSet::new(), 0));
     tester.send_local(msg);
     tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Rescale(RescaleMessage::ScaleAddWorker(_))
-    ));
-
-    let msg = Message::Rescale(RescaleMessage::ScaleRemoveWorker(IndexSet::new()));
-    tester.send_local(msg);
-    tester.step();
-    assert!(matches!(
-        tester.recv_local().unwrap(),
-        Message::Rescale(RescaleMessage::ScaleRemoveWorker(_))
-    ));
+    assert!(matches!(tester.recv_local().unwrap(), Message::Rescale(_)));
 
     let msg = Message::SuspendMarker(SuspendMarker::default());
     tester.send_local(msg);
@@ -154,7 +131,10 @@ mod tests {
 
     use itertools::Itertools;
 
-    use crate::snapshot::{deserialize_state, serialize_state};
+    use crate::{
+        snapshot::{deserialize_state, serialize_state},
+        testing::vec_sink::VecSink,
+    };
 
     use super::*;
 
@@ -175,8 +155,8 @@ mod tests {
     #[test]
     fn capturing_persistence_backend() {
         let backend = CapturingPersistenceBackend::default();
-        let a = backend.last_commited(0);
-        let mut b = backend.last_commited(0);
+        let a = backend.for_version(0, &0);
+        let mut b = backend.for_version(0, &0);
 
         let val = "hello world".to_string();
         let ser = serialize_state(&val);

@@ -1,0 +1,36 @@
+# Default values for malstrom-operator.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+name: malstrom-operator
+namespace: default
+
+logLevel: info
+
+operator:
+  image:
+    repository: ghcr.io/malstromdevelopers/k8s-operator
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+
+artifactManager:
+  deploy: false
+  image:
+    repository: ghcr.io/malstromdevelopers/artifact-manager
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 80
+  storageClassName: null
+  size: 1Gi
+
+serviceAccount:
+  name: malstrom-operator
+  namespaces: ["default"]
+
+imagePullSecrets: []
+
+affinity: {}

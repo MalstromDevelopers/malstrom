@@ -11,24 +11,28 @@ use crate::{
     keyed::{
         distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
         partitioners::rendezvous_select,
-        Distribute, KeyDistribute,
+        KeyDistribute,
     },
-    operators::{Map, Source, StreamSink, StreamSource},
-    runtime::{
-        communication::{broadcast, Distributable},
-        CommunicationClient,
-    },
+    operators::StreamSink,
+    runtime::communication::Distributable,
     snapshot::Barrier,
-    stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
+    stream::{BuildContext, LogicWrapper, OperatorBuilder, OperatorContext, StreamBuilder},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage,
-        SuspendMarker, Timestamp, WorkerId,
+        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoTime, RescaleMessage,
+        SuspendMarker,
     },
 };
-
+/// Implementation of a stateful sink
 pub trait StatefulSinkImpl<K, V, T>: 'static {
+    /// A `Part` of a partition is a key by which any partition of the source is
+    /// uniquely identified. It is perfectly valid for a source to only have a single part and in
+    /// turn only a single partition, though this may not be very useful.
     type Part: Distributable + MaybeKey + Hash + Eq;
+    /// State for a partition of this sink. The state is persisted across job restarts
+    /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState: Distributable;
+    /// A partition of this sink.
+    /// Partitions may be moved to different workers, when the jobs worker set changes.
     type SinkPartition: StatefulSinkPartition<K, V, T, PartitionState = Self::PartitionState>;
 
     /// Assign a message to a specific sink partition, if the partition does not yet
@@ -36,25 +40,32 @@ pub trait StatefulSinkImpl<K, V, T>: 'static {
     /// **This function MUST BE stable and deterministic**.
     fn assign_part(&self, msg: &DataMessage<K, V, T>) -> Self::Part;
 
+    /// Build the partition for the given part
     fn build_part(
         &mut self,
         part: &Self::Part,
         part_state: Option<Self::PartitionState>,
     ) -> Self::SinkPartition;
 }
+
+/// A sink which emits records and holds some persistent state.
 pub struct StatefulSink<K, V, T, S: StatefulSinkImpl<K, V, T>>(S, PhantomData<(K, V, T)>);
 
 impl<K, V, T, S: StatefulSinkImpl<K, V, T>> StatefulSink<K, V, T, S> {
+    /// Create a new stateful sink by wrapping an implementation
     pub fn new(source: S) -> Self {
         Self(source, PhantomData)
     }
 }
 
+/// A source which emits records and holds some persistent state.
 pub trait StatefulSinkPartition<K, V, T> {
+    /// State for a partition of this sink. The state is persisted across job restarts
+    /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState;
 
     /// Poll this partition, possibly returning a record
-    fn sink(&mut self, msg: DataMessage<K, V, T>) -> ();
+    fn sink(&mut self, msg: DataMessage<K, V, T>);
 
     /// snapshot the current state of this partition
     fn snapshot(&self) -> Self::PartitionState;
@@ -64,7 +75,7 @@ pub trait StatefulSinkPartition<K, V, T> {
     fn collect(self) -> Self::PartitionState;
 
     /// Gets called when execution gets suspended, possibly resuming later.
-    fn suspend(&mut self) -> () {}
+    fn suspend(&mut self) {}
 }
 
 impl<K, V, T, S> StreamSink<K, V, T> for StatefulSink<K, V, T, S>
@@ -74,7 +85,7 @@ where
     V: DistData,
     T: DistTimestamp,
 {
-    fn consume_stream(self, name: &str, builder: JetStreamBuilder<K, V, T>) -> () {
+    fn consume_stream(self, name: &str, builder: StreamBuilder<K, V, T>) {
         // HACK: Bit ugly, but RefCell works because the scheduler will only schedule
         // one operator at a time.
         let builder_ref = Rc::new(RefCell::new(self.0));
@@ -122,8 +133,7 @@ where
                     let partition_op = StatefulSinkPartitionOp::<K, V, T, S>::new(ctx, builder_ref);
                     partition_op.into_logic()
                 },
-            ))
-            .finish()
+            ));
     }
 }
 
@@ -156,11 +166,7 @@ where
         }
     }
 
-    fn add_partition(
-        &mut self,
-        part: Builder::Part,
-        part_state: Option<Builder::PartitionState>,
-    ) -> () {
+    fn add_partition(&mut self, part: Builder::Part, part_state: Option<Builder::PartitionState>) {
         let partition = self.part_builder.borrow_mut().build_part(&part, part_state);
         self.partitions.insert(part, partition);
     }
@@ -178,7 +184,7 @@ where
         &mut self,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
     }
 
     fn on_data(
@@ -186,7 +192,7 @@ where
         data_message: DataMessage<Builder::Part, (K, V), T>,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let partition = self
             .partitions
             .entry(data_message.key)
@@ -204,7 +210,7 @@ where
         barrier: &mut Barrier,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let state: Vec<_> = self
             .partitions
             .iter()
@@ -215,10 +221,10 @@ where
 
     fn on_rescale(
         &mut self,
-        rescale_message: &mut RescaleMessage,
+        _rescale_message: &mut RescaleMessage,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
-        ctx: &mut OperatorContext,
-    ) -> () {
+        _ctx: &mut OperatorContext,
+    ) {
     }
 
     fn on_suspend(
@@ -226,7 +232,7 @@ where
         _suspend_marker: &mut SuspendMarker,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         for partition in self.partitions.values_mut() {
             partition.suspend();
         }
@@ -237,7 +243,7 @@ where
         interrogate: &mut Interrogate<Builder::Part>,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let keys = self.partitions.keys();
         interrogate.add_keys(keys);
     }
@@ -247,7 +253,7 @@ where
         collect: &mut Collect<Builder::Part>,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let key_state = self.partitions.swap_remove(&collect.key);
         if let Some(partition) = key_state {
             collect.add_state(ctx.operator_id, partition.collect());
@@ -259,7 +265,7 @@ where
         acquire: &mut Acquire<Builder::Part>,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let partition_state = acquire.take_state(&ctx.operator_id);
         if let Some((part, part_state)) = partition_state {
             self.add_partition(part, Some(part_state));
@@ -270,7 +276,7 @@ where
         &mut self,
         _epoch: T,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
-        ctx: &mut OperatorContext,
-    ) -> () {
+        _ctx: &mut OperatorContext,
+    ) {
     }
 }

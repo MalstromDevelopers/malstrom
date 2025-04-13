@@ -2,15 +2,19 @@ use std::{
     collections::{HashMap, VecDeque},
     ops::Range,
     rc::Rc,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
+
+use async_trait::async_trait;
 
 use crate::types::*;
 use crate::{
     channels::operator_io::{full_broadcast, link, Input, Output},
     runtime::{
-        communication::{CommunicationBackendError, Distributable, Transport, TransportError},
-        CommunicationBackend, CommunicationClient,
+        communication::{
+            BiStreamTransport, CommunicationBackendError, Distributable, TransportError,
+        },
+        BiCommunicationClient, OperatorOperatorComm,
     },
     snapshot::NoPersistence,
     stream::{BuildContext, Logic, OperatorContext},
@@ -37,7 +41,7 @@ where
     KO: MaybeKey,
     VO: MaybeData,
     TO: MaybeTime,
-    R: Distributable + 'static,
+    R: Distributable + Send + Sync + 'static,
 {
     /// Build this Test from an operator builder function
     pub fn built_by<M: Logic<KI, VI, TI, KO, VO, TO>>(
@@ -60,7 +64,7 @@ where
             worker_id,
             operator_id,
             "test".to_owned(),
-            Rc::new(NoPersistence::default()),
+            Rc::new(NoPersistence),
             &mut comm_shim,
             worker_ids.collect(),
         );
@@ -105,9 +109,9 @@ where
 /// Communication
 pub struct FakeCommunication<R> {
     // these are the messages the operator under test sent
-    sent_by_operator: Rc<Mutex<VecDeque<SentMessage<R>>>>,
+    sent_by_operator: Arc<Mutex<VecDeque<SentMessage<R>>>>,
     // these are the messages the operator under test is yet to receive
-    sent_to_operator: Rc<Mutex<HashMap<ImpersonatedSender, VecDeque<R>>>>,
+    sent_to_operator: Arc<Mutex<HashMap<ImpersonatedSender, VecDeque<R>>>>,
 }
 
 impl<R> Default for FakeCommunication<R> {
@@ -163,18 +167,18 @@ struct ImpersonatedSender {
     operator_id: OperatorId,
 }
 
-impl<R> CommunicationBackend for FakeCommunication<R>
+impl<R> OperatorOperatorComm for FakeCommunication<R>
 where
-    R: Distributable + 'static,
+    R: Distributable + Send + 'static,
 {
-    fn new_connection(
-        &mut self,
+    fn operator_to_operator(
+        &self,
         to_worker: WorkerId,
         operator: OperatorId,
-    ) -> Result<Box<dyn Transport>, CommunicationBackendError> {
+    ) -> Result<Box<dyn BiStreamTransport>, CommunicationBackendError> {
         let transport = FakeCommunicationTransport {
-            sent_by_operator: Rc::clone(&self.sent_by_operator),
-            sent_to_operator: Rc::clone(&self.sent_to_operator),
+            sent_by_operator: Arc::clone(&self.sent_by_operator),
+            sent_to_operator: Arc::clone(&self.sent_to_operator),
             impersonate: ImpersonatedSender {
                 worker_id: to_worker,
                 operator_id: operator,
@@ -183,19 +187,21 @@ where
         Ok(Box::new(transport))
     }
 }
+
 struct FakeCommunicationTransport<R> {
     // these are the messages the operator under test sent
-    sent_by_operator: Rc<Mutex<VecDeque<SentMessage<R>>>>,
+    sent_by_operator: Arc<Mutex<VecDeque<SentMessage<R>>>>,
     // these are the messages the operator under test is yet to receive
-    sent_to_operator: Rc<Mutex<HashMap<ImpersonatedSender, VecDeque<R>>>>,
+    sent_to_operator: Arc<Mutex<HashMap<ImpersonatedSender, VecDeque<R>>>>,
     impersonate: ImpersonatedSender,
 }
-impl<R> Transport for FakeCommunicationTransport<R>
+#[async_trait]
+impl<R> BiStreamTransport for FakeCommunicationTransport<R>
 where
-    R: Distributable,
+    R: Distributable + Send,
 {
     fn send(&self, msg: Vec<u8>) -> Result<(), TransportError> {
-        let decoded: R = CommunicationClient::decode(&msg);
+        let decoded: R = BiCommunicationClient::decode(&msg);
 
         // since communication clients are bidirectional, the intended reciptient and the sender we are impersonating
         // are the same
@@ -212,9 +218,13 @@ where
         let mut guard = self.sent_to_operator.lock().unwrap();
         let queue = guard.get_mut(&self.impersonate);
         match queue {
-            Some(q) => Ok(q.pop_front().map(CommunicationClient::encode)),
+            Some(q) => Ok(q.pop_front().map(BiCommunicationClient::encode)),
             None => Ok(None),
         }
+    }
+
+    async fn recv_async(&self) -> Result<Vec<u8>, TransportError> {
+        todo!()
     }
 }
 
@@ -223,7 +233,7 @@ mod tests {
     use std::{rc::Rc, sync::Mutex};
 
     use crate::{
-        runtime::{CommunicationBackend, CommunicationClient},
+        runtime::{BiCommunicationClient, OperatorOperatorComm},
         testing::operator_tester::SentMessage,
         types::Message,
     };
@@ -234,14 +244,14 @@ mod tests {
     /// using our fake communication
     #[test]
     fn test_fake_comm_send_to_operator() {
-        let mut fake_comm = FakeCommunication::<i32>::default();
+        let fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
-        let client = fake_comm.new_connection(1, 0).unwrap();
+        let client = fake_comm.operator_to_operator(1, 0).unwrap();
 
         // impersonate worker 1 and operator 0
         fake_comm.send_to_operator(42, 1, 0);
         let raw = client.recv().unwrap().unwrap();
-        let msg: i32 = CommunicationClient::decode(&raw);
+        let msg: i32 = BiCommunicationClient::decode(&raw);
         assert_eq!(msg, 42);
         assert!(client.recv().unwrap().is_none())
     }
@@ -249,10 +259,10 @@ mod tests {
     /// We should be able to receive messages from our operator under test
     #[test]
     fn test_fake_comm_receive() {
-        let mut fake_comm = FakeCommunication::<i32>::default();
+        let fake_comm = FakeCommunication::<i32>::default();
         // this is the client the operator would have
-        let client = fake_comm.new_connection(1, 0).unwrap();
-        client.send(CommunicationClient::encode(42)).unwrap();
+        let client = fake_comm.operator_to_operator(1, 0).unwrap();
+        client.send(BiCommunicationClient::encode(42)).unwrap();
 
         let msg = fake_comm.recv_from_operator().unwrap();
         assert!(matches!(

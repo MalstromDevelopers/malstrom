@@ -1,5 +1,5 @@
 use crate::{
-    runtime::CommunicationBackend,
+    runtime::OperatorOperatorComm,
     types::{OperatorId, WorkerId},
 };
 
@@ -22,13 +22,12 @@ impl RunnableOperator {
         }
     }
 
-    pub fn step(&mut self, communication: &mut dyn CommunicationBackend) {
+    pub fn step(&mut self, communication: &mut dyn OperatorOperatorComm) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,
             operator_id: self.operator_id,
             communication,
         };
-
         self.operator.step(&mut context)
     }
     pub fn has_queued_work(&self) -> bool {
@@ -40,7 +39,11 @@ impl RunnableOperator {
         self.operator.is_finalized()
     }
 
-    pub(crate) fn get_label(&self) -> &str {
+    pub(crate) fn is_suspended(&self) -> bool {
+        self.operator.is_suspended()
+    }
+
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
 }

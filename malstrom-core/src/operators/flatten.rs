@@ -1,8 +1,9 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::JetStreamBuilder;
+use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
+/// Flatten a stream of iterables by emitting each element of every iterable as a distinct message.
 pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// Flatten a datastream. Given a stream of some iterables, this function consumes
     /// each iterable and emits each of its elements downstream.
@@ -38,10 +39,10 @@ pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn flatten(self, name: &str) -> JetStreamBuilder<K, VO, T>;
+    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T, VO, I> Flatten<K, VI, T, VO, I> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T, VO, I> Flatten<K, VI, T, VO, I> for StreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     I: Iterator<Item = VO>,
@@ -49,7 +50,7 @@ where
     VO: Data,
     T: Timestamp,
 {
-    fn flatten(self, name: &str) -> JetStreamBuilder<K, VO, T> {
+    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T> {
         self.stateless_op(
             name,
             move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
@@ -72,27 +73,30 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{source::Source, KeyLocal, Sink},
+        operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
-    use super::Flatten;
     #[test]
     fn test_flatten() {
-        let (builder, stream) = get_test_stream();
-
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
-            )
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().execute();
-
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4],
+                        vec![5],
+                    ])),
+                )
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![1, 2, 3, 4, 5];
         assert_eq!(result, expected);
@@ -101,17 +105,23 @@ mod tests {
     /// check we preserve the timestamp on every message
     #[test]
     fn test_preserves_time() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([vec![1, 2], vec![3, 4], vec![5]])),
-            )
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4],
+                        vec![5],
+                    ])),
+                )
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
 
-        builder.build().unwrap().execute();
+        rt.execute().unwrap();
         let expected = vec![(1, 0), (2, 0), (3, 1), (4, 1), (5, 2)];
         let result = collector
             .into_iter()
@@ -123,21 +133,23 @@ mod tests {
     // check we preserve the key
     #[test]
     fn test_preserves_key() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new([
-                    vec![1, 2],
-                    vec![3, 4, 5],
-                    vec![6],
-                ])),
-            )
-            .key_local("key-local", |x| x.value.len())
-            .flatten("flatten")
-            .sink("sink", StatelessSink::new(collector.clone()));
-        builder.build().unwrap().execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        vec![1, 2],
+                        vec![3, 4, 5],
+                        vec![6],
+                    ])),
+                )
+                .key_local("key-local", |x| x.value.len())
+                .flatten("flatten")
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
         let expected = vec![(1, 2), (2, 2), (3, 3), (4, 3), (5, 3), (6, 1)];
         let result = collector
             .into_iter()

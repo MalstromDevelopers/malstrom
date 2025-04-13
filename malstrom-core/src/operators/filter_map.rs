@@ -1,8 +1,9 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::JetStreamBuilder;
+use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 
+/// Filter messages in a stream while at the same time applying a function to all values.
 pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
     /// Applies a function to every element of the stream.
     /// All elements for which the function returns `Some(x)` are emitted downstream
@@ -41,10 +42,10 @@ pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
         name: &str,
 
         mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, VI, T> FilterMap<K, VI, T> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T> FilterMap<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: MaybeKey,
     VI: Data,
@@ -55,7 +56,7 @@ where
         name: &str,
 
         mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.stateless_op(
             name,
             move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
@@ -73,24 +74,24 @@ mod tests {
         operators::{sink::Sink, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_stream, VecSink},
+        testing::{get_test_rt, VecSink},
     };
 
     use super::*;
     #[test]
     fn test_filter_map() {
-        let (builder, stream) = get_test_stream();
         let collector = VecSink::new();
-        stream
-            .source(
-                "source",
-                StatelessSource::new(SingleIteratorSource::new(0..100)),
-            )
-            .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
-            .sink("sink", StatelessSink::new(collector.clone()));
-        let mut worker = builder.build().unwrap();
-
-        worker.execute();
+        let rt = get_test_rt(|provider| {
+            provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new(0..100)),
+                )
+                .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
 
         let collected: Vec<usize> = collector.into_iter().map(|x| x.value).collect();
         let expected: Vec<usize> = (0..42).map(|x| x * 2).collect();

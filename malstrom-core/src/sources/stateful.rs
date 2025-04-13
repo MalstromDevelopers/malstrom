@@ -9,48 +9,66 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
-        distributed::{Acquire, Collect, DistKey, Interrogate},
+        distributed::{Acquire, Collect, Interrogate},
         partitioners::rendezvous_select,
-        Distribute, KeyDistribute,
+        Distribute,
     },
-    operators::{Map, Source, StreamSource},
+    operators::StreamSource,
     runtime::{
         communication::{broadcast, Distributable},
-        CommunicationClient,
+        BiCommunicationClient,
     },
     snapshot::Barrier,
-    stream::{BuildContext, JetStreamBuilder, LogicWrapper, OperatorBuilder, OperatorContext},
+    stream::{BuildContext, LogicWrapper, OperatorBuilder, OperatorContext, StreamBuilder},
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage,
-        SuspendMarker, Timestamp, WorkerId,
+        Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker,
+        Timestamp, WorkerId,
     },
 };
 
+/// Implementation of a stateful source.
 pub trait StatefulSourceImpl<V, T>: 'static {
+    /// A `Part` of a partition is a key by which any partition of the source is
+    /// uniquely identified. It is perfectly valid for a source to only have a single part and in
+    /// turn only a single partition, though this may not be very useful.
     type Part: Distributable + MaybeKey + Hash + Eq;
+    /// State for a partition of this source. The state is persisted across job restarts
+    /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState: Distributable;
+    /// A partition of this source. Each partition must be able to read unique values.
+    /// Partitions may be moved to different workers, when the jobs worker set changes. Usually
+    /// partitions will directly relate to some partitioning used by the external system providing
+    /// the data.
     type SourcePartition: StatefulSourcePartition<V, T, PartitionState = Self::PartitionState>;
 
     /// List all partitions for this source
     fn list_parts(&self) -> Vec<Self::Part>;
 
+    /// Build the partition for the given part
     fn build_part(
         &mut self,
         part: &Self::Part,
         part_state: Option<Self::PartitionState>,
     ) -> Self::SourcePartition;
 }
+
+/// A source which provides records for processing and holds some persistent state.
 pub struct StatefulSource<V, T, S: StatefulSourceImpl<V, T>>(S, PhantomData<(V, T)>);
 impl<V, T, S> StatefulSource<V, T, S>
 where
     S: StatefulSourceImpl<V, T>,
 {
+    /// Create a new stateful source from the given source implementation.
     pub fn new(source: S) -> Self {
         Self(source, PhantomData)
     }
 }
 
+/// A single partition of a statefull source. A partition is the smallest unit of a source and may
+/// be moved to a different worker when the job's worker set changes.
 pub trait StatefulSourcePartition<V, T> {
+    /// Persistent state of this partition. This state will be retained across job restarts and
+    /// moved along with the partition if the jobs worker set changes
     type PartitionState;
 
     /// Poll this partition, possibly returning a record
@@ -67,7 +85,7 @@ pub trait StatefulSourcePartition<V, T> {
     fn collect(self) -> Self::PartitionState;
 
     /// Gets called when execution gets suspended, possibly resuming later.
-    fn suspend(&mut self) -> () {}
+    fn suspend(&mut self) {}
 }
 
 impl<V, T, S> StreamSource<S::Part, V, T> for StatefulSource<V, T, S>
@@ -79,8 +97,8 @@ where
     fn into_stream(
         self,
         name: &str,
-        builder: JetStreamBuilder<NoKey, NoData, NoTime>,
-    ) -> JetStreamBuilder<S::Part, V, T> {
+        builder: StreamBuilder<NoKey, NoData, NoTime>,
+    ) -> StreamBuilder<S::Part, V, T> {
         let parts = self.0.list_parts();
         let all_partitions: IndexMap<S::Part, bool> =
             parts.iter().map(|x| (x.clone(), false)).collect();
@@ -97,7 +115,7 @@ where
                 move |input: &mut Input<NoKey, NoData, NoTime>,
                       output: &mut Output<S::Part, (), NoTime>,
                       _ctx| {
-                    while let Some(part) = inner.next() {
+                    for part in inner.by_ref() {
                         output.send(Message::Data(DataMessage::new(part, (), NoTime)));
                     }
                     if let Some(msg) = input.recv() {
@@ -140,7 +158,7 @@ struct StatefulSourcePartitionOp<V, T, Builder: StatefulSourceImpl<V, T>> {
     partitions: IndexMap<Builder::Part, Builder::SourcePartition>,
     part_builder: Builder,
     all_partitions: IndexMap<Builder::Part, bool>, // true if partition is finished
-    comm_clients: IndexMap<WorkerId, CommunicationClient<PartitionFinished<Builder::Part>>>,
+    comm_clients: IndexMap<WorkerId, BiCommunicationClient<PartitionFinished<Builder::Part>>>,
     // final marker, we keep it in an option to only send it once
     max_t: Option<T>,
     _phantom: PhantomData<(Builder::PartitionState, V)>,
@@ -171,11 +189,7 @@ where
         }
     }
 
-    fn add_partition(
-        &mut self,
-        part: Builder::Part,
-        part_state: Option<Builder::PartitionState>,
-    ) -> () {
+    fn add_partition(&mut self, part: Builder::Part, part_state: Option<Builder::PartitionState>) {
         let partition = self.part_builder.build_part(&part, part_state);
         self.partitions.insert(part, partition);
     }
@@ -192,7 +206,7 @@ where
         &mut self,
         output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         // TODO: All these iterations may be kinda inefficient
         for (part, partition) in self.partitions.iter_mut() {
             if let Some((data, time)) = partition.poll() {
@@ -209,7 +223,7 @@ where
                 broadcast(self.comm_clients.values(), PartitionFinished(part.clone()));
             }
         }
-        for msg in self.comm_clients.values().flat_map(|x| x.recv_all()) {
+        for msg in self.comm_clients.values().flat_map(|x| x.recv()) {
             *self
                 .all_partitions
                 .get_mut(&msg.0)
@@ -228,7 +242,7 @@ where
         data_message: DataMessage<Builder::Part, (), NoTime>,
         _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let part = data_message.key;
         if !self.partitions.contains_key(&part) {
             let partition = self.part_builder.build_part(&part, None);
@@ -241,7 +255,7 @@ where
         _epoch: NoTime,
         _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
     }
 
     fn on_barrier(
@@ -249,7 +263,7 @@ where
         barrier: &mut Barrier,
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let state: Vec<_> = self
             .partitions
             .iter()
@@ -263,18 +277,13 @@ where
         rescale_message: &mut RescaleMessage,
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
-    ) -> () {
-        match rescale_message {
-            RescaleMessage::ScaleRemoveWorker(index_set) => {
-                for wid in index_set.iter() {
-                    self.comm_clients.swap_remove(wid);
-                }
-            }
-            RescaleMessage::ScaleAddWorker(index_set) => {
-                for wid in index_set.iter() {
-                    let comm_client = ctx.create_communication_client(*wid);
-                    self.comm_clients.insert(wid.clone(), comm_client);
-                }
+    ) {
+        let new_workers = rescale_message.get_new_workers();
+        self.comm_clients.retain(|wid, _| new_workers.contains(wid));
+        for wid in new_workers.iter() {
+            if !self.comm_clients.contains_key(wid) && !wid == ctx.worker_id {
+                let client = ctx.create_communication_client(*wid);
+                self.comm_clients.insert(*wid, client);
             }
         }
     }
@@ -284,7 +293,7 @@ where
         _suspend_marker: &mut SuspendMarker,
         _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         for partition in self.partitions.values_mut() {
             partition.suspend();
         }
@@ -295,7 +304,7 @@ where
         interrogate: &mut Interrogate<Builder::Part>,
         _output: &mut Output<Builder::Part, VO, TO>,
         _ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let keys = self.partitions.keys();
         interrogate.add_keys(keys);
     }
@@ -305,7 +314,7 @@ where
         collect: &mut Collect<Builder::Part>,
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let key_state = self.partitions.swap_remove(&collect.key);
         if let Some(partition) = key_state {
             collect.add_state(ctx.operator_id, partition.collect());
@@ -317,7 +326,7 @@ where
         acquire: &mut Acquire<Builder::Part>,
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
-    ) -> () {
+    ) {
         let partition_state = acquire.take_state(&ctx.operator_id);
         if let Some((part, part_state)) = partition_state {
             self.add_partition(part, Some(part_state));

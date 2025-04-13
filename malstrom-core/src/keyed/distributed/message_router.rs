@@ -37,8 +37,9 @@ where
         partitioner: WorkerPartitioner<K>,
         this_worker: WorkerId,
         sender: WorkerId,
+        remotes: &Remotes<K, V, T>,
     ) -> Option<(DataMessage<K, V, T>, WorkerId)> {
-        if msg_version.map_or(false, |x| x > self.get_version()) {
+        if msg_version.is_some_and(|x| x > self.get_version()) {
             return Some((msg, this_worker));
         }
         match self {
@@ -54,8 +55,13 @@ where
                 collect_state.route_message(msg, partitioner, this_worker, sender)
             }
             MessageRouter::Finished(finished_state) => {
-                let target =
-                    finished_state.route_message(&msg.key, partitioner, this_worker, sender);
+                let target = finished_state.route_message(
+                    &msg.key,
+                    partitioner,
+                    this_worker,
+                    sender,
+                    remotes,
+                );
                 Some((msg, target))
             }
         }
@@ -94,17 +100,14 @@ where
                 output.send(Message::Interrogate(interrogate));
                 MessageRouter::Interrogate(new_router)
             }
-            MessageRouter::Interrogate(mut interrogate_router) => {
-                interrogate_router.queued_rescales.push(message);
-                MessageRouter::Interrogate(interrogate_router)
+            MessageRouter::Interrogate(_) => {
+                unreachable!()
             }
-            MessageRouter::Collect(mut collect_router) => {
-                collect_router.queued_rescales.push(message);
-                MessageRouter::Collect(collect_router)
+            MessageRouter::Collect(_) => {
+                unreachable!()
             }
-            MessageRouter::Finished(mut finished_router) => {
-                finished_router.queued_rescales.push(message);
-                MessageRouter::Finished(finished_router)
+            MessageRouter::Finished(_) => {
+                unreachable!()
             }
         }
     }
@@ -113,7 +116,7 @@ where
         self: MessageRouter<K, V, T>,
         partitioner: WorkerPartitioner<K>,
         output: &mut Output<K, V, T>,
-        remotes: &Remotes<K, V, T>,
+        remotes: &mut Remotes<K, V, T>,
     ) -> MessageRouter<K, V, T> {
         match self {
             MessageRouter::Normal(normal_router) => MessageRouter::Normal(normal_router),
@@ -130,38 +133,48 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::message_router::Remotes;
     use super::*;
     use crate::keyed::partitioners::index_select;
     use proptest::prelude::*;
 
     proptest! {
-    /// Check messages are always returned locally if the have a higher version
+    /// Check messages are always returned locally if they have a higher version
     #[test]
     fn higher_version(this_worker in 0u64..3, sender in 0u64..3, key in 0u64..100) {
+        let remotes = Remotes::default();
         let mut normal_router = MessageRouter::Normal(NormalRouter::new(IndexSet::from([0, 1, 2]), 33));
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,
             IndexSet::from([0, 1, 2]),
-            RescaleMessage::ScaleAddWorker(IndexSet::from([3])),
+            RescaleMessage::new(IndexSet::from([3]), 1),
             index_select,
         ).0);
-        let mut collect_router = MessageRouter::Collect(CollectRouter::new(33, IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
-        let mut finished_router = MessageRouter::Finished(FinishedRouter::new(33, IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]), Vec::new()));
+        let mut collect_router = MessageRouter::Collect(
+            CollectRouter::new(IndexSet::from([]), IndexSet::from([0, 1, 2]), IndexSet::from([0, 1, 2, 3]
+
+            ), RescaleMessage::new(IndexSet::from([4]), 33)));
+        let mut finished_router = MessageRouter::Finished(
+            FinishedRouter::new(
+                IndexSet::from([0, 1, 2]),
+                IndexSet::from([0, 1, 2, 3]),
+                RescaleMessage::new(IndexSet::from([4]), 33))
+            );
 
 
         let msg = DataMessage::new(key, 100, 0);
 
-        let (msg, target) = normal_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
+        let (msg, target) = normal_router.route_message(msg, Some(34), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
-        let (msg, target) = interrogate_router.route_message(msg, Some(34), index_select, this_worker, sender).unwrap();
+        let (msg, target) = interrogate_router.route_message(msg, Some(34), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
         // must increase the version here since the collect increases it on construction
-        let (msg, target) = collect_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
+        let (msg, target) = collect_router.route_message(msg, Some(35), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
 
-        let (_msg, target) = finished_router.route_message(msg, Some(35), index_select, this_worker, sender).unwrap();
+        let (_msg, target) = finished_router.route_message(msg, Some(35), index_select, this_worker, sender, &remotes).unwrap();
         assert_eq!(target, this_worker);
     }
     }

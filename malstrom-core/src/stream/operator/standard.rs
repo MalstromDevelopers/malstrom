@@ -35,4 +35,8 @@ where
     fn has_queued_work(&self) -> bool {
         self.input.can_progress()
     }
+
+    fn is_suspended(&self) -> bool {
+        self.output.is_suspended()
+    }
 }

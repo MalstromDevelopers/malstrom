@@ -1,3 +1,4 @@
+//! Sources for reading data
 mod single_iterator;
 mod stateful;
 mod stateless;

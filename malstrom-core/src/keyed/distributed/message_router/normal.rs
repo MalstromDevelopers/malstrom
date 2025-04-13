@@ -1,5 +1,6 @@
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::super::types::*;
 use crate::types::*;
@@ -17,13 +18,16 @@ impl NormalRouter {
     /// Create a new router for the given worker set (including the local worker)
     /// and for the given version
     pub(super) fn new(worker_set: IndexSet<WorkerId>, version: Version) -> Self {
+        info!("Creating normal router with set {:?}", worker_set);
         Self {
             worker_set,
             version,
         }
     }
     pub(super) fn route_message<K>(&self, key: &K, partitioner: WorkerPartitioner<K>) -> WorkerId {
-        partitioner(key, &self.worker_set)
+        let target = partitioner(key, &self.worker_set);
+        debug_assert!(self.worker_set.contains(&target));
+        target
     }
 }
 

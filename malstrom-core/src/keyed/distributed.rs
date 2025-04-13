@@ -11,16 +11,21 @@ pub use types::*;
 
 use crate::{
     channels::operator_io::{Input, Output},
-    runtime::CommunicationClient,
+    runtime::BiCommunicationClient,
     snapshot::Barrier,
     stream::{BuildContext, OperatorContext},
-    types::{DataMessage, MaybeTime, Message, RescaleMessage, SuspendMarker, Timestamp, WorkerId},
+    types::{DataMessage, MaybeTime, Message, RescaleMessage, SuspendMarker, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;
 
-type Remotes<K, V, T> =
-    IndexMap<WorkerId, (CommunicationClient<NetworkMessage<K, V, T>>, RemoteState<T>)>;
+type Remotes<K, V, T> = IndexMap<
+    WorkerId,
+    (
+        BiCommunicationClient<NetworkMessage<K, V, T>>,
+        RemoteState<T>,
+    ),
+>;
 
 pub(super) struct Distributor<K, V, T> {
     router: Container<MessageRouter<K, V, T>>,
@@ -31,6 +36,7 @@ pub(super) struct Distributor<K, V, T> {
     local_frontier: Option<T>,
 }
 
+type DistributorState<T> = (NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>);
 impl<K, V, T> Distributor<K, V, T>
 where
     K: DistKey,
@@ -38,12 +44,11 @@ where
     T: DistTimestamp,
 {
     pub(super) fn new(paritioner: WorkerPartitioner<K>, ctx: &mut BuildContext) -> Self {
-        let snapshot: Option<(NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>)> =
-            ctx.load_state();
+        let snapshot: Option<DistributorState<T>> = ctx.load_state();
         let other_workers = ctx
             .get_worker_ids()
             .iter()
-            .map(|x| *x)
+            .copied()
             .filter(|x| *x != ctx.worker_id)
             .collect_vec();
 
@@ -60,7 +65,7 @@ where
             None => {
                 let remotes = create_remotes(&other_workers, ctx);
                 let state = MessageRouter::new(
-                    ctx.get_worker_ids().iter().map(|x| *x).collect(),
+                    ctx.get_worker_ids().iter().copied().collect(),
                     Version::default(),
                 );
                 (state, remotes, None)
@@ -92,8 +97,10 @@ where
             .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_suspend)
             .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
             .collect();
-
         for (wid, msg) in remote_message.into_iter() {
+            // PANIC: We just got the keys from the iter over `remotes` hence we can allow
+            // the unwraps
+            #[allow(clippy::unwrap_used)]
             match msg {
                 NetworkMessage::Data(data_message) => {
                     self.handle_remote_data_message(data_message, &wid, output, ctx)
@@ -112,7 +119,12 @@ where
                     output.send(Message::Acquire(network_acquire.into()))
                 }
                 NetworkMessage::Upgrade(version) => {
-                    self.remotes.get_mut(&wid).unwrap().1.last_version = version
+                    let remote = self.remotes.get_mut(&wid).unwrap();
+                    remote.1.last_version = Some(version);
+                    remote.0.send(NetworkMessage::AckUpgrade(version));
+                }
+                NetworkMessage::AckUpgrade(version) => {
+                    self.remotes.get_mut(&wid).unwrap().1.last_ack_version = Some(version);
                 }
             }
         }
@@ -157,7 +169,7 @@ where
         self.try_emit_barrier(output);
         self.try_emit_shutdown(output);
         self.router
-            .apply(|x| x.lifecycle(self.partitioner, output, &self.remotes));
+            .apply(|x| x.lifecycle(self.partitioner, output, &mut self.remotes));
     }
 
     /// Handle a data message we received from our local upstream
@@ -174,6 +186,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 ctx.worker_id,
+                &self.remotes,
             )
         };
         if let Some((msg, target)) = routing {
@@ -195,6 +208,7 @@ where
                 self.partitioner,
                 ctx.worker_id,
                 *sent_by,
+                &self.remotes,
             )
         };
         if let Some((msg, target)) = routing {
@@ -207,7 +221,6 @@ where
         message: DataMessage<K, V, T>,
         target: WorkerId,
         output: &mut Output<K, V, T>,
-
         ctx: &OperatorContext,
     ) {
         match target == ctx.worker_id {
@@ -255,18 +268,15 @@ where
         output: &mut Output<K, V, T>,
         ctx: &mut OperatorContext,
     ) {
-        match &message {
-            // we can not remove these yet because they may still have messages for us
-            RescaleMessage::ScaleRemoveWorker(_index_set) => (),
-            RescaleMessage::ScaleAddWorker(to_add) => {
-                for wid in to_add {
-                    let comm_client = ctx.create_communication_client(*wid);
-                    let remote_state = RemoteState::default();
-                    self.remotes.insert(*wid, (comm_client, remote_state));
-                }
+        // we can not remove clients of workers here because we need them during the rescale
+        // process. They are removed in the final step of the "Finished" distributor
+        for wid in message.get_new_workers() {
+            if (!self.remotes.contains_key(wid)) && (*wid != ctx.worker_id) {
+                let comm_client = ctx.create_communication_client(*wid);
+                let remote_state = RemoteState::default();
+                self.remotes.insert(*wid, (comm_client, remote_state));
             }
         }
-
         self.router
             .apply(|router| router.handle_rescale(message, self.partitioner, output))
     }
@@ -282,6 +292,7 @@ where
                 .values()
                 .all(|x| x.1.is_barred || x.1.sent_suspend)
         {
+            #[allow(clippy::unwrap_used)] // Safe because we just checked is_some
             let msg = Message::AbsBarrier(self.local_barrier.take().unwrap());
             output.send(msg);
 
@@ -297,6 +308,8 @@ where
     #[inline]
     fn try_emit_shutdown(&mut self, output: &mut Output<K, V, T>) {
         if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
+            // can unwrap because we just checked is_some
+            #[allow(clippy::unwrap_used)]
             let msg = Message::SuspendMarker(self.local_shutdown.take().unwrap());
             output.send(msg);
         }
@@ -489,9 +502,7 @@ mod test {
                 0,
                 0..2,
             );
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester.step();
 
         assert!(tester.recv_local().is_none());
@@ -532,9 +543,7 @@ mod test {
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         tester.step();
         let local_result = tester.recv_local().unwrap();
@@ -560,9 +569,7 @@ mod test {
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         tester.step();
         let local_result = tester.recv_local().unwrap();
@@ -570,9 +577,7 @@ mod test {
             matches!(local_result, Message::AbsBarrier(_)),
             "{local_result:?}"
         );
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester.step();
         assert!(tester.recv_local().is_none());
     }
@@ -590,9 +595,7 @@ mod test {
                 0,
                 0..2,
             );
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -618,9 +621,7 @@ mod test {
                 0..2,
             );
 
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         tester
             .remote()
@@ -673,9 +674,7 @@ mod test {
         let msg = tester.recv_local();
         assert!(msg.is_none(), "{msg:?}");
 
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester.step();
 
         let barrier = tester.recv_local().unwrap();
@@ -703,9 +702,7 @@ mod test {
             0..2,
         );
 
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(
-            NoPersistence::default(),
-        ))));
+        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester.send_local(Message::Data(DataMessage::new(0, "Hi".to_owned(), 10)));
 
         tester.step();

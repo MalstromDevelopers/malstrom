@@ -3,8 +3,9 @@ use std::rc::Rc;
 use indexmap::IndexSet;
 
 use super::super::types::*;
+use super::RescaleMessage;
 use super::{collect::CollectRouter, MessageRouter};
-use crate::types::{Key, RescaleMessage, WorkerId};
+use crate::types::{Key, WorkerId};
 
 #[derive(Debug)]
 pub(crate) struct InterrogateRouter<K> {
@@ -14,10 +15,7 @@ pub(crate) struct InterrogateRouter<K> {
     pub(super) old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
     interrogate_msg: Interrogate<K>,
-
-    // these are control messages we can not handle while rescaling
-    // so we will buffer them, waiting for the normal dist to deal with them
-    pub(super) queued_rescales: Vec<RescaleMessage>,
+    trigger: RescaleMessage,
 }
 impl<K> InterrogateRouter<K>
 where
@@ -32,14 +30,7 @@ where
     where
         K: Key,
     {
-        let new_worker_set: IndexSet<WorkerId> = match trigger {
-            RescaleMessage::ScaleRemoveWorker(to_remove) => {
-                old_worker_set.difference(&to_remove).copied().collect()
-            }
-            RescaleMessage::ScaleAddWorker(to_add) => {
-                old_worker_set.union(&to_add).copied().collect()
-            }
-        };
+        let new_worker_set = trigger.get_new_workers().clone();
 
         let old_worker_set_clone = old_worker_set.clone();
         let new_worker_set_clone = new_worker_set.clone();
@@ -58,7 +49,7 @@ where
             old_worker_set,
             new_worker_set,
             interrogate_msg: interrogate_msg.clone(),
-            queued_rescales: Vec::new(),
+            trigger,
         };
         (new_state, interrogate_msg)
     }
@@ -90,11 +81,10 @@ where
             Ok(whitelist) => {
                 // interrogate is done
                 let router = CollectRouter::new(
-                    self.version,
                     whitelist,
                     self.old_worker_set,
                     self.new_worker_set,
-                    self.queued_rescales,
+                    self.trigger,
                 );
                 MessageRouter::Collect(router)
             }
@@ -119,11 +109,11 @@ mod tests {
     #[test]
     fn create_new_worker_set() {
         // scale up
-        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1, 2, 3]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1, 2, 3]), 1);
         let (router, _) = InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1, 2, 3]));
 
-        let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([2, 3]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1]), 2);
         let (router, _) =
             InterrogateRouter::new(0, IndexSet::from([0, 1, 2, 3]), trigger, index_select);
         assert_eq!(router.new_worker_set, IndexSet::from([0, 1]));
@@ -133,7 +123,7 @@ mod tests {
     /// which only accepts keys, that need redistribution
     #[test]
     fn creates_interrogate() {
-        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([0, 1]), 1);
         let (mut router, mut interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
@@ -156,7 +146,7 @@ mod tests {
     /// Should not create a collect router while we are keeping a ref to the interrogate
     #[test]
     fn noop_if_interrogate_is_running() {
-        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([1]), 1);
         let (router, interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
@@ -177,7 +167,7 @@ mod tests {
     /// • add the key K to the set whitelist
     /// • pass the message downstream
     fn handle_data_rule_1_1() {
-        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([1]), 1);
         let (mut router, interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
@@ -199,7 +189,7 @@ mod tests {
     /// • Rule 1.2: If (F(K) == Local) && (F'(K) == Local)
     /// • pass the message downstream
     fn handle_data_rule_1_2() {
-        let trigger = RescaleMessage::ScaleAddWorker(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([1]), 1);
         let (mut router, _interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
@@ -212,7 +202,7 @@ mod tests {
     /// • Rule 2:  If (F(K) != Local)
     /// • send the message to the worker determined by F
     fn handle_data_rule_2() {
-        let trigger = RescaleMessage::ScaleRemoveWorker(IndexSet::from([1]));
+        let trigger = RescaleMessage::new(IndexSet::from([1]), 1);
         let (mut router, _interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0, 1]), trigger, index_select);
 

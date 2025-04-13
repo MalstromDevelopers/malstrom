@@ -1,18 +1,20 @@
-/// A very basic example which uses stream operators
 use malstrom::operators::*;
-use malstrom::runtime::{SingleThreadRuntime, SingleThreadRuntimeFlavor, WorkerBuilder};
-use malstrom::snapshot::{NoPersistence, NoSnapshots};
+/// A basic example which runs a no-op dataflow
+use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
 fn main() {
-    SingleThreadRuntime::new(build_dataflow).execute().unwrap()
+    tracing_subscriber::fmt::init();
+    SingleThreadRuntime::builder()
+        .persistence(NoPersistence)
+        .build(build_dataflow)
+        .execute()
+        .unwrap()
 }
 
-fn build_dataflow(
-    flavor: SingleThreadRuntimeFlavor,
-) -> WorkerBuilder<SingleThreadRuntimeFlavor, NoPersistence> {
-    let mut worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence::default());
-    worker
+fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
+    provider
         .new_stream()
         .source(
             // <-- this is an operator
@@ -20,7 +22,5 @@ fn build_dataflow(
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
         .map("double", |x| x * 2)
-        .inspect("print", |x, _| println!("{}", x.value)) // <-- and this too
-        .finish();
-    worker
+        .inspect("print", |x, _| println!("{}", x.value)); // <-- and this too
 }

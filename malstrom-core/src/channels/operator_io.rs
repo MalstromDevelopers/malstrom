@@ -1,55 +1,10 @@
-//! Selective Broadcast:
-//!
-//! Selective Broadcast channels are MPMC channels, where a partitioning function is used
-//! to determine which receivers shall receive a value.
-//! The value is copied as often as necessary, to ensure multiple receivers can receive it.
-//! NOTE: This has absolutely NO guards against slow consumers. Slow consumers can build very
-//! big queues with this channel.
-use std::{
-    rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-
-use itertools::Itertools;
-
+//! Local IO channels for stream operators. These input and output types are how operators
+//! **on the same worker** communicate with each other.
+//! Essentially these are the edges in the stream graph.
 use super::spsc;
-
-use crate::types::{MaybeTime, Message, OperatorId, OperatorPartitioner};
-
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
-/// This is a somewhat hacky we to get a unique id for each sender, which we
-/// use to identify messages downstream
-/// Taken from https://users.rust-lang.org/t/idiomatic-rust-way-to-generate-unique-id/33805
-fn get_id() -> usize {
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-enum MessageWrapper<K, V, T> {
-    /// Normal JetStream message with sender id
-    Message(usize, Message<K, V, T>),
-    /// Sender sends this to the receiver once it gets unlinked
-    Register(usize),
-    Deregister(usize),
-}
-
-// /// A simple partitioner, which will broadcast a value to all receivers
-#[inline(always)]
-pub fn full_broadcast<T>(_: &T, outputs: &mut [bool]) -> () {
-    outputs.fill(true);
-}
-
-/// Link a Sender and receiver together
-pub fn link<K, V, T>(sender: &mut Output<K, V, T>, receiver: &mut Input<K, V, T>) {
-    let (tx, rx) = spsc::unbounded();
-    sender.senders.push(tx);
-    receiver.receivers.push(UpstreamState::new(rx));
-}
-
-// TODO DAMION: Fundamentally you need SPSC channels, which each
-// Sender containing multiple channel senders and each Receiver
-// containing multiple channel receivers, thus giving the illusion
-// of mpmc while still allowing the receivers to select where they
-// read from
+use crate::types::{MaybeTime, Message, OperatorPartitioner};
+use itertools::Itertools;
+use std::rc::Rc;
 
 /// Operator Output
 pub struct Output<K, V, T> {
@@ -59,6 +14,7 @@ pub struct Output<K, V, T> {
     #[allow(clippy::type_complexity)] // it's not thaaat complex
     partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
     frontier: Option<T>,
+    suspended: bool,
 }
 
 impl<K, V, T> Output<K, V, T>
@@ -69,11 +25,12 @@ where
 {
     /// Create a new Sender with **no** associated Receiver
     /// Link a receiver with [link].
-    pub fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
+    pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
         Self {
             senders: Vec::new(),
             partitioner: Rc::new(partitioner),
             frontier: None,
+            suspended: false,
         }
     }
 
@@ -82,14 +39,11 @@ where
     ///
     /// System messages are always broadcasted.
     pub fn send(&mut self, msg: Message<K, V, T>) {
+        debug_assert!(!self.suspended);
         if let Message::Epoch(e) = &msg {
             if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
                 self.frontier = Some(e.clone());
             }
-        }
-
-        if self.senders.is_empty() {
-            return;
         }
         let recipient_len = self.senders.len();
         let mut output_flags = vec![false; recipient_len];
@@ -102,12 +56,16 @@ where
                     if enabled {
                         // PANIC: we know next will work because we called repeat_n with
                         // the sum of all `true` vals
+                        #[allow(clippy::unwrap_used)]
                         let msg = messages.next().unwrap();
                         sender.send(msg);
                     }
                 }
             }
             x => {
+                if matches!(x, Message::SuspendMarker(_)) {
+                    self.suspended = true
+                }
                 // repeat_n will clone for every iteration except the last
                 // this gives us a small optimization on the common "1 receiver" case :)
                 let messages = self
@@ -128,13 +86,18 @@ where
         &self.frontier
     }
 
-    pub(crate) fn receiver_count(&self) -> usize {
-        self.senders.len()
+    /// Check if a [Message::SuspendMarker] has been sent into this output
+    #[inline]
+    pub(crate) fn is_suspended(&self) -> bool {
+        self.suspended
     }
 }
 
+/// State of the upstream sender providing us messages
 struct UpstreamState<K, V, T> {
+    /// Most recent epoch the sender sent
     epoch: Option<T>,
+    /// Receiver linked to Sender
     receiver: spsc::Receiver<Message<K, V, T>>,
 }
 impl<K, V, T> UpstreamState<K, V, T> {
@@ -156,48 +119,27 @@ pub struct Input<K, V, T> {
 }
 
 impl<K, V, T> Input<K, V, T> {
-    pub fn new_unlinked() -> Self {
+    /// Create a new input which is not (yet) linked to any output
+    pub(crate) fn new_unlinked() -> Self {
         Self {
             receivers: Vec::new(),
             frontier: None,
         }
     }
 
-    pub fn can_progress(&self) -> bool {
+    /// Return true if this input is currently capable of receiving messages and progressing
+    /// its inputs.
+    /// Being capable does not necessarily mean there are any messages.
+    pub(crate) fn can_progress(&self) -> bool {
         self.receivers
             .iter()
             .any(|x| x.receiver.can_recv_unaligned())
     }
 
+    /// Get the frontier of this Input, i.e. the largest Epoch it has seen so far
     #[inline]
     pub(crate) fn get_frontier(&self) -> &Option<T> {
         &self.frontier
-    }
-}
-
-/// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: MaybeTime>(
-    mut timestamps: impl Iterator<Item = &'a Option<T>>,
-) -> Option<T> {
-    let mut merged = timestamps.next()?.clone();
-    for x in timestamps {
-        if let Some(y) = x {
-            merged = merged.and_then(|a| a.try_merge(y));
-        } else {
-            return None;
-        }
-    }
-    merged
-}
-
-pub(crate) fn merge_receiver_groups<K, V, T: MaybeTime>(
-    groups: Vec<Input<K, V, T>>,
-) -> Input<K, V, T> {
-    let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
-    let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
-    Input {
-        receivers,
-        frontier,
     }
 }
 
@@ -221,10 +163,13 @@ where
             Some((msg, sender_idx)) => match msg {
                 Message::Epoch(e) => {
                     // PANIC: We can unwrap because we got the idx from the iterator above
-                    self.receivers.get_mut(sender_idx).unwrap().epoch = Some(e);
+                    self.receivers
+                        .get_mut(sender_idx)
+                        .expect("Expected valid index")
+                        .epoch = Some(e);
                     let merged = merge_timestamps(self.receivers.iter().map(|x| &x.epoch));
                     if let Some(m) = merged.as_ref() {
-                        if self.frontier.as_ref().map_or(true, |frontier| frontier < m) {
+                        if self.frontier.as_ref().is_none_or(|frontier| frontier < m) {
                             self.frontier = Some(m.clone());
                         }
                     }
@@ -244,7 +189,7 @@ where
                     return None;
                 }
                 // 2
-                if self.receivers.len() == 0 {
+                if self.receivers.is_empty() {
                     return None;
                 }
                 // 3. all channels have barrier upcoming
@@ -289,12 +234,47 @@ impl<K, V, T> RecvUnaligned<K, V, T> for spsc::Receiver<Message<K, V, T>> {
     }
 
     fn can_recv_unaligned(&self) -> bool {
-        self.peek_apply(|next| match next {
-            Message::AbsBarrier(_) => false,
-            Message::SuspendMarker(_) => false,
-            _ => true,
-        })
-        .unwrap_or(false)
+        self.peek_apply(|next| !matches!(next, Message::AbsBarrier(_) | Message::SuspendMarker(_)))
+            .unwrap_or(false)
+    }
+}
+
+// /// A simple partitioner, which will broadcast a value to all receivers
+#[inline(always)]
+pub(crate) fn full_broadcast<T>(_: &T, outputs: &mut [bool]) {
+    outputs.fill(true);
+}
+
+/// Link a Sender and receiver together
+pub(crate) fn link<K, V, T>(sender: &mut Output<K, V, T>, receiver: &mut Input<K, V, T>) {
+    let (tx, rx) = spsc::unbounded();
+    sender.senders.push(tx);
+    receiver.receivers.push(UpstreamState::new(rx));
+}
+
+/// Small reducer hack, as we can't use iter::reduce because of ownership
+fn merge_timestamps<'a, T: MaybeTime>(
+    mut timestamps: impl Iterator<Item = &'a Option<T>>,
+) -> Option<T> {
+    let mut merged = timestamps.next()?.clone();
+    for x in timestamps {
+        if let Some(y) = x {
+            merged = merged.and_then(|a| a.try_merge(y));
+        } else {
+            return None;
+        }
+    }
+    merged
+}
+
+/// Mege multiple inputs into a single input. The new Input will be linked to all the original
+/// upstream Outputs.
+pub(crate) fn merge_inputs<K, V, T: MaybeTime>(groups: Vec<Input<K, V, T>>) -> Input<K, V, T> {
+    let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
+    let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
+    Input {
+        receivers,
+        frontier,
     }
 }
 
@@ -306,42 +286,6 @@ mod test {
     };
 
     use super::*;
-
-    // /// Check we can clone a sender
-    // #[test]
-    // fn clone_sender() {
-    //     let mut sender = Sender::new_unlinked(full_broadcast);
-    //     let mut receiver = Receiver::new_unlinked();
-    //     link(&mut sender, &mut receiver);
-
-    //     let mut cloned = sender.clone();
-    //     let msg = Message::Data(DataMessage {
-    //         key: NoKey,
-    //         value: "Hello",
-    //         timestamp: NoTime,
-    //     });
-    //     cloned.send(msg.clone());
-
-    //     assert!(matches!(
-    //         receiver.recv(),
-    //         Some(Message::Data(DataMessage {
-    //             key: NoKey,
-    //             value: "Hello",
-    //             timestamp: NoTime
-    //         }))
-    //     ));
-
-    //     sender.send(msg);
-    //     assert!(matches!(
-    //         receiver.recv(),
-    //         Some(Message::Data(DataMessage {
-    //             key: NoKey,
-    //             value: "Hello",
-    //             timestamp: NoTime
-    //         }))
-    //     ));
-    //     assert_eq!(receiver.states.len(), 2);
-    // }
 
     /// Check we only emit an epoch when it changes
     #[test]
@@ -369,13 +313,13 @@ mod test {
         link(&mut sender2, &mut receiver);
 
         sender.send(Message::AbsBarrier(Barrier::new(
-            Box::<NoPersistence>::default(),
+            Box::new(NoPersistence),
         )));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
         sender2.send(Message::AbsBarrier(Barrier::new(
-            Box::<NoPersistence>::default(),
+            Box::new(NoPersistence),
         )));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
@@ -391,14 +335,14 @@ mod test {
         link(&mut sender2, &mut receiver);
 
         sender.send(Message::AbsBarrier(Barrier::new(
-            Box::<NoPersistence>::default(),
+            Box::new(NoPersistence),
         )));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
         sender2.send(Message::AbsBarrier(Barrier::new(
-            Box::<NoPersistence>::default(),
+            Box::new(NoPersistence),
         )));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
 
@@ -441,36 +385,6 @@ mod test {
 
         assert!(matches!(receiver.recv(), Some(Message::SuspendMarker(_))));
     }
-
-    /// Dropping a sender should remove its state from the receiver
-    // #[test]
-    // fn drop_sender() {
-    //     let mut sender: Sender<NoKey, i32, NoTime> = Sender::new_unlinked(full_broadcast);
-    //     let mut receiver = Receiver::new_unlinked();
-    //     link(&mut sender, &mut receiver);
-    //     sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
-    //     sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
-    //     drop(sender);
-
-    //     assert!(matches!(
-    //         receiver.recv(),
-    //         Some(Message::Data(DataMessage {
-    //             key: _,
-    //             value: 42,
-    //             timestamp: _
-    //         }))
-    //     ));
-    //     assert!(matches!(
-    //         receiver.recv(),
-    //         Some(Message::Data(DataMessage {
-    //             key: _,
-    //             value: 177,
-    //             timestamp: _
-    //         }))
-    //     ));
-    //     receiver.recv();
-    //     assert!(matches!(receiver.receivers.len(), 0));
-    // }
 
     /// Check the accessor for the largest sent epoch (frontier)
     #[test]
@@ -538,18 +452,11 @@ mod test {
         Rc::try_unwrap(elem).unwrap();
     }
 
-    //Test linking a cloned sender works
-    // #[test]
-    // fn link_cloned_sender() {
-    //     let mut sender = Sender::new_unlinked(full_broadcast);
-    //     let mut sender2 = sender.clone();
-    //     let mut receiver = Receiver::new_unlinked();
-    //     link(&mut sender2, &mut receiver);
-    //     let msg = Message::Data(DataMessage::new("Beeble", 123, 42));
-
-    //     // should have linked both the original and cloned sender
-    //     sender.send(msg);
-    //     let result = receiver.recv();
-    //     assert!(result.is_some())
-    // }
+    /// Output should be suspended after sending suspend marker
+    #[test]
+    fn output_suspended_after_marker() {
+        let mut sender: Output<NoKey, NoData, NoTime> = Output::new_unlinked(full_broadcast);
+        sender.send(Message::SuspendMarker(SuspendMarker::default()));
+        assert!(sender.is_suspended())
+    }
 }

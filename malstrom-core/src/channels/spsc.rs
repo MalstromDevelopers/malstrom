@@ -12,7 +12,7 @@ struct SharedInner<T> {
 }
 impl<T> SharedInner<T> {
     /// push a value into the shared buffer
-    fn push(&mut self, value: T) -> () {
+    fn push(&mut self, value: T) {
         if self.has_receiver {
             self.buffer.push_back(value);
         }
@@ -52,11 +52,8 @@ pub struct Sender<T> {
 impl<T> Sender<T> {
     /// Send a message into the channel. Note that sending
     /// to a channel without any receiver drops the message
-    pub fn send(&self, msg: T) -> () {
+    pub fn send(&self, msg: T) {
         self.shared.borrow_mut().push(msg);
-    }
-    pub(crate) fn strong_count(&self) -> usize {
-        Rc::strong_count(&self.shared)
     }
 }
 

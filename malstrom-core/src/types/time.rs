@@ -52,7 +52,7 @@ where
     }
 
     const CHECK_FINISHED: fn(&Option<Self>) -> bool =
-        |opt_t| opt_t.as_ref().map_or(false, |t| *t == T::MAX);
+        |opt_t| opt_t.as_ref().is_some_and(|t| *t == T::MAX);
 }
 impl MaybeTime for NoTime {
     fn try_merge(&self, _other: &Self) -> Option<Self> {

@@ -1,0 +1,10 @@
+Successfully deployed the Malstrom operator to namspace {{ .Values.namespace }}.
+If you deployed the artifact manager it can be accessed via:
+`artifact-manager.{{ .Values.namespace }}.svc.cluster.local`.
+You can use the http endpoint as the binary URI in the job definition.
+
+*NOTE*: You first need to upload a binary to the artifact manager by forwarding the 
+`artifact-manager` service to your local host and then running
+`curl -F "file=@<absolute path to binary>" localhost:<port>/<binary-name>`
+
+Good luck!

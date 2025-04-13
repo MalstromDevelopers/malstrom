@@ -1,6 +1,0 @@
-worker_id: 0
-port: 29091
-cluster_addresses:
-  - http://localhost:29091
-  - http://localhost:29092
-initial_scale: 2

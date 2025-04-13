@@ -1,8 +1,6 @@
 use crate::{
-    operators::SinkFullImpl,
     sinks::StatelessSinkImpl,
-    stream::OperatorBuilder,
-    types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime},
+    types::{Data, DataMessage, MaybeKey, MaybeTime},
 };
 use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 
@@ -37,14 +35,6 @@ impl<T> VecSink<T> {
     pub fn drain_vec<R: RangeBounds<usize>>(&self, range: R) -> Vec<T> {
         self.inner.lock().unwrap().drain(range).collect()
     }
-    /// Returns the len of the contained vec
-    pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
-    }
 }
 
 impl<T> IntoIterator for VecSink<T> {
@@ -64,17 +54,6 @@ where
     T: MaybeTime,
 {
     fn sink(&mut self, msg: DataMessage<K, V, T>) {
-        self.give(msg);
-    }
-}
-
-impl<K, V, T> SinkFullImpl<K, V, T> for VecSink<Message<K, V, T>>
-where
-    K: MaybeKey,
-    V: MaybeData,
-    T: MaybeTime,
-{
-    fn sink_full(&mut self, msg: Message<K, V, T>) {
         self.give(msg);
     }
 }

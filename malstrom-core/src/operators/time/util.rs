@@ -1,7 +1,7 @@
 use crate::{
     channels::operator_io::Output,
     operators::{map::Map, split::Split},
-    stream::JetStreamBuilder,
+    stream::StreamBuilder,
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
@@ -27,8 +27,8 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
 }
 
 pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    mixed: JetStreamBuilder<K, OnTimeLate<V>, T>,
-) -> (JetStreamBuilder<K, V, T>, JetStreamBuilder<K, V, T>) {
+    mixed: StreamBuilder<K, OnTimeLate<V>, T>,
+) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
     // create a randint so we do not get name collisions.
     // u32 because unlick u64 it works well when displayed in a
     // browser (floats only)

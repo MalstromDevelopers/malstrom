@@ -13,8 +13,6 @@ use super::{BuildContext, OperatorContext, RunnableOperator};
 pub trait AppendableOperator<K, V, T> {
     fn get_output_mut(&mut self) -> &mut Output<K, V, T>;
 
-    fn get_output(&self) -> &Output<K, V, T>;
-
     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
 }
 
@@ -39,4 +37,7 @@ pub trait Operator {
     /// Indicate to the worker this operator need not run again
     /// The worker will stop execution once all operators are finished
     fn is_finalized(&self) -> bool;
+
+    /// Return true if the operator is suspended and must not be scheduled again before a restart
+    fn is_suspended(&self) -> bool;
 }

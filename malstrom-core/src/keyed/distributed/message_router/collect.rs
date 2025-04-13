@@ -13,18 +13,15 @@ use super::{finished::FinishedRouter, MessageRouter, NetworkMessage};
 #[derive(Debug)]
 pub(crate) struct CollectRouter<K, V, T> {
     pub(super) version: Version,
-
     pub(super) whitelist: IndexSet<K>, // pub for testing
     old_worker_set: IndexSet<WorkerId>,
-    new_worker_set: IndexSet<WorkerId>,
+    pub(super) new_worker_set: IndexSet<WorkerId>,
     /// Datamessages for the key we are currently collecting
     buffered: Vec<DataMessage<K, V, T>>,
-
     current_collect: Option<Collect<K>>,
-
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
-    pub(super) queued_rescales: Vec<RescaleMessage>,
+    trigger: RescaleMessage,
 }
 
 impl<K, V, T> CollectRouter<K, V, T>
@@ -32,20 +29,19 @@ where
     K: Key,
 {
     pub(super) fn new(
-        version: Version,
         whitelist: IndexSet<K>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
-        queued_rescales: Vec<RescaleMessage>,
+        trigger: RescaleMessage,
     ) -> Self {
         Self {
-            version: version + 1,
+            version: trigger.get_version(),
             whitelist,
             old_worker_set,
             new_worker_set,
             buffered: Vec::new(),
             current_collect: None,
-            queued_rescales,
+            trigger,
         }
     }
 
@@ -63,7 +59,7 @@ where
         let to_be_buffered = self
             .current_collect
             .as_ref()
-            .map_or(false, |collect| &collect.key == key);
+            .is_some_and(|collect| &collect.key == key);
 
         match (new_target == this_worker, in_whitelist, to_be_buffered) {
             // Rule 1.1, non-local && in_whitelist
@@ -128,10 +124,9 @@ where
                 NetworkMessage::Upgrade(self.version),
             );
             MessageRouter::Finished(FinishedRouter::new(
-                self.version,
                 self.old_worker_set,
                 self.new_worker_set,
-                self.queued_rescales,
+                self.trigger,
             ))
         } else {
             MessageRouter::Collect(self)
@@ -140,9 +135,8 @@ where
 
     fn set_and_emit_collect(&mut self, output: &mut Output<K, V, T>) {
         if self.current_collect.is_none() {
-            self.current_collect = self.whitelist.pop().map(Collect::new).map(|collect| {
+            self.current_collect = self.whitelist.pop().map(Collect::new).inspect(|collect| {
                 output.send(Message::Collect(collect.clone()));
-                collect
             });
         }
     }
@@ -173,15 +167,14 @@ mod test {
     }
 
     #[test]
-    fn increases_version_on_new() {
+    fn sets_version_to_trigger() {
         let dist: CollectRouter<i32, NoData, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::new(),
             IndexSet::new(),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([1]), 13),
         );
-        assert_eq!(dist.version, 1)
+        assert_eq!(dist.version, 13)
     }
 
     /// Should respect Rule 1.1
@@ -192,11 +185,10 @@ mod test {
     fn handle_data_rule_1_1() {
         let key = 15;
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let msg = DataMessage {
@@ -223,11 +215,10 @@ mod test {
     fn handle_data_rule_1_2() {
         let key = 15;
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -242,18 +233,18 @@ mod test {
 
         let (mut sender, mut receiver) = get_input_output();
 
-        let mut dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let mut dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let collector = receiver.recv().unwrap();
         assert!(matches!(collector, Message::Collect(_)));
 
         let msg = DataMessage::new(key, 22, 555);
-        let out = dist.route_message(msg, None, partiton_index, 0, 0);
+        let out = dist.route_message(msg, None, partiton_index, 0, 0, &remotes);
         assert!(out.is_none());
 
         // drop the collector, next lifecycle should emit the acquire
         drop(collector);
-        let _ = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let _ = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let acquire = comm.recv_from_operator().unwrap();
         assert_eq!(acquire.to_operator, 0);
@@ -272,11 +263,10 @@ mod test {
     #[test]
     fn handle_data_rule_2() {
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([3]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
         let msg = DataMessage {
             key: 7,
@@ -297,11 +287,10 @@ mod test {
     #[test]
     fn handle_data_rule_3() {
         let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([3]),
             IndexSet::from([0, 1]),
             IndexSet::from([0]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([1]), 0),
         );
 
         // this should go downstream
@@ -333,11 +322,10 @@ mod test {
     #[test]
     fn creates_collectors() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([1, 3, 5]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([]), 0),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -351,17 +339,17 @@ mod test {
         );
 
         let (mut sender, mut receiver) = get_input_output();
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 5, .. })
         ));
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 3, .. })
         ));
-        dist.lifecycle(partiton_index, &mut sender, &remotes);
+        dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(
             receiver.recv().unwrap(),
             Message::Collect(Collect { key: 1, .. })
@@ -372,11 +360,10 @@ mod test {
     #[test]
     fn creates_acquire_and_emits_buffers() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([1]), 1),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -400,12 +387,12 @@ mod test {
 
         // this message should get buffered
         let buffered_msg = DataMessage::new(1, 22, 33);
-        dist.route_message(buffered_msg.clone(), None, partiton_index, 0, 0);
+        dist.route_message(buffered_msg.clone(), None, partiton_index, 0, 0, &remotes);
 
         collector.add_state(25, "foobar".to_string());
         // drop it to trigger the acquire
         drop(collector);
-        dist.lifecycle(partiton_index, &mut sender, &remotes);
+        dist.lifecycle(partiton_index, &mut sender, &mut remotes);
 
         let acquire = comm.recv_from_operator().unwrap();
         assert_eq!(acquire.to_worker, 1);
@@ -436,11 +423,10 @@ mod test {
     #[test]
     fn broadcast_update() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([1, 2]), 1),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -499,11 +485,10 @@ mod test {
     #[test]
     fn transitions_to_normal() {
         let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
-            0,
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
-            Vec::new(),
+            RescaleMessage::new(IndexSet::from([1]), 555),
         );
 
         let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
@@ -517,12 +502,17 @@ mod test {
         );
         let (mut sender, _receiver) = get_input_output();
 
-        // tell it worker 1 is done with rescaling
-        remotes.get_mut(&1).unwrap().1.last_version = 1;
-
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Finished(_)));
-        let dist = dist.lifecycle(partiton_index, &mut sender, &remotes);
+
+        // tell it worker 1 is done with rescaling
+        remotes.get_mut(&1).unwrap().1.last_version = Some(555);
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
+        // should not change since 1 has not acknowledged us finishing yet
+        assert!(matches!(dist, MessageRouter::Finished(_)));
+        remotes.get_mut(&1).unwrap().1.last_ack_version = Some(555);
+
+        let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
         assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
     }
 }
