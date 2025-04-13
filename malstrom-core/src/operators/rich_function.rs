@@ -5,7 +5,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::operator_io::Output,
-    stream::JetStreamBuilder,
+    stream::StreamBuilder,
     types::{Data, DataMessage, Key, MaybeData, Timestamp},
 };
 
@@ -80,7 +80,7 @@ where
             + 'static,
         expired_function: impl FnMut(&K, &T, ExpiredIterator<UK, ExpiryEntry<S, T>>, &mut Output<K, VO, T>)
             + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
 struct RichFunctionOp<F, G> {
@@ -131,7 +131,7 @@ where
     }
 }
 
-impl<K, VI, T> RichFunction<K, VI, T> for JetStreamBuilder<K, VI, T>
+impl<K, VI, T> RichFunction<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
     VI: Data + Serialize + DeserializeOwned,
@@ -154,7 +154,7 @@ where
             + 'static,
         expired_function: impl FnMut(&K, &T, ExpiredIterator<UK, ExpiryEntry<S, T>>, &mut Output<K, VO, T>)
             + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.stateful_op(name, RichFunctionOp::new(function, expired_function))
     }
 }
@@ -167,7 +167,7 @@ mod test {
 
     use crate::channels::operator_io::Output;
     use crate::operators::source::Source;
-    use crate::operators::{GenerateEpochs, KeyLocal, Sink, TimelyStream};
+    use crate::operators::{AssignTimestamps, GenerateEpochs, KeyLocal, Sink};
 
     use crate::sinks::StatelessSink;
     use crate::sources::{SingleIteratorSource, StatelessSource};
