@@ -12,17 +12,28 @@ pub trait Source<K, V, T, S>: super::sealed::Sealed {
     /// # Example
     ///
     /// ```
-    /// use malstrom::StreamProvider;
     /// use malstrom::operators::*;
-    /// use malstrom::sinks::{StatelessSink, StdOut};
-    /// use malstrom::sources::{StatelessSource, SingleIteratorSource};
+    /// use malstrom::runtime::SingleThreadRuntime;
+    /// use malstrom::snapshot::NoPersistence;
+    /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+    /// use malstrom::worker::StreamProvider;
+    /// use malstrom::sinks::{VecSink, StatelessSink};
     ///
-    /// fn build_stream(provider: &mut dyn StreamProvider) -> () {
-    ///     provider
-    ///         .new_stream()
-    ///         .source(StatelessSource::new(SingleIteratorSource::new(0..10)))
-    ///         .sink(StatelessSink::new(StdOut))
-    /// }
+    /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
+    ///
+    /// SingleThreadRuntime::builder()
+    ///     .persistence(NoPersistence)
+    ///     .build(move |provider: &mut dyn StreamProvider| {
+    ///         provider.new_stream()
+    ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..10)))
+    ///         .sink("sink", StatelessSink::new(sink_clone));
+    ///     })
+    ///     .execute()
+    ///     .unwrap();
+    /// let expected: Vec<i32> = (0..10).collect();
+    /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
+    /// assert_eq!(out, expected);
     /// ```
     fn source(self, name: &str, source: S) -> StreamBuilder<K, V, T>;
 }

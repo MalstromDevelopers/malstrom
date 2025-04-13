@@ -15,23 +15,29 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
     ///
     /// ```rust
     /// use malstrom::operators::*;
-    /// use malstrom::operators::Source;
-    /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::sink::VecSink;
-    /// use malstrom::sources::SingleIteratorSource;
+    /// use malstrom::runtime::SingleThreadRuntime;
+    /// use malstrom::snapshot::NoPersistence;
+    /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+    /// use malstrom::worker::StreamProvider;
+    /// use malstrom::sinks::{VecSink, StatelessSink};
     ///
     /// let sink = VecSink::new();
-    /// let sink_clone = sink.clone();
+    /// let sink_insepct = sink.clone();
     ///
-    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    /// let sink_output = VecSink::new();
     ///
-    /// worker
-    ///     .new_stream()
-    ///     .source(SingleIteratorSource::new(0..100))
-    ///     .inspect(move |msg, _ctx| sink_clone.give(msg.clone()))
-    ///     .finish();
+    /// SingleThreadRuntime::builder()
+    ///     .persistence(NoPersistence)
+    ///     .build(move |provider: &mut dyn StreamProvider| {
+    ///         provider.new_stream()
+    ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
+    ///         .
+    /// inspect("inspect", move |msg, _ctx| sink_insepct.give(msg.clone()))
+    ///         .sink("sink", StatelessSink::new(sink_output));
+    ///     })
+    ///     .execute()
+    ///     .unwrap();
     ///
-    /// worker.build().expect("can build").execute();
     /// let expected: Vec<i32> = (0..100).collect();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
