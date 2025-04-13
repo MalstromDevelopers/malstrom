@@ -4,11 +4,7 @@ use std::{
 };
 
 use malstrom::{
-    keyed::distributed::{DistData, DistKey},
-    operators::RichFunction,
-    runtime::communication::Distributable,
-    stream::JetStreamBuilder,
-    types::{DataMessage, Message, Timestamp},
+    operators::RichFunction, runtime::communication::Distributable, stream::StreamBuilder, types::{DataMessage, Key, MaybeData, Message, Timestamp},
 };
 
 pub trait TumblingWindow<K, V, T, VO> {
@@ -28,7 +24,7 @@ pub trait TumblingWindow<K, V, T, VO> {
     /// let sink = VecSink::new();
     ///
     /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
-    /// 
+    ///
     /// let (on_time, _late) = worker
     ///     .new_stream()
     ///     .source("source", SingleIteratorSource::new(0..100))
@@ -50,14 +46,14 @@ pub trait TumblingWindow<K, V, T, VO> {
         size: T,
         zero_alignemt: T,
         aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, T>;
+    ) -> StreamBuilder<K, VO, T>;
 }
 
-impl<K, V, T, VO> TumblingWindow<K, V, T, VO> for JetStreamBuilder<K, V, T>
+impl<K, V, T, VO> TumblingWindow<K, V, T, VO> for StreamBuilder<K, V, T>
 where
-    K: DistKey,
-    V: DistData,
-    VO: DistData,
+    K: Key + Distributable,
+    V: MaybeData + Distributable,
+    VO: MaybeData + Distributable,
     T: Timestamp
         + Distributable
         + Add<Output = T>
@@ -73,7 +69,7 @@ where
         size: T,
         zero_alignemt: T,
         mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, T> {
+    ) -> StreamBuilder<K, VO, T> {
         self.rich_function(
             name,
             move |_, inp, ts, mut state, _| {
@@ -108,10 +104,11 @@ where
 mod tests {
     use malstrom::{
         keyed::KeyLocal,
-        operators::{GenerateEpochs, Sink, Source, TimelyStream},
-        sinks::StatelessSink,
-        sources::{SingleIteratorSource, StatelessSource},
-        testing::{VecSink, get_test_rt},
+        operators::{AssignTimestamps, GenerateEpochs, Sink, Source},
+        runtime::SingleThreadRuntime,
+        sinks::{StatelessSink, VecSink},
+        snapshot::NoPersistence,
+        sources::{SingleIteratorSource, StatelessSource}, worker::StreamProvider,
     };
 
     use crate::tumbling::TumblingWindow;
@@ -120,28 +117,30 @@ mod tests {
     fn test_tumbling_window() {
         let collector = VecSink::new();
 
-        let rt = get_test_rt(|provider| {
-            let (on_time, _late) = provider
-                .new_stream()
-                .source(
-                    "source",
-                    StatelessSource::new(SingleIteratorSource::new([
-                        "hello".to_owned(),
-                        "world".to_owned(),
-                        "foo".to_owned(),
-                        "bar".to_owned(),
-                        "oh".to_owned(),
-                        "my".to_owned(),
-                    ])),
-                )
-                .assign_timestamps("assigner", |msg| msg.timestamp)
-                .generate_epochs("generate", |_, t| t.to_owned());
+        let rt = SingleThreadRuntime::builder()
+            .persistence(NoPersistence)
+            .build(|provider: &mut dyn StreamProvider| {
+                let (on_time, _late) = provider
+                    .new_stream()
+                    .source(
+                        "source",
+                        StatelessSource::new(SingleIteratorSource::new([
+                            "hello".to_owned(),
+                            "world".to_owned(),
+                            "foo".to_owned(),
+                            "bar".to_owned(),
+                            "oh".to_owned(),
+                            "my".to_owned(),
+                        ])),
+                    )
+                    .assign_timestamps("assigner", |msg| msg.timestamp)
+                    .generate_epochs("generate", |_, t| t.to_owned());
 
-            on_time
-                .key_local("key", |_| false)
-                .tumbling_window("join-two", 2, 0, |x| x.join("|"))
-                .sink("sink", StatelessSink::new(collector.clone()));
-        });
+                on_time
+                    .key_local("key", |_| false)
+                    .tumbling_window("join-two", 2, 0, |x| x.join("|"))
+                    .sink("sink", StatelessSink::new(collector.clone()));
+            });
         rt.execute().unwrap();
         assert_eq!(
             collector.into_iter().map(|x| x.value).collect::<Vec<_>>(),
@@ -153,28 +152,30 @@ mod tests {
     fn test_tumbling_window_alignment() {
         let collector = VecSink::new();
 
-        let rt = get_test_rt(|provider| {
-            let (on_time, _late) = provider
-                .new_stream()
-                .source(
-                    "source",
-                    StatelessSource::new(SingleIteratorSource::new([
-                        "hello".to_owned(),
-                        "world".to_owned(),
-                        "foo".to_owned(),
-                        "bar".to_owned(),
-                        "oh".to_owned(),
-                        "my".to_owned(),
-                    ])),
-                )
-                .assign_timestamps("assigner", |msg| msg.timestamp)
-                .generate_epochs("generate", |_, t| t.to_owned());
+        let rt = SingleThreadRuntime::builder()
+            .persistence(NoPersistence)
+            .build(|provider: &mut dyn StreamProvider| {
+                let (on_time, _late) = provider
+                    .new_stream()
+                    .source(
+                        "source",
+                        StatelessSource::new(SingleIteratorSource::new([
+                            "hello".to_owned(),
+                            "world".to_owned(),
+                            "foo".to_owned(),
+                            "bar".to_owned(),
+                            "oh".to_owned(),
+                            "my".to_owned(),
+                        ])),
+                    )
+                    .assign_timestamps("assigner", |msg| msg.timestamp)
+                    .generate_epochs("generate", |_, t| t.to_owned());
 
-            on_time
-                .key_local("key", |_| false)
-                .tumbling_window("join-two", 2, 1, |x| x.join("|"))
-                .sink("sink", StatelessSink::new(collector.clone()));
-        });
+                on_time
+                    .key_local("key", |_| false)
+                    .tumbling_window("join-two", 2, 1, |x| x.join("|"))
+                    .sink("sink", StatelessSink::new(collector.clone()));
+            });
         rt.execute().unwrap();
         assert_eq!(
             collector.into_iter().map(|x| x.value).collect::<Vec<_>>(),
