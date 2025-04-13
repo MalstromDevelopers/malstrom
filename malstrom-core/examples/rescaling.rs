@@ -1,11 +1,11 @@
+//! A scaling program
 use std::time::Duration;
-
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
-/// A multithreaded program
-use malstrom::runtime::{MultiThreadRuntime, StreamProvider};
+use malstrom::runtime::MultiThreadRuntime;
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::worker::StreamProvider;
 
 fn main() {
     // tracing_subscriber::fmt::init();

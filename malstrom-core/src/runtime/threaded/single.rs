@@ -24,11 +24,11 @@ pub struct SingleThreadRuntime<P, F> {
 impl<P, F> SingleThreadRuntime<P, F>
 where
     P: PersistenceBackend + Clone + Send,
-    F: FnMut(&mut dyn StreamProvider),
+    F: FnOnce(&mut dyn StreamProvider),
 {
     /// Start execution on this runtime, returning a build error if building the
     /// JetStream worker fails
-    pub fn execute(mut self) -> Result<(), ExecutionError> {
+    pub fn execute(self) -> Result<(), ExecutionError> {
         let mut flavor = SingleThreadRuntimeFlavor::default();
 
         let mut worker = WorkerBuilder::new(flavor.clone(), self.persistence.clone());

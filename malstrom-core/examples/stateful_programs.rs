@@ -1,11 +1,11 @@
-use std::time::Duration;
-
+//! A stateful program
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
-/// A stateful program
-use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::runtime::SingleThreadRuntime;
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::worker::StreamProvider;
+use std::time::Duration;
 
 fn main() {
     SingleThreadRuntime::builder()

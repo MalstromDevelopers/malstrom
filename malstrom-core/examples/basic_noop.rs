@@ -1,7 +1,8 @@
+//! A basic example which runs a no-op dataflow
 use std::time::Duration;
 
-/// A basic example which runs a no-op dataflow
-use malstrom::runtime::{SingleThreadRuntime, StreamProvider};
+use malstrom::runtime::SingleThreadRuntime;
+use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
 
 fn main() {

@@ -1,7 +1,8 @@
+//! A multithreaded, keyed stream
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
-/// A multithreaded, keyed stream
-use malstrom::runtime::{MultiThreadRuntime, StreamProvider};
+use malstrom::runtime::MultiThreadRuntime;
+use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
 
