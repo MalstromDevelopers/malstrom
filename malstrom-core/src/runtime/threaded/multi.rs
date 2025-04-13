@@ -20,27 +20,26 @@ use super::{communication::InterThreadCommunication, Shared};
 /// # Example
 /// ```rust
 /// use malstrom::operators::*;
-/// use malstrom::operators::Source;
-/// use malstrom::runtime::{WorkerBuilder, RuntimeFlavor, threaded::MultiThreadRuntime};
+/// use malstrom::runtime::MultiThreadRuntime;
 /// use malstrom::snapshot::NoPersistence;
+/// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+/// use malstrom::worker::StreamProvider;
 /// use malstrom::keyed::partitioners::rendezvous_select;
-/// use malstrom::sources::SingleIteratorSource;
+/// 
 ///
-/// fn build_dataflow<R: RuntimeFlavor>(rt: R) -> WorkerBuilder<R, NoPersistence>{
-///     let mut worker = WorkerBuilder::new(rt);
-///     worker
-///         .new_stream()
-///         .source(SingleIteratorSource::new(0..10))
-///         // we just use the value as key here
-///         .key_distribute(|msg| msg.value, rendezvous_select)
-///         // all operations from this point on are distributed
-///         .finish();
-///     worker
-/// }
-///
-/// // run with 4 workers in parallel
-/// let runtime = MultiThreadRuntime::new(4, build_dataflow);
-/// runtime.execute().unwrap()
+/// MultiThreadRuntime::builder()
+///     .parrallelism(4)
+///     .persistence(NoPersistence)
+///     .build(|provider: &mut dyn StreamProvider| {
+///         provider.new_stream()
+///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
+///         .key_distribute("key-by-value", |x| x.value, rendezvous_select)
+///         .inspect("print", |x, ctx| {
+///             println!("{x:?} @ Worker {}", ctx.worker_id)
+///         });
+///     })
+///     .execute()
+///     .unwrap();
 /// ```
 #[derive(Builder)]
 pub struct MultiThreadRuntime<P> {

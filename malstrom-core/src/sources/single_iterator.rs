@@ -16,22 +16,25 @@ use super::{StatelessSourceImpl, StatelessSourcePartition};
 /// # Example
 /// ```rust
 /// use malstrom::operators::*;
-/// use malstrom::operators::Source;
-/// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-/// use malstrom::testing::VecSink;
-/// use malstrom::sources::SingleIteratorSource;
+/// use malstrom::runtime::SingleThreadRuntime;
+/// use malstrom::snapshot::NoPersistence;
+/// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+/// use malstrom::worker::StreamProvider;
+/// use malstrom::sinks::{VecSink, StatelessSink};
 ///
 /// let sink = VecSink::new();
-/// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+/// let sink_clone = sink.clone();
 ///
-/// worker
-///     .new_stream()
-///     .source(SingleIteratorSource::new(0..100))
-///     .sink(sink.clone())
-///     .finish();
-///
-/// worker.build().expect("can build").execute();
-/// let expected: Vec<i32> = (0..100).collect();
+/// SingleThreadRuntime::builder()
+///     .persistence(NoPersistence)
+///     .build(move |provider: &mut dyn StreamProvider| {
+///         provider.new_stream()
+///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..10)))
+///         .sink("sink", StatelessSink::new(sink_clone));
+///     })
+///     .execute()
+///     .unwrap();
+/// let expected: Vec<i32> = (0..10).collect();
 /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
 /// assert_eq!(out, expected);
 /// ```
@@ -139,7 +142,7 @@ mod tests {
         sources::{SingleIteratorSource, StatelessSource},
         stream::OperatorBuilder,
         testing::get_test_rt,
-        testing::vec_sink::VecSink,
+        testing::VecSink,
         types::{Message, NoKey},
     };
 
