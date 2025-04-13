@@ -132,7 +132,7 @@ mod tests {
 
     use crate::{
         snapshot::{deserialize_state, serialize_state},
-        testing::vec_sink::VecSink,
+        testing::VecSink,
     };
 
     use super::*;
