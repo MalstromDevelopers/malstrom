@@ -103,11 +103,11 @@ where
     ) -> StreamBuilder<K, VO, T>;
 }
 
-struct RichFunctionOp<F, G> {
+struct TtlOp<F, G> {
     function: F,
     expired_function: G,
 }
-impl<F, G> RichFunctionOp<F, G> {
+impl<F, G> TtlOp<F, G> {
     fn new(function: F, expired_function: G) -> Self {
         Self {
             function,
@@ -117,7 +117,7 @@ impl<F, G> RichFunctionOp<F, G> {
 }
 
 impl<F, G, K, VI, T, VO, UK, S> StatefulLogic<K, VI, T, VO, ExpireMap<UK, S, T>>
-    for RichFunctionOp<F, G>
+    for TtlOp<F, G>
 where
     K: Key,
     UK: Key,
@@ -175,7 +175,7 @@ where
         expired_function: impl FnMut(&K, &T, ExpiredIterator<UK, ExpiryEntry<S, T>>, &mut Output<K, VO, T>)
             + 'static,
     ) -> StreamBuilder<K, VO, T> {
-        self.stateful_op(name, RichFunctionOp::new(function, expired_function))
+        self.stateful_op(name, TtlOp::new(function, expired_function))
     }
 }
 
