@@ -1,6 +1,7 @@
 use std::hash::Hash;
 
-use expiremap::{ExpireMap, ExpiredIterator, ExpiryEntry};
+use expiremap::ExpiredIterator;
+pub use expiremap::{ExpireMap, ExpiryEntry};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
@@ -13,7 +14,7 @@ use super::stateful_op::{StatefulLogic, StatefulOp};
 
 // TODO: Documentation ENUM to support variants
 
-pub trait RichFunction<K, VI, T>: super::sealed::Sealed
+pub trait TtlMap<K, VI, T>: super::sealed::Sealed
 where
     T: Serialize + DeserializeOwned,
 {
@@ -38,32 +39,51 @@ where
     ///
     /// ```rust
     /// use malstrom::operators::*;
-    /// use malstrom::operators::Source;
-    /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::testing::VecSink;
-    /// use malstrom::sources::SingleIteratorSource;
+    /// use malstrom::runtime::SingleThreadRuntime;
+    /// use malstrom::snapshot::NoPersistence;
+    /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+    /// use malstrom::worker::StreamProvider;
+    /// use malstrom::sinks::{VecSink, StatelessSink};
+    /// use malstrom::types::{DataMessage, Message};
+    /// use malstrom::channels::operator_io::Output;
     ///
     /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
     ///
-    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    /// SingleThreadRuntime::builder()
+    ///     .persistence(NoPersistence)
+    ///     .build(move |provider: &mut dyn StreamProvider| {
+    ///         provider.new_stream()
+    ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..50)))
+    ///         // stateful operators require a keyed stream
+    ///         .key_local("key", |_| false)
+    ///         // sum up all numbers and thus far
+    ///         .ttl_function(
+    ///             "ttl", |key, inp, ts, mut state: ExpireMap<String, i32, usize>, out: &mut Output<bool, i32, usize>| {
+    ///                 let g = state.get(&"key".to_owned());
+    ///                 let val = if let Some(val) = g {
+    ///                     let v = inp + *val;
+    ///                     state.insert("key".to_owned(), v, ts + 15);
+    ///                     v
+    ///                 } else {
+    ///                     state.insert("key".to_owned(), inp, ts + 15);
+    ///                     inp
+    ///                 };
+    ///                 out.send(Message::Data(DataMessage::new(*key, val, ts)));
+    ///                 Some(state)
+    ///             },
+    ///             |_, _, _, _| {}
+    ///         )
+    ///         .sink("sink", StatelessSink::new(sink_clone));
+    ///     })
+    ///     .execute()
+    ///     .unwrap();
     ///
-    /// worker
-    ///     .new_stream()
-    ///     .source(SingleIteratorSource::new(0..10))
-    ///     // stateful operators require a keyed stream
-    ///     .key_local(|_| 0)
-    ///     // sum up all numbers and thus far
-    ///     .rich_function(
-    ///         |_key, value, state: i32| ((state + value), Some(state + value)))
-    ///     .sink(sink.clone())
-    ///     .finish();
-    ///
-    /// worker.build().expect("can build").execute();
     /// let expected: Vec<i32> = (0..10).scan(0, |state, x| {*state = *state + x; Some(*state)}).collect();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn rich_function<
+    fn ttl_function<
         VO: Data,
         S: Default + Serialize + DeserializeOwned + 'static,
         UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
@@ -131,13 +151,13 @@ where
     }
 }
 
-impl<K, VI, T> RichFunction<K, VI, T> for StreamBuilder<K, VI, T>
+impl<K, VI, T> TtlMap<K, VI, T> for StreamBuilder<K, VI, T>
 where
     K: Key + Serialize + DeserializeOwned,
     VI: Data + Serialize + DeserializeOwned,
     T: Timestamp + Serialize + DeserializeOwned,
 {
-    fn rich_function<
+    fn ttl_function<
         VO: Data,
         S: Default + Serialize + DeserializeOwned + 'static,
         UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
@@ -174,7 +194,7 @@ mod test {
     use crate::testing::{get_test_rt, VecSink};
     use crate::types::{DataMessage, Message};
 
-    use super::RichFunction;
+    use super::TtlMap;
 
     /// Simple test to check we are keeping state
     #[test]
@@ -194,7 +214,7 @@ mod test {
             // calculate a running total split by odd and even numbers
             on_time
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .rich_function(
+                .ttl_function(
                     "add",
                     |key,
                      inp,
@@ -219,7 +239,7 @@ mod test {
                 )
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
-        rt.execute().unwrap();
+        rt.execute().expect("Executing runtime failed");
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
@@ -253,7 +273,7 @@ mod test {
 
             on_time
                 .key_local("key-local", |_| 0)
-                .rich_function(
+                .ttl_function(
                     "concat",
                     |key,
                      inp,
@@ -273,7 +293,7 @@ mod test {
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
 
-        rt.execute().unwrap();
+        rt.execute().expect("Executing runtime failed");
 
         let result = collector.into_iter().map(|x| x.value).collect_vec();
         let expected = vec![

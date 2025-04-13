@@ -4,7 +4,7 @@ use std::{
 };
 
 use malstrom::{
-    operators::RichFunction,
+    operators::TtlMap,
     runtime::communication::Distributable,
     stream::StreamBuilder,
     types::{DataMessage, Key, MaybeData, Message, Timestamp},
@@ -78,7 +78,7 @@ where
         zero_alignemt: T,
         mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
     ) -> StreamBuilder<K, VO, T> {
-        self.rich_function(
+        self.ttl_function(
             name,
             move |_, inp, ts, mut state, _| {
                 // TODO: +size or +size-1?
