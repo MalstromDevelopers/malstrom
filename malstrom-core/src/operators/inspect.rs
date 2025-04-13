@@ -17,7 +17,7 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
     /// use malstrom::operators::*;
     /// use malstrom::operators::Source;
     /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::testing::VecSink;
+    /// use malstrom::sink::VecSink;
     /// use malstrom::sources::SingleIteratorSource;
     ///
     /// let sink = VecSink::new();

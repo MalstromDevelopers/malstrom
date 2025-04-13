@@ -67,12 +67,14 @@ where
         let (api_tx, api_rx) = flume::unbounded();
 
         let communication = CoordinatorGrpcBackend::new(api_tx, rt.handle().clone()).unwrap();
-        let (_coordinator, coordinator_api) = Coordinator::execute(
+        let (coordinator, coordinator_api) = Coordinator::new();
+        
+        rt.spawn_blocking(move || coordinator.execute(
             CONFIG.initial_scale,
             self.snapshots,
             self.persistence,
             communication,
-        )?;
+        ).unwrap());
 
         let api_thread = rt.spawn(async move {
             while let Ok(req) = api_rx.recv() {
