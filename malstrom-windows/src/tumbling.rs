@@ -11,7 +11,7 @@ use malstrom::{
     types::{DataMessage, Message, Timestamp},
 };
 
-pub trait TumblingWindow<K, V, Duration, VO> {
+pub trait TumblingWindow<K, V, T, VO> {
     /// Tumbling event time window which provides the owned values arrived on time
     /// during the windows duration to the aggregator function. The window is triggered as soon
     /// as the epoch advances past the windows end time.
@@ -37,31 +37,32 @@ pub trait TumblingWindow<K, V, Duration, VO> {
     ///
     /// on_time
     ///     .key_local("key", |_| false)
-    ///     .tumbling_window("count", 50, |x| x.into_iter().sum())
+    ///     .tumbling_window("count", 50, 0, |x| x.into_iter().sum())
     ///     .sink("sink", sink.clone())
     ///     .finish();
     /// worker.build().expect("can build").execute();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
-    /// assert_eq!(out, vec![0..49.iter().sum(), 50..100.iter().sum()]);
+    /// assert_eq!(out, vec![(0..49).iter().sum(), (50..100).iter().sum()]);
     /// ```
     fn tumbling_window(
         self,
         name: &str,
-        size: Duration,
+        size: T,
+        zero_alignemt: T,
         aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, Duration>;
+    ) -> JetStreamBuilder<K, VO, T>;
 }
 
-impl<K, V, Duration, VO> TumblingWindow<K, V, Duration, VO> for JetStreamBuilder<K, V, Duration>
+impl<K, V, T, VO> TumblingWindow<K, V, T, VO> for JetStreamBuilder<K, V, T>
 where
     K: DistKey,
     V: DistData,
     VO: DistData,
-    Duration: Timestamp
+    T: Timestamp
         + Distributable
-        + Add<Output = Duration>
-        + Sub<Output = Duration>
-        + Rem<Output = Duration>
+        + Add<Output = T>
+        + Sub<Output = T>
+        + Rem<Output = T>
         + Hash
         + Eq
         + Copy,
@@ -69,15 +70,16 @@ where
     fn tumbling_window(
         self,
         name: &str,
-        size: Duration,
+        size: T,
+        zero_alignemt: T,
         mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
-    ) -> JetStreamBuilder<K, VO, Duration> {
+    ) -> JetStreamBuilder<K, VO, T> {
         self.rich_function(
             name,
             move |_, inp, ts, mut state, _| {
                 // TODO: +size or +size-1?
                 // TODO: What with the clone?
-                let window_end = ts - (ts % size) + size;
+                let window_end = zero_alignemt + ts - ((ts + zero_alignemt) % size) + size;
                 let res: Option<&mut Vec<V>> = state.get_mut(&window_end);
 
                 if let Some(list) = res {
@@ -137,13 +139,46 @@ mod tests {
 
             on_time
                 .key_local("key", |_| false)
-                .tumbling_window("join-two", 2, |x| x.join("|"))
+                .tumbling_window("join-two", 2, 0, |x| x.join("|"))
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();
         assert_eq!(
             collector.into_iter().map(|x| x.value).collect::<Vec<_>>(),
             vec!["hello|world", "foo|bar", "oh|my"]
+        );
+    }
+
+    #[test]
+    fn test_tumbling_window_alignment() {
+        let collector = VecSink::new();
+
+        let rt = get_test_rt(|provider| {
+            let (on_time, _late) = provider
+                .new_stream()
+                .source(
+                    "source",
+                    StatelessSource::new(SingleIteratorSource::new([
+                        "hello".to_owned(),
+                        "world".to_owned(),
+                        "foo".to_owned(),
+                        "bar".to_owned(),
+                        "oh".to_owned(),
+                        "my".to_owned(),
+                    ])),
+                )
+                .assign_timestamps("assigner", |msg| msg.timestamp)
+                .generate_epochs("generate", |_, t| t.to_owned());
+
+            on_time
+                .key_local("key", |_| false)
+                .tumbling_window("join-two", 2, 1, |x| x.join("|"))
+                .sink("sink", StatelessSink::new(collector.clone()));
+        });
+        rt.execute().unwrap();
+        assert_eq!(
+            collector.into_iter().map(|x| x.value).collect::<Vec<_>>(),
+            vec!["hello", "world|foo", "bar|oh", "my"]
         );
     }
 }
