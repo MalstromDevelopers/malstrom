@@ -1,17 +1,26 @@
 # Implementing Custom Data Sources
 
-Currently Malstrom can read data from Kafka, you can find how to do that [here](./Kafka.md) or
-from any Rust type which implements [`IntoIterator`](https://doc.rust-lang.org/std/iter/trait.IntoIterator.html)
-by using the `SingleIteratorSource`. Note that `SingleIteratorSource` only reads records on one
-worker regardless of a job's total parallelism.
+Sources are how data records enter your computation. Usually this means connecting to some external
+system like a message broker or database.
 
-We aim to support more sources in the future, you can however also implement your own.
-Make sure to the guide's sections about [Keying](./KeyedStreams.md) and [Event Time](./TimelyProcessing.md)
-first.
+At the moment Malstrom supports two types of sources:
+
+- Kafka compatible message brokers via the [`malstrom-kafka`](docs.rs/malstrom-kafka) crate. You can find more
+information about that [here](./Kafka.md).
+- Any type [`IntoIterator`](https://doc.rust-lang.org/std/iter/trait.IntoIterator.html) via the
+built-in `SingleIteratorSource`
+
+`SingleIteratorSource` is mainly useful for testing, as it can only produce records on a single
+worker, regardless of the overall job parallelism.
+
+We aim to support more sources in the future, in the meantime though, this guide will teach you
+how to implement your own source.
+Make sure to read about [Keying](./KeyedStreams.md) and [Event Time](./TimelyProcessing.md)
+first, as these concepts are important to fully understand how sources work.
 
 ## Custom Stateless Source
 
-As an example we will implement a source reading from file on the local filesystem.
+As an example we will implement a source reading from files on the local filesystem.
 Sources can be stateless, meaning they retain no information when the job restarts or is rescaled,
 or stateful.
 A stateless source is a bit simpler to implement, so that is what we will start with.
@@ -19,7 +28,7 @@ A stateless source is a bit simpler to implement, so that is what we will start 
 For our end result, we will want a source which takes as parameters a list of filepaths, and
 then emits lines from the files as records into our stream:
 
-```rust
+```rs
 StatelessSource::new(FileSource::new(
     vec!["/some/path.txt".to_string(), "/some/other/path.txt".to_string()]
 ));
@@ -43,7 +52,7 @@ Example:
 <<< @../../malstrom-core/examples/file_source_stateless.rs#source_impl
 
 Here we first define a struct `FileSource`, which holds the list of files we whish to read.
-On `FileSource` we then implement `StatelessSourceImpl<String, usize>` meaning we our source emits
+On `FileSource` we then implement `StatelessSourceImpl<String, usize>` meaning our source emits
 records with a value of type `String`, a line from the file, and a timestamp of type `usize`, the
 line number in the file.
 
@@ -55,7 +64,7 @@ what partitions we have. Here we simply return our file list, since every file w
 partition.
 
 `build_part` gets called for every `Part` returned by `list_parts` to instantiate the partition.
-This methods gets called one the worker where the partition will be located and may get called
+This methods gets called on the worker where the partition will be located and may get called
 again when the job is rescaled.
 
 We are however still lacking the implementation of the actual partition itself:
@@ -63,7 +72,7 @@ We are however still lacking the implementation of the actual partition itself:
 ### The StatelessSourcePartition Trait
 
 For our partitions we want to open and read the file at the partition's respective filepath and then
-emit every line and linenumber as data.
+emit every line and line number as data.
 
 To do this, we implement Malstrom's StatelessSourcePartition trait:
 
@@ -92,7 +101,7 @@ the implementation of `poll` must not block until data becomes available, it sho
 
 ## Custom Stateful Source
 
-Currently the source we built is does not retain any state persistently. This means, if the job
+Currently the source we built does not retain any state persistently. This means, if the job
 is restarted or rescaled, we will start reading files from the beginning again.
 
 It would be much nicer if instead we continued reading, where we left off.
@@ -102,17 +111,17 @@ It would be much nicer if instead we continued reading, where we left off.
 To achieve this we swap out the implementation of `StatelessSourceImpl` for `StatefulSourceImpl`.
 
 ::: tip
-Actually you could also implement both, making the source stateless/stateful and the discretion
+Actually you could also implement both, making the source stateless/stateful at the discretion
 of the user.
 :::
 
 <<< @../../malstrom-core/examples/file_source_stateful.rs#source_impl{17,26}
 
 To make this work, we need to define one more associated type, `PartitionState` which is the type
-of our state we wish to retain. We want to keep the current line number of the file we are reading,
+of the state we wish to retain. We want to keep the current line number of the file we are reading,
 therefore we set `PartitionState` to `usize`.
 
-Additionally now `build_part` takes an extra parameter, the partitions state, to create the
+Additionally now `build_part` takes an extra parameter, the partition's state, to create the
 partition. This is optional, since the state may not exist yet, for example when we start the job
 for the first time.
 
@@ -126,7 +135,7 @@ Conceptually we need to make two changes to our partition:
 2. Tell Malstrom about this information so it can persist or move the state for us
 
 We will introduce an additional attribute `next_line` to check which line we would need to read
-on the next call to
+on the next call to `poll`.
 
 <<< @../../malstrom-core/examples/file_source_stateful.rs#partition_impl{6,26,30,42-48}
 

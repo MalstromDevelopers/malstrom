@@ -13,6 +13,12 @@ export default defineConfig({
 
     sidebar: [
       {
+        text: 'About Malstrom',
+        items: [
+          { text: 'What is Malstrom?', link: '/WhatIsMalstrom' },
+        ]
+      },
+      {
         text: 'Guide',
         items: [
           { text: 'Getting Started', link: '/guide/GettingStarted' },
@@ -23,12 +29,11 @@ export default defineConfig({
           { text: 'Connecting to Kafka', link: '/guide/Kafka' },
           { text: 'Deploying to Kubernetes', link: '/guide/Kubernetes' },
           { text: 'Custom Sources', link: '/guide/CustomSources' },
+          { text: 'Custom Sinks', link: '/guide/CustomSinks' },
         ]
       },
       {
-        text: 'About Malstrom',
         items: [
-          { text: 'What is Malstrom?', link: '/WhatIsMalstrom' },
           { text: 'Malstrom compared to other frameworks', link: '/MalstromCompared' },
         ]
       }
