@@ -16,7 +16,6 @@ pub trait KeyLocal<X, K: Key, V, T> {
     fn key_local(
         self,
         name: &str,
-
         key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
     ) -> StreamBuilder<K, V, T>;
 }

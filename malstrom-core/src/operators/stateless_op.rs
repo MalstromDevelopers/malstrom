@@ -4,10 +4,12 @@ use crate::{
     types::{Data, DataMessage, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
 };
 
+/// A custom stateless operator for Malstrom streams
 pub trait StatelessLogic<K, VI, T, VO>: 'static {
     /// Return Some to retain the key-state and None to discard it
     fn on_data(&mut self, msg: DataMessage<K, VI, T>, output: &mut Output<K, VO, T>);
 
+    /// Handle an incoming epoch. The default implementation is a no-op
     fn on_epoch(&mut self, _epoch: &T, _output: &mut Output<K, VO, T>) {}
 }
 
@@ -23,6 +25,8 @@ where
     }
 }
 
+/// Add a custom stateless operator to the stream. See [StatelessLogic] for how to implement a
+/// custom stateless operator
 pub trait StatelessOp<K, VI, T>: super::sealed::Sealed {
     /// A small wrapper around StandardOperator to make allow simpler
     /// implementations of stateless, time-unaware operators like map or filter

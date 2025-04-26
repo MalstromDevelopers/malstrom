@@ -6,10 +6,12 @@ use crate::{
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
-use super::{
-    util::{handle_maybe_late_msg, split_mixed_stream},
-    NeedsEpochs,
-};
+use super::util::{handle_maybe_late_msg, split_mixed_stream};
+/// Intermediate builder for a timestamped stream.
+/// Turn this type into a stream by calling
+/// `generate_epochs` or `generate_periodic_epochs` on it
+#[must_use = "Call `.generate_epochs()`"]
+pub struct NeedsEpochs<K, V, T>(pub(super) StreamBuilder<K, V, T>);
 
 /// Generate Epochs for a stream.
 pub trait GenerateEpochs<K, V, T>: Sealed {
@@ -23,6 +25,15 @@ pub trait GenerateEpochs<K, V, T>: Sealed {
     /// **NOTES:**
     /// - The Epoch generated is always issued *after* the given message.
     /// - If the returned epoch is smaller than the previous epoch, it is ignored
+    /// 
+    /// # Example
+    /// 
+    /// ```no_run
+    /// use malstrom::operators::time::{GenerateEpochs, limit_out_of_orderness}
+    /// 
+    /// let stream: StreamBuilder<NoKey, String, i64> = todo!();
+    /// stream.generate_epochs(limit_out_of_orderness(30));
+    /// ```
     fn generate_epochs(
         self,
         name: &str,
@@ -110,5 +121,28 @@ where
         });
         let mixed = self.then(operator);
         split_mixed_stream(mixed)
+    }
+}
+
+/// Creates a function for generating Epochs suitable for limiting message out-of-orderness.
+///
+/// For example when constructing with `limit_out_of_orderness(Duration::from_secs(30))`
+/// all messages with a timstamp more 30 seconds below the largest timestamp seen so far will be
+/// categorized late due to the epochs emitted.
+pub fn limit_out_of_orderness<K, V, T>(
+    bound: T,
+) -> impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static
+where
+    T: Timestamp + std::ops::Sub<Output = T>,
+{
+    move |msg, last_epoch| {
+        let new_epoch = msg.timestamp.clone() - bound.clone();
+        match last_epoch {
+            Some(le) => {
+                // new message more than `bound` ahead of last epoch
+                (new_epoch > *le).then_some(new_epoch)
+            }
+            None => Some(new_epoch),
+        }
     }
 }

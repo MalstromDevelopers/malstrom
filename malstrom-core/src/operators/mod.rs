@@ -27,6 +27,7 @@ pub use source::{Source, StreamSource};
 pub use split::Split;
 pub use stateful_map::StatefulMap;
 pub use stateful_op::{StatefulLogic, StatefulOp};
+pub use stateless_op::{StatelessLogic, StatelessOp};
 pub use time::*;
 
 // These are only to be used internally in malstrom

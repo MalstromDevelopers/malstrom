@@ -10,15 +10,15 @@ use slatedb::db::Db;
 use thiserror::Error;
 use tokio::runtime::{Handle, Runtime};
 use tokio_stream::StreamExt;
-use tracing::debug;
 
 /// A snapshot persistence backend utilizing [SlateDB](slatedb.io)
 /// for saving snapshots to object stores or local disk
+#[derive(Clone)]
 pub struct SlateDbBackend {
     base_path: Path,
     object_store: Arc<dyn ObjectStore>,
     commits: Commits,
-    rt: Runtime,
+    rt: Arc<Runtime>,
 }
 
 impl PersistenceBackend for SlateDbBackend {
@@ -74,11 +74,12 @@ impl SlateDbBackend {
             base_path,
             object_store,
             commits: commit_db,
-            rt,
+            rt: Arc::new(rt),
         })
     }
 }
 
+#[derive(Clone)]
 struct Commits {
     commits: RefCell<Vec<SnapshotVersion>>,
     commits_path: Path,
@@ -201,7 +202,6 @@ impl SlateDbClient {
 
 impl PersistenceClient for SlateDbClient {
     fn load(&self, operator_id: &crate::types::OperatorId) -> Option<Vec<u8>> {
-        debug!("Restoring state for operator {}", operator_id);
         self.rt
             .block_on(self.db.get(&operator_id.to_be_bytes()))
             .unwrap()
@@ -209,7 +209,6 @@ impl PersistenceClient for SlateDbClient {
     }
 
     fn persist(&mut self, state: &[u8], operator_id: &crate::types::OperatorId) {
-        debug!("Storing state for operator {}", operator_id);
         self.rt
             .block_on(self.db.put(&operator_id.to_be_bytes(), state))
             .unwrap()

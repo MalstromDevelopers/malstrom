@@ -10,7 +10,7 @@ How does Malstrom compare to...
 
 ## Flink
 
-Compared Version: `1.2.0`/`2.0.0`
+Compared Version: `1.20.0`/`2.0.0`
 
 [Flink](https://flink.apache.org/) is the de-facto industry standard of stream processing
 and for good reason, it is extremely powerful.

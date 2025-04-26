@@ -20,6 +20,7 @@ impl<T> Default for VecSink<T> {
 }
 
 impl<T> VecSink<T> {
+    /// Create a new sink which collects all messages into a `Vec`
     pub fn new() -> Self {
         VecSink {
             inner: Arc::new(Mutex::new(Vec::new())),
