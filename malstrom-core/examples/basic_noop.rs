@@ -2,8 +2,8 @@
 use std::time::Duration;
 
 use malstrom::runtime::SingleThreadRuntime;
-use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
+use malstrom::worker::StreamProvider;
 
 fn main() {
     SingleThreadRuntime::builder()

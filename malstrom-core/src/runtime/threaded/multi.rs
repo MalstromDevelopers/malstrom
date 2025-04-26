@@ -25,7 +25,7 @@ use super::{communication::InterThreadCommunication, Shared};
 /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
 /// use malstrom::worker::StreamProvider;
 /// use malstrom::keyed::partitioners::rendezvous_select;
-/// 
+///
 ///
 /// MultiThreadRuntime::builder()
 ///     .parrallelism(4)

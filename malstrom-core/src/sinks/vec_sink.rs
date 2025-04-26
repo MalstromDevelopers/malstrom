@@ -28,11 +28,13 @@ impl<T> VecSink<T> {
     }
 
     /// Put a value into this sink
+    #[allow(clippy::unwrap_used)]
     pub fn give(&self, value: T) {
         self.inner.lock().unwrap().push(value)
     }
 
     /// Take the given range out of this sink
+    #[allow(clippy::unwrap_used)]
     pub fn drain_vec<R: RangeBounds<usize>>(&self, range: R) -> Vec<T> {
         self.inner.lock().unwrap().drain(range).collect()
     }

@@ -1,10 +1,10 @@
 //! Combining multiple streams
 use malstrom::operators::*;
 use malstrom::runtime::SingleThreadRuntime;
-use malstrom::worker::StreamProvider;
 use malstrom::sinks::{StatelessSink, StdOutSink};
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::worker::StreamProvider;
 
 fn main() {
     SingleThreadRuntime::builder()

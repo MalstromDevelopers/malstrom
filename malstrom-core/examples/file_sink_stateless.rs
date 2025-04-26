@@ -13,7 +13,7 @@ use std::{fs::OpenOptions, io::Write};
 // #region sink_impl
 /// Write records as lines to a file
 struct FileSink {
-    directory: String
+    directory: String,
 }
 
 impl FileSink {

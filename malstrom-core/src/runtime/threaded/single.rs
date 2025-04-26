@@ -35,13 +35,12 @@ where
         (self.build)(&mut worker);
 
         let (coordinator, _) = Coordinator::new();
-        let communication = flavor.communication().expect("SingleThread communication is infallible");
-        let _coord_thread = std::thread::spawn(move || coordinator.execute(
-            1,
-            self.snapshots,
-            self.persistence,
-            communication,
-        ));
+        let communication = flavor
+            .communication()
+            .expect("SingleThread communication is infallible");
+        let _coord_thread = std::thread::spawn(move || {
+            coordinator.execute(1, self.snapshots, self.persistence, communication)
+        });
         worker.execute()?;
         // TODO: Coordinator thread does not terminate, which messes with the tests
         //coord_thread.join().map_err(ExecutionError::CoordinatorJoin)??;
@@ -56,7 +55,7 @@ pub enum ExecutionError {
     #[error("Error executing coordinator")]
     Coordinator(#[from] CoordinatorExecutionError),
     #[error("Error joining coordinator thread: {0:?}")]
-    CoordinatorJoin(Box<dyn std::any::Any + std::marker::Send>)
+    CoordinatorJoin(Box<dyn std::any::Any + std::marker::Send>),
 }
 
 /// Runtime which only provides a single thread for a single worker.

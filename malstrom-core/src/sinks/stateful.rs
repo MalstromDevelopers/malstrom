@@ -229,7 +229,8 @@ where
         _suspend_marker: &mut SuspendMarker,
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
-    ) {}
+    ) {
+    }
 
     fn on_interrogate(
         &mut self,

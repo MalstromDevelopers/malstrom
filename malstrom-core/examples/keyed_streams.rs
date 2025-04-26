@@ -2,9 +2,9 @@
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 use malstrom::runtime::MultiThreadRuntime;
-use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::worker::StreamProvider;
 
 fn main() {
     MultiThreadRuntime::builder()

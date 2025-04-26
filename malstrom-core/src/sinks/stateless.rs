@@ -36,11 +36,8 @@ where
         builder.then(OperatorBuilder::direct(
             name,
             move |input: &mut Input<K, V, T>, _output: &mut Output<NoKey, NoData, NoTime>, _ctx| {
-                if let Some(msg) = input.recv() {
-                    match msg {
-                        Message::Data(d) => self.0.sink(d),
-                        _ => (),
-                    }
+                if let Some(Message::Data(d)) = input.recv() {
+                    self.0.sink(d)
                 }
             },
         ));

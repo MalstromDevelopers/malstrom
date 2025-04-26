@@ -12,16 +12,19 @@ use malstrom::worker::StreamProvider;
 struct CustomFlatten;
 // #region impl_head
 impl<K, V, T> StatelessLogic<K, Vec<V>, T, V> for CustomFlatten
-where K: MaybeKey, T: Timestamp, V: Data
-// #endregion impl_head
+where
+    K: MaybeKey,
+    T: Timestamp,
+    V: Data, // #endregion impl_head
 {
-
     fn on_data(&mut self, msg: DataMessage<K, Vec<V>, T>, output: &mut Output<K, V, T>) {
         for x in msg.value {
-            output.send(
-                Message::Data(DataMessage::new(msg.key.clone(), x, msg.timestamp.clone()))
-            )
-        }        
+            output.send(Message::Data(DataMessage::new(
+                msg.key.clone(),
+                x,
+                msg.timestamp.clone(),
+            )))
+        }
     }
 }
 // #endregion custom_impl
@@ -36,14 +39,13 @@ fn main() {
 }
 
 fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
-    let data = [
-        vec![1, 2, 3, 4],
-        vec![5, 6, 7],
-        vec![8, 9, 10],
-    ];
+    let data = [vec![1, 2, 3, 4], vec![5, 6, 7], vec![8, 9, 10]];
     provider
         .new_stream()
-        .source("iter-source", StatelessSource::new(SingleIteratorSource::new(data)))
+        .source(
+            "iter-source",
+            StatelessSource::new(SingleIteratorSource::new(data)),
+        )
         .stateless_op("flatten", CustomFlatten)
         .sink("stdout", StatelessSink::new(StdOutSink));
 }

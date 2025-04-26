@@ -25,14 +25,16 @@ pub trait GenerateEpochs<K, V, T>: Sealed {
     /// **NOTES:**
     /// - The Epoch generated is always issued *after* the given message.
     /// - If the returned epoch is smaller than the previous epoch, it is ignored
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
-    /// use malstrom::operators::time::{GenerateEpochs, limit_out_of_orderness}
-    /// 
+    /// use malstrom::operators::{GenerateEpochs, limit_out_of_orderness};
+    /// use malstrom::types::NoKey;
+    /// use malstrom::stream::StreamBuilder;
+    ///
     /// let stream: StreamBuilder<NoKey, String, i64> = todo!();
-    /// stream.generate_epochs(limit_out_of_orderness(30));
+    /// stream.generate_epochs("limit", limit_out_of_orderness(30));
     /// ```
     fn generate_epochs(
         self,

@@ -223,9 +223,9 @@ impl Drop for SlateDbClient {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use super::*;
     use object_store::{memory::InMemory, path::Path};
+    use std::sync::Arc;
 
     /// check we return None if there has not been a committed
     /// version yet

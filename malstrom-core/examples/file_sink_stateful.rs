@@ -13,7 +13,7 @@ use std::{fs::OpenOptions, io::Write};
 // #region sink_impl
 /// Write records as lines to a file with line numbers
 struct FileSink {
-    directory: String
+    directory: String,
 }
 
 impl FileSink {
@@ -44,7 +44,7 @@ impl<T> StatefulSinkImpl<String, String, T> for FileSink {
 // #region partition
 struct FileSinkPartition {
     file: std::fs::File,
-    next_line_no: usize
+    next_line_no: usize,
 }
 impl FileSinkPartition {
     fn new(file_path: String, next_line_no: Option<usize>) -> Self {
@@ -54,7 +54,10 @@ impl FileSinkPartition {
             .append(true)
             .open(file_path)
             .unwrap();
-        Self { file, next_line_no: next_line_no.unwrap_or(0) }
+        Self {
+            file,
+            next_line_no: next_line_no.unwrap_or(0),
+        }
     }
 }
 
@@ -62,7 +65,9 @@ impl<T> StatefulSinkPartition<String, String, T> for FileSinkPartition {
     type PartitionState = usize;
 
     fn sink(&mut self, msg: DataMessage<String, String, T>) {
-        self.file.write(format!("{} ", self.next_line_no).as_bytes()).unwrap();
+        self.file
+            .write(format!("{} ", self.next_line_no).as_bytes())
+            .unwrap();
         self.file.write(msg.value.as_bytes()).unwrap();
         self.file.write(b"\n").unwrap();
         self.next_line_no += 1;

@@ -8,7 +8,7 @@ workspace = true
 
 [dependencies]
 itertools = "0.11.0"
-serde = { version = "1.0.188", features = ["derive"] }
+serde = { version = "1.0.218", features = ["derive"] }
 thiserror = "1.0.49"
 tracing = { version = "0.1.40", features = ["log"] }
 indexmap = { version = "2.1.0", features = ["serde"] }
@@ -25,6 +25,7 @@ async-trait = "0.1.85"
 futures = "0.3.31"
 flume = "0.11.1"
 eyre = "0.6.12"
+expiremap = { path = "../../ttlmap", features = ["serde"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
@@ -32,3 +33,7 @@ proptest = "1.5.0"
 
 [features]
 slatedb = ["dep:slatedb", "dep:object_store", "dep:tokio-stream"]
+
+[[example]]
+name = "slatedb_backend"
+required-features = ["slatedb"]
