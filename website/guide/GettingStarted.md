@@ -23,16 +23,17 @@ Lets look at the code and then go through it step-by-step
 
 Feel free to copy and run this snippet, it does absolutely nothing! Let's go through it:
 
-`SingleThreadRuntime::new`: This creates a runtime for Malstrom. A "Runtime" tells us where the computation will be happening.
-In this case, all operations will happen in a single thread, but we will learn more about runtimes shortly. You can also read about the supported runtimes [here](Runtimes)
+`SingleThreadRuntime::builder`: This creates a runtime for Malstrom. A "Runtime" tells us where the computation will be happening.
+In this case, all operations will happen in a single thread, but we will learn more about runtimes shortly.
 
-`fn build_dataflow(flavor: SingleThreadRuntimeFlavor) -> WorkerBuilder`: This is the function which builds our execution graph. It takes a special reference to the runtime as an input, we call this a "flavor". If you'd like to know more about flavors see [[Runtimes]].
-We return a `WorkerBuilder`. The runtime will use this builder to create one or many workers, which take care of executing processing steps and distributing data.
+`.persistence(NoPersistence)`: Means we do not want to persist any snapshots. You can learn more about
+persistent state [here](./StatefulPrograms.html#persistent-state)
 
-`let worker = WorkerBuilder::new(flavor, NoSnapshots, NoPersistence);`: We create a new `WorkerBuilder` for our given runtime. `NoSnapshots, NoPersistence` indicates that we do not want to use [Persistent State](Persistent%20State.md).
+`fn build_dataflow(provider: &mut dyn StreamProvider)`: This is the function which builds our execution graph.
+It takes a special reference to the runtime as an input, we call this a "provider".
+We then use this provider to create datastreams.
 
-`worker.new_stream().finish(); worker` : Here we create a new data stream and then immediately terminate it. Obviously this is not very useful, but we will extend this shortly.
-Finally we return the `WorkerBuilder`.
+`provider.new_stream()` : Here we create a new data stream and then... nothing with it. Let's fix that.
 
 ## Adding Operators
 
@@ -48,7 +49,7 @@ If you now run this code you'll see every second number from 0 to 200 printed to
 
 `.inspect(name, value, context)`: This operators allows us to observe values without manipulating them. This is ideal for debugging or exporting metrics. We will learn about the `context` argument shortly.
 
-As you can see, all operators must have a **unique** name. Choosing a good name is important; It will greatly help you with debugging and tracing and is essential for [[Persistent State]]
+As you can see, all operators must have a **unique** name. Choosing a good name is important; It will greatly help you with debugging and tracing and is essential for [Persistent State](./StatefulPrograms.html#persistent-state)
 
 ## More Power
 
@@ -59,8 +60,8 @@ What if we want to do something more complex than doubling numbers? We will need
 You will again see all numbers printed, along with the ID of the thread where they where processed (a number between 0 and 3).
 Let's reflect on the changes we made:
 
-`MultiThreadRuntime::new::<4>`: We swapped the `SingleThreadRuntime` for a `MultiThreadRuntime` and created it with 4 threads.
+`MultiThreadRuntime:::builder().parrallelism(4)`: We swapped the `SingleThreadRuntime` for a `MultiThreadRuntime` and created it with 4 threads.
 
-`fn build_dataflow<F: RuntimeFlavor>`: We made our builder function generic over the runtime. This is generally a good idea, as this way you can easily run your programs locally using threads and in production using multiple machines.
 
-`.key_by("key-by-value", |x| x.value, rendezvous_select)`: This operator distributes our data across multiple workers (i.e. threads). If you want to know more about how this works, check the [Keyed Streams](./KeyedStreams.md) documentation.
+`.key_distribute("key-by-value", |x| x.value, rendezvous_select)`: This operator distributes our data across multiple workers (i.e. threads).
+If you want to know more about how this works, check the [Keyed Streams](./KeyedStreams.md) documentation.

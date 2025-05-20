@@ -119,12 +119,15 @@ where
         shared: Shared,
         thread_id: u64,
     ) -> std::thread::JoinHandle<Result<(), ExecutionError>> {
-        std::thread::spawn(move || {
-            let flavor = MultiThreadRuntimeFlavor::new(shared, thread_id);
-            let mut worker_builder = WorkerBuilder::new(flavor, persistence);
-            build_fn(&mut worker_builder);
-            worker_builder.execute().map_err(ExecutionError::Worker)
-        })
+        std::thread::Builder::new()
+            .name(format!("worker-{thread_id}"))
+            .spawn(move || {
+                let flavor = MultiThreadRuntimeFlavor::new(shared, thread_id);
+                let mut worker_builder = WorkerBuilder::new(flavor, persistence);
+                build_fn(&mut worker_builder);
+                worker_builder.execute().map_err(ExecutionError::Worker)
+            })
+            .expect("IO error spawning worker")
     }
 
     /// Get an API handle for interacting with the Malstrom job, e.g. for triggering rescales.

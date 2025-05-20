@@ -81,7 +81,7 @@ where
     /// Combine multiple streams into a single stream of all messages
     pub fn union(
         self,
-        others: impl Iterator<Item = StreamBuilder<K, V, T>>,
+        others: impl IntoIterator<Item = StreamBuilder<K, V, T>>,
     ) -> StreamBuilder<K, V, T> {
         let runtime = self.runtime.clone();
         union(runtime, iter::once(self).chain(others))
@@ -90,8 +90,10 @@ where
 
 impl<K, V, T> Drop for StreamBuilder<K, V, T> {
     fn drop(&mut self) {
-        let rt = self.runtime.clone();
         #[allow(clippy::unwrap_used)]
-        rt.lock().unwrap().add_operators(self.operators.drain(..));
+        self.runtime
+            .lock()
+            .unwrap()
+            .add_operators(self.operators.drain(..));
     }
 }

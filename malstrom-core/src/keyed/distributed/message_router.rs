@@ -100,15 +100,9 @@ where
                 output.send(Message::Interrogate(interrogate));
                 MessageRouter::Interrogate(new_router)
             }
-            MessageRouter::Interrogate(_) => {
-                unreachable!()
-            }
-            MessageRouter::Collect(_) => {
-                unreachable!()
-            }
-            MessageRouter::Finished(_) => {
-                unreachable!()
-            }
+            // if the stream is split and re-joined the same rescale message may
+            // reach us multiple times. We can just ignore it then
+            x => x,
         }
     }
 

@@ -1,9 +1,12 @@
 //! Snapshot storage on any cloud store or local filesystem with [SlateDB](https://slatedb.io/)
-use std::cell::RefCell;
-use std::{pin::pin, sync::Arc};
+use std::{
+    pin::pin,
+    sync::{Arc, Mutex},
+};
 
 use super::{PersistenceBackend, PersistenceClient, SnapshotVersion};
 use crate::types::WorkerId;
+pub use object_store;
 use object_store::PutPayload;
 use object_store::{path::Path, ObjectStore};
 use slatedb::db::Db;
@@ -81,7 +84,7 @@ impl SlateDbBackend {
 
 #[derive(Clone)]
 struct Commits {
-    commits: RefCell<Vec<SnapshotVersion>>,
+    commits: Arc<Mutex<Vec<SnapshotVersion>>>,
     commits_path: Path,
     object_store: Arc<dyn ObjectStore>,
     rt: Handle,
@@ -102,7 +105,7 @@ impl Commits {
                 let content = rt.block_on(x.bytes())?;
                 let commits: Vec<SnapshotVersion> = rmp_serde::from_slice(&content.to_vec())?;
                 Ok(Self {
-                    commits: RefCell::new(commits),
+                    commits: Arc::new(Mutex::new(commits)),
                     commits_path,
                     object_store,
                     rt,
@@ -120,20 +123,19 @@ impl Commits {
 
     /// Check if a specific version has been committed
     fn is_commited(&self, version: &SnapshotVersion) -> bool {
-        self.commits.borrow().contains(version)
+        self.commits.lock().unwrap().contains(version)
     }
 
     /// Get the last commited version or None if there have not been
     /// any commits
     fn get_last_commited(&self) -> Option<SnapshotVersion> {
-        self.commits.borrow().last().cloned()
+        self.commits.lock().unwrap().last().cloned()
     }
 
     /// Commit a version to persistent storage
     fn commit(&self, version: SnapshotVersion) -> Result<(), CommitError> {
-        // PANIC: I think this can not reasonably fail
-        self.commits.borrow_mut().push(version);
-        let encoded = rmp_serde::to_vec(&self.commits).expect("Encode vec");
+        self.commits.lock().unwrap().push(version);
+        let encoded = rmp_serde::to_vec(&*self.commits).expect("Encode vec");
         let payload = PutPayload::from(encoded);
         self.rt
             .block_on(self.object_store.put(&self.commits_path, payload))?;
@@ -284,5 +286,13 @@ mod tests {
         let load_client = backend.for_version(0, &0);
         let restored = load_client.load(&1337);
         assert!(restored.is_none())
+    }
+
+    /// Check the slatedb backend is sync
+    fn _is_sync<T: Sync>(_: T) {}
+    #[allow(unreachable_code)]
+    fn _check_sync() {
+        let _x: SlateDbBackend = todo!();
+        _is_sync(_x);
     }
 }

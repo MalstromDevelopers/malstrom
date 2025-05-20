@@ -40,7 +40,8 @@ Python[^flinkpython].
 
 Flink uses a task-parallel model to parallelize computation, while Malstrom uses a data-parallel model.
 The task-parallel model is more flexible in terms of graph layout, while the data-parallel model is potentially
-more efficient and easier to understand. For more details see [this blogpost](https://bytewax.io/blog/data-parallel-task-parallel-and-agent-actor-architectures) by the excellent people from [bytewax](bytewax.io).
+more efficient and easier to understand. For more details see
+[this blogpost](https://bytewax.io/blog/data-parallel-task-parallel-and-agent-actor-architectures) by the excellent people from [bytewax](https://bytewax.io).
 
 Aside from this:
 - Flink runs on the JVM, Malstrom compiles to native code.
@@ -75,17 +76,38 @@ Malstrom clusters can rescale without downtime, Bytewax clusters can not.
 
 ## Fluvio
 
+Fluvio is a stream processing framework written in Rust which aims to be an alternative to both
+Kafka and Flink.
+
+### Similarities
+
+- both Fluvio and Malstrom are written in Rust
+- both support stateful streaming programs
+- both have an event time system
+
 ### Differences
 
-Fluvio does not have an event-time system.
+- Fluvio can also act as a message broker, while Malstrom focuses on processing
+- Malstrom can be used as a library, while Fluvio requires a running cluster
+- Fluvio uses WASM to compile custom operators, while Malstrom compiles to a native binary
+- Malstrom gives more control over its event time system
+- Malstrom gives more control over persistent state and checkpoints
 
-## Seastreamer
-
-## RisingWave
-
-## Timely Dataflow
+Overall Fluvio is much more mature and arguably offers higher level APIs than Malstrom, while
+Malstrom focuses more on lower level APIs and extensibility.
 
 ## Arroyo
 
-## denormalized
+### Similarities
+
+- both Arroyo and Malstrom are distributed stateful stream processing engines
+- both support checkpointing state to object storage
+- both can run on individual machines or on multiple nodes, both can run on Kubernetes
+
+### Differences
+
+- Arroyo's API language is SQL (with Rust or Python UDFs) while Malstrom's API language is Rust
+- Malstrom offers a full event time system, Arroyo offers limited event time semantics via windows
+- Malstrom jobs can be rescaled without downtime
+
 

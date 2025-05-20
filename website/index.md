@@ -18,7 +18,7 @@ hero:
       link: https://docs.rs/malstrom
     - theme: alt
       text: What is Stream Processing?
-      link: https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=0s
+      link: /stream-processing/stream-vs-batch
 
 features:
   - title: Distributed

@@ -300,6 +300,7 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
                     let diff = desired.abs_diff(state.active_workers.len() as u64);
                     if diff != 0 {
                         let new_config: IndexSet<WorkerId> = (0..desired).collect();
+                        info!("Starting rescale to {new_config:?}");
                         perform_reconfig_all(&mut state, new_config, &communication_backend)
                             .await?;
                     }

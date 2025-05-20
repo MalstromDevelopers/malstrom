@@ -5,7 +5,7 @@ system like a message broker or database.
 
 At the moment Malstrom supports two types of sources:
 
-- Kafka compatible message brokers via the [`malstrom-kafka`](docs.rs/malstrom-kafka) crate. You can find more
+- Kafka compatible message brokers via the [`malstrom-kafka`](https:/docs.rs/malstrom-kafka) crate. You can find more
 information about that [here](./Kafka.md).
 - Any type [`IntoIterator`](https://doc.rust-lang.org/std/iter/trait.IntoIterator.html) via the
 built-in `SingleIteratorSource`

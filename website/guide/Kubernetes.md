@@ -5,7 +5,7 @@ Deploying to Kubernetes is best done using the Malstrom Kubernetes operator.
 
 ## Installing the Operator
 
-The operator can be installed via [helm](helm.sh).
+The operator can be installed via [helm](https://helm.sh).
 
 First add the Malstrom Helm repository:
 
@@ -83,6 +83,9 @@ spec:
     containers:
       - name: main
         image: alpine:3.12
+        env:
+          - name: IS_K8S
+            value: "true"
     initContainers:
       - name: artifact-downloader
         image: ghcr.io/malstrom/artifact-downloader:latest

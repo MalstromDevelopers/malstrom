@@ -7,7 +7,7 @@ use malstrom::worker::StreamProvider;
 use malstrom_k8s::KubernetesRuntime;
 
 fn main() {
-    let run_k8s = std::env::args().next() == Some("k8s".to_string());
+    let run_k8s = std::env::var("IS_K8S") == Ok("true".to_string());
     if run_k8s {
         KubernetesRuntime::builder()
             .persistence(NoPersistence)

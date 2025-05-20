@@ -7,7 +7,8 @@ use malstrom::{
     coordinator::{Coordinator, CoordinatorExecutionError},
     runtime::{CommunicationError, RuntimeFlavor},
     snapshot::PersistenceBackend,
-    types::WorkerId, worker::{WorkerExecutionError, StreamProvider, WorkerBuilder},
+    types::WorkerId,
+    worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 use thiserror::Error;
 mod communication;
@@ -68,13 +69,17 @@ where
 
         let communication = CoordinatorGrpcBackend::new(api_tx, rt.handle().clone()).unwrap();
         let (coordinator, coordinator_api) = Coordinator::new();
-        
-        rt.spawn_blocking(move || coordinator.execute(
-            CONFIG.initial_scale,
-            self.snapshots,
-            self.persistence,
-            communication,
-        ).unwrap());
+
+        rt.spawn_blocking(move || {
+            coordinator
+                .execute(
+                    CONFIG.initial_scale,
+                    self.snapshots,
+                    self.persistence,
+                    communication,
+                )
+                .unwrap()
+        });
 
         let api_thread = rt.spawn(async move {
             while let Ok(req) = api_rx.recv() {

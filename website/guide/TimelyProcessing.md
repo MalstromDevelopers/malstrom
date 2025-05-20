@@ -28,7 +28,7 @@ This in turn means, any operator that an Epoch of time _T_ reaches, can safely a
 never see any more messages with a timestamp <= _T_
 
 Let's see how timestamps and epochs can be created on a datastream. For this example we will use the [fake](https://github.com/cksac/fake-rs) crate to generate fake financial transaction data. We will then use the event time to get a weekly balance for each account.
-This is something you would usually do with a [window](Windows), but we will use the `stateful_op` operator for demonstration purposes here. For a more detailed explanation on `statful_op` see [[CustomOperators]].
+This is something you would usually do with a window, but we will use the `stateful_op` operator for demonstration purposes here. For a more detailed explanation on `statful_op` see [[CustomOperators]].
 
 First install [fake](https://docs.rs/fake/latest/fake/) and [chrono](https://docs.rs/chrono/latest/chrono/): `cargo add chrono fake -F chrono`
 
@@ -203,7 +203,8 @@ For example if we have a union of two streams an one stream sends `Epoch(10)` an
 
 Using timestamps is very close to free in terms of performance. Message size increases by the size of the timestamp however this is expected to be negligible for most applications.
 
-Epochs travel the computation graph like any other messages, therefore issuing lots of epochs can have an adverse effect on performance in the same way a larger overall data volume would have. It is generally advisable to place the `generate_epochs` operator close to the operation where epochs are needed.
+Epochs travel the computation graph like any other messages, therefore issuing lots of epochs can have an adverse effect on performance in the same way a larger overall data volume would have.
+It is generally advisable to place the `generate_epochs` operator close to the operation where epochs are needed.
 
 Placing `generate_epochs` after a `key_distribute` rather than before it may also improve performance, since then epochs do not need to cross network boundaries.
 

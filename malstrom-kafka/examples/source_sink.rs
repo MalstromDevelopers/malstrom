@@ -1,11 +1,11 @@
 //! A basic example of reading from and writing to Kafka
 use malstrom::operators::{Inspect, Sink};
 use malstrom::sinks::StatelessSink;
-use malstrom::sources::StatefulSource;
-use malstrom::{operators::Source, runtime::SingleThreadRuntime};
-use malstrom::worker::StreamProvider;
 use malstrom::snapshot::NoPersistence;
-use malstrom_kafka::{KafkaSource, KafkaSink};
+use malstrom::sources::StatefulSource;
+use malstrom::worker::StreamProvider;
+use malstrom::{operators::Source, runtime::SingleThreadRuntime};
+use malstrom_kafka::{KafkaSink, KafkaSource};
 
 fn main() {
     let _rt = SingleThreadRuntime::builder()
@@ -24,10 +24,14 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
         // for all supported config values
         .conf("max.in.flight", "10000")
         .build();
-    let sink = KafkaSink::builder().broker("sink-broker.com").group_id("my-group").build();
-    
-    provider.new_stream()
-    .source("kafka-source", StatefulSource::new(source))
-    .inspect("print", |msg, _| println!("{msg:?}"))
-    .sink("kafka-sink", StatelessSink::new(sink));
+    let sink = KafkaSink::builder()
+        .broker("sink-broker.com")
+        .group_id("my-group")
+        .build();
+
+    provider
+        .new_stream()
+        .source("kafka-source", StatefulSource::new(source))
+        .inspect("print", |msg, _| println!("{msg:?}"))
+        .sink("kafka-sink", StatelessSink::new(sink));
 }

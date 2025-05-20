@@ -175,7 +175,7 @@ async fn operator_operator_outbound(
     operator: OperatorId,
     to_worker: Endpoint,
     outbound: Receiver<Vec<u8>>,
-) -> () {
+) {
     let connect_fn = || to_worker.connect();
     let channel = connect_fn
         .retry(CONFIG.network.initial_conn_retry())
@@ -210,7 +210,7 @@ async fn worker_coordinator_outbound(
     this_worker: WorkerId,
     coordinator: Endpoint,
     outbound: Receiver<Vec<u8>>,
-) -> () {
+) {
     let max_retries = CONFIG.network.initial_conn_timeout_sec as usize;
     let connect_fn = || coordinator.connect();
     let channel = connect_fn
@@ -244,7 +244,7 @@ async fn worker_coordinator_outbound(
 }
 
 /// Coordinator side
-async fn coordinator_worker_outbound(outbound: Receiver<Vec<u8>>, to_worker: Endpoint) -> () {
+async fn coordinator_worker_outbound(outbound: Receiver<Vec<u8>>, to_worker: Endpoint) {
     let uri = to_worker.uri().clone();
     let max_retries = CONFIG.network.initial_conn_timeout_sec as usize;
     let connect_fn = || to_worker.connect();

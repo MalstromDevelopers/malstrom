@@ -142,7 +142,7 @@ but the running total calculated remains correct, i.e. every integer is added **
 
 ### Exactly Once
 
-Malstroms [checkpointing system](ABS Algorithm) guarantees all datapoints
+Malstroms checkpointing system guarantees all datapoints
 **affect the program state exactly once**. Notably this means, you will always get the correct end
 results, but **in failure cases** messages may be processed and emitted more than once.
 While this sounds like a weak compromise, it is actually the strongest guarantee any stream

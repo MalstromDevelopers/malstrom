@@ -39,6 +39,9 @@ type InboundChannels =
 type OutboundChannels =
     Arc<Mutex<HashMap<(WorkerId, OperatorId), (Sender<Vec<u8>>, Receiver<Vec<u8>>)>>>;
 
+type CoordinatorInbound = Arc<Mutex<(Sender<Vec<u8>>, Receiver<Vec<u8>>)>>;
+type CoordinatorOutbound = Arc<Mutex<(Sender<Vec<u8>>, Receiver<Vec<u8>>)>>;
+
 pub struct WorkerGrpcBackend {
     pub(super) rt: tokio::runtime::Handle,
     _server_task: JoinHandle<Result<(), tonic::transport::Error>>,
@@ -49,13 +52,13 @@ pub struct WorkerGrpcBackend {
     /// channels on which we send messages to other workers
     pub(super) outbound_channels: OutboundChannels,
 
-    pub(super) coordinator_inbound: Arc<Mutex<(Sender<Vec<u8>>, Receiver<Vec<u8>>)>>,
-    pub(super) coordinator_outbound: Arc<Mutex<(Sender<Vec<u8>>, Receiver<Vec<u8>>)>>,
+    pub(super) coordinator_inbound: CoordinatorInbound,
+    pub(super) coordinator_outbound: CoordinatorOutbound,
 }
 pub(crate) struct WorkerGrpcServer {
     /// channels on which we transport messages to our local operators
     pub(super) inbound_channels: InboundChannels,
-    pub(super) coordinator_inbound: Arc<Mutex<(Sender<Vec<u8>>, Receiver<Vec<u8>>)>>,
+    pub(super) coordinator_inbound: CoordinatorInbound,
 }
 
 impl WorkerGrpcBackend {

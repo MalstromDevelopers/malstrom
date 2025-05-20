@@ -97,7 +97,7 @@ async fn make_decision(malstrom_job: &MalstromJob, context: &Context) -> Decisio
 /// There are good and bad reasons for this:
 /// - Good: K8S disallows many changes to statefulsets anyway
 /// - Bad: I am lazy
-/// 
+///
 /// Honestly this is not toooo bad, since many changes would
 /// imply a full job restart, which is something we may want to be
 /// more explicit about... anyway TBD
