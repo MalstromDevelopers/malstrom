@@ -25,6 +25,7 @@ jobs:
           registry: https://ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
 
       - name: Build and Push k8s-operator
         uses: docker/build-push-action@v6
