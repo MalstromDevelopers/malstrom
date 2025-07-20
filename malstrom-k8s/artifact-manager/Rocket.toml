@@ -2,5 +2,5 @@
 address = "0.0.0.0"
 
 [default.limits]
-file = "100MiB"
-"data-form" = "100MiB"
+file = "1024MiB"
+"data-form" = "1024MiB"

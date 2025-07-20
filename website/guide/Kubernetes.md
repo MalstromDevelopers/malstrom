@@ -101,6 +101,10 @@ number greater than 0. The operator will then automatically take care of rescali
 
 ## Operator values
 
+> [!WARNING]
+> Currently the operator only supports modifying the job replica count. Any other modification
+> requires manually deleting and re-creating the job. See [issue 25](https://github.com/MalstromDevelopers/malstrom/issues/25)
+
 The operator helm chart supports these configuration values:
 
 <<< @../../malstrom-k8s/operator/helm/malstrom-operator/values.yaml
