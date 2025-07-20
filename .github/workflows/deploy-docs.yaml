@@ -28,10 +28,11 @@ jobs:
           node-version: 22
           cache: npm
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+      - uses: oven-sh/setup-bun@v2
+        working-directory: website
       - name: Install dependencies
         working-directory: website
-        run: bun Install
+        run: bun install
       - name: Build with VitePress
         working-directory: website
         run:  bun run docs:build
