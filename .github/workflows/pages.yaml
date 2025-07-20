@@ -37,19 +37,6 @@ jobs:
         uses: azure/setup-helm@v4
         env:
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-      - name: Install chart releaser
-        id: install
-        run: |
-          # Installation path
-          arch=$(uname -m)
-          install_dir="$RUNNER_TOOL_CACHE/cr/$VERSION/$arch"
-
-          mkdir -p "$install_dir"
-          curl -sSLo cr.tar.gz https://github.com/helm/chart-releaser/releases/download/$VERSION/chart-releaser_${VERSION#v}_linux_amd64.tar.gz
-          tar -xzf cr.tar.gz -C "$install_dir"
-          rm -f cr.tar.gz
-        env:
-          VERSION: v1.7.0
 
       - name: Package Malstrom Operator Helm Chart
         run: |
