@@ -52,5 +52,5 @@ features:
   - title: Rust API
     details: >
       No proprietary SQL dialect, no bindings: Malstrom offers a native Rust API, finally
-      write data pipelines in everyones favourite programming language.
+      write data pipelines in everyone's favourite programming language.
 ---
