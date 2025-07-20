@@ -1,0 +1,33 @@
+name: Push Images to GHCR
+
+on:
+  push:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@3.4.0
+        with:
+          registry: https://ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Container Images
+        working-directory: malstrom-k8s
+        run: |
+          set -e
+          services=("k8s-operator" "artifact-manager" "artifact-downloader")
+          for service in "${services[@]}"; do
+            tag=ghcr.io/${{ github.repository_owner }}/$service
+            docker build . -f $service.dockerfile -t $tag:${{ github.sha }} -t $tag:latest
+            docker push ghcr.io/${{ github.repository_owner }}/$tag:${{ github.sha }}
+            docker push ghcr.io/${{ github.repository_owner }}/$tag:latest
+          done
