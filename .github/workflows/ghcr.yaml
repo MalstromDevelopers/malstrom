@@ -9,9 +9,15 @@ on:
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Log in to the Container registry
         uses: docker/login-action@3.4.0
@@ -27,7 +33,10 @@ jobs:
           services=("k8s-operator" "artifact-manager" "artifact-downloader")
           for service in "${services[@]}"; do
             tag=ghcr.io/malstromdevelopers/$service
-            docker build . -f $service.dockerfile -t $tag:${{ github.sha }} -t $tag:latest
+            cache=ghcr.io/malstromdevelopers/$service-cache
+            docker build . -f $service.dockerfile -t $tag:${{ github.sha }} -t $tag:latest \
+              --cache-to type=registry,ref=$cache \
+              --cache-from type=registry,ref=$cache
             docker push $tag:${{ github.sha }}
             docker push $tag:latest
           done
