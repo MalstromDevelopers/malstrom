@@ -26,8 +26,8 @@ jobs:
           set -e
           services=("k8s-operator" "artifact-manager" "artifact-downloader")
           for service in "${services[@]}"; do
-            tag=ghcr.io/${{ github.repository_owner }}/$service
+            tag=ghcr.io/malstromdevelopers/$service
             docker build . -f $service.dockerfile -t $tag:${{ github.sha }} -t $tag:latest
-            docker push ghcr.io/${{ github.repository_owner }}/$tag:${{ github.sha }}
-            docker push ghcr.io/${{ github.repository_owner }}/$tag:latest
+            docker push $tag:${{ github.sha }}
+            docker push $tag:latest
           done
