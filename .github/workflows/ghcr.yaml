@@ -32,7 +32,7 @@ jobs:
           context: malstrom-k8s
           file: malstrom-k8s/k8s-operator.dockerfile
           push: true
-          tags: malstromdevelopers/k8s-operator/app:latest,malstromdevelopers/k8s-operator/app:${{ github.sha }}
+          tags: malstromdevelopers/k8s-operator:latest,malstromdevelopers/k8s-operator:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha
 
@@ -42,7 +42,7 @@ jobs:
           context: malstrom-k8s
           file: malstrom-k8s/artifact-manager.dockerfile
           push: true
-          tags: malstromdevelopers/artifact-manager/app:latest,malstromdevelopers/artifact-manager/app:${{ github.sha }}
+          tags: malstromdevelopers/artifact-manager:latest,malstromdevelopers/artifact-manager:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha
 
@@ -52,6 +52,6 @@ jobs:
           context: malstrom-k8s
           file: malstrom-k8s/artifact-downloader.dockerfile
           push: true
-          tags: malstromdevelopers/artifact-downloader/app:latest,malstromdevelopers/artifact-downloader/app:${{ github.sha }}
+          tags: malstromdevelopers/artifact-downloader:latest,malstromdevelopers/artifact-downloader:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha
