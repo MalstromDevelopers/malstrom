@@ -5,7 +5,6 @@ import footnote from 'markdown-it-footnote'
 export default defineConfig({
   title: "Malstrom",
   description: "Malstrom - Stateful, Distributed Stream Processing",
-  base: "/malstrom/",
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
     nav: [
