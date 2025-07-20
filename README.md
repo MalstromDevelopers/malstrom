@@ -1,3 +1,5 @@
+# Currently WIP. First public release soon (as of 2025-07-20)
+
 # What is Malstrom?
 
 Malstrom is a distributed, stateful stream processing framework written in Rust.
