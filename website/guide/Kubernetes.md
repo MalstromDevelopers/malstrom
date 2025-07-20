@@ -9,7 +9,7 @@ The operator can be installed via [helm](https://helm.sh).
 
 First add the Malstrom Helm repository:
 
-`helm repo add malstrom https://raw.githubusercontent.com/MalstromDevelopers/helm-charts/gh-pages`
+`helm repo add malstrom https://malstrom.io/helm`
 
 Fetch the repository's helm charts:
 
