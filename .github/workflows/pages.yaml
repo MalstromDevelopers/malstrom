@@ -32,6 +32,30 @@ jobs:
       - name: Build with VitePress
         working-directory: website
         run:  bun run docs:build
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Install chart releaser
+        id: install
+        run: |
+          # Installation path
+          arch=$(uname -m)
+          install_dir="$RUNNER_TOOL_CACHE/cr/$VERSION/$arch"
+
+          mkdir -p "$install_dir"
+          curl -sSLo cr.tar.gz https://github.com/helm/chart-releaser/releases/download/$VERSION/chart-releaser_${VERSION#v}_linux_amd64.tar.gz
+          tar -xzf cr.tar.gz -C "$install_dir"
+          rm -f cr.tar.gz
+        env:
+          VERSION: v1.7.0
+
+      - name: Package Malstrom Operator Helm Chart
+        run: |
+          helm package ./malstrom-k8s/operator/helm/malstrom-operator -d ./website/.vitepress/dist/helm
+          helm repo index website/.vitepress/dist/helm 
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
