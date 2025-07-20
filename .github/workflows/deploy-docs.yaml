@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Setup Pages
-      - uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@v2
         working-directory: website
       - name: Install dependencies
         working-directory: website
