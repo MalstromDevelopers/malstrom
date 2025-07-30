@@ -40,7 +40,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/MalstromDevelopers/jetstream' }
+      { icon: 'github', link: 'https://github.com/MalstromDevelopers/malstrom' }
     ]
   },
   markdown: {
