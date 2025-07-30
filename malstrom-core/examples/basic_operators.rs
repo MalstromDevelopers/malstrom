@@ -17,7 +17,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
     provider
         .new_stream()
         .source(
-            // <-- this is an operator
+            // this is an operator
             "iter-source",
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
