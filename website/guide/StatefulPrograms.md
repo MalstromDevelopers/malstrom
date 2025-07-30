@@ -47,7 +47,7 @@ Let's look at an example with multiple keys:
 <<< @../../malstrom-core/examples/stateful_program_multiple_keys.rs
 
 Now instead of getting a running sum of all numbers, we gut running sums of all even and odd numbers.
-This is because our state is keyed by parity of the numbers.
+This is because our state is keyed by the parity of the numbers.
 
 For more information about keying see [Keyed Streams](./KeyedStreams.md).
 
@@ -86,58 +86,9 @@ Just like this, we have made our programs state persistent. Let's review the cha
 
 Unfortunately right now we have too little data, the program will finish before even taking the first snapshot. Let's take more data and introduce some failures:
 
-```rust
-use malstrom::runtime::{WorkerBuilder, SingleThreadRuntime, RuntimeFlavor};
-use malstrom::operators::*;
-use malstrom::source::{SingleIteratorSource, StatelessSource};
-use malstrom::distributed::rendezvous_select;
-use malstrom::snapshot::{SlateDbBackend, IntervalSnapshots};
-use object_store::{Path, local::LocalFileSystem};
-use std::{sync::Arc, time::Duratinon};
+<<< @../../malstrom-core/examples/slatedb_backend_failing.rs
 
-fn main() {
-	loop {
-		match SingleThreadRuntime::new(build_dataflow).execute() {
-			Ok(_) => return;
-			Err(_) => continue; // restart
-		}
-	}
-	
-}
-
-fn build_dataflow<F: RuntimeFlavor>(flavor: F) -> WorkerBuilder {
-	let storage = LocalFileSystem::new_with_prefix(Path("/tmp"));
-	let worker = WorkerBuilder::new(
-		flavor,
-		IntervalSnapshots::new(Duration::from_secs(10)),
-		SlateDbBackend::new(Arc::new(storage))
-	);
-	let start_time = Instant::now();
-	let fail_interval = Duration::from_secs(15);
-	worker
-		.new_stream()
-		.source(
-			"iter-source",
-			StatelessSource::new(
-				SingleIteratorSource::new((0.=i32::MAX))
-			)
-		)
-		.stateful_map("sum", |msg, state: i64| {
-			let state = state + (msg.value as i64);
-			(state.clone(), Some(state))
-		})
-		.inspect("print", |x, _ctx_| println!("{x}"))
-		.inspect("fail-random" |_msg, _ctx| {
-			if Instant::now().duration_since(start_time) > fail_interval {
-				panic!("Oh no!")
-			}
-		})
-		.finish();
-	worker
-}
-```
-
-Our program will now "fail" and restart every 15 seconds. You may observe some duplicate outputs,
+Our program will now "fail" and restart every 5 seconds. You may observe some duplicate outputs,
 but the running total calculated remains correct, i.e. every integer is added **exactly once**.
 
 ### Exactly Once

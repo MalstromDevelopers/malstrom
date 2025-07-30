@@ -19,7 +19,8 @@ Malstroms utilizes the [ABS Algorithm](https://arxiv.org/abs/1506.08603), ensuri
 A simple threading model means no async, no complex lifetimes, no `Send` or `Sync` needed.
 Data only needs to be serialisable when explicitly send to other processes.
 
-**Reliability**: Using the world's safest programming language makes building highly-reliable stream processors a breeze. In any case [[zero-downtime scaling]] and [[zero-downtime upgrades]] (TBD) allow for awesome uptime.
+**Reliability**: Using the world's safest programming language makes building highly-reliable stream processors a breeze. In any case [zero-downtime scaling](guide/Kubernetes.html#scaling-a-job) allows for awesome uptime.
+Zero-downtime upgradability of deployments is on the roadmap.
 
 # Code Example
 
