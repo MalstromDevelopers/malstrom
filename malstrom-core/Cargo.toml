@@ -37,3 +37,7 @@ slatedb = ["dep:slatedb", "dep:object_store", "dep:tokio-stream"]
 [[example]]
 name = "slatedb_backend"
 required-features = ["slatedb"]
+
+[[example]]
+name = "slatedb_backend_failing"
+required-features = ["slatedb"]

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
@@ -37,13 +38,13 @@ where
 /// If you have a clone of this backend you can retrieve the state using
 /// the corresponding operator_id
 pub struct CapturingPersistenceBackend {
-    capture: Rc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
+    capture: Arc<Mutex<HashMap<OperatorId, Vec<u8>>>>,
 }
 impl PersistenceBackend for CapturingPersistenceBackend {
     type Client = CapturingPersistenceBackend;
 
     fn last_commited(&self) -> Option<SnapshotVersion> {
-        None
+        Some(SnapshotVersion::default())
     }
 
     fn for_version(
@@ -55,8 +56,7 @@ impl PersistenceBackend for CapturingPersistenceBackend {
     }
 
     fn commit_version(&self, _snapshot_version: &crate::snapshot::SnapshotVersion) {
-        // TODO
-        todo!()
+        // nothing happening here
     }
 }
 

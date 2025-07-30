@@ -177,7 +177,7 @@ where
     ) -> Self {
         let comm_clients =
             ctx.create_all_communication_clients::<PartitionFinished<Builder::Part>>();
-        Self {
+        let mut this = Self {
             partitions: IndexMap::new(),
             part_builder,
             all_partitions,
@@ -186,7 +186,14 @@ where
             // times should not be an issue
             max_t: Some(T::MAX),
             _phantom: PhantomData,
+        };
+
+        if let Some(state) = ctx.load_state::<IndexMap<Builder::Part, Builder::PartitionState>>() {
+            for (k, v) in state.into_iter() {
+                this.add_partition(k, Some(v));
+            }
         }
+        this
     }
 
     fn add_partition(&mut self, part: Builder::Part, part_state: Option<Builder::PartitionState>) {
@@ -264,7 +271,7 @@ where
         _output: &mut Output<Builder::Part, VO, TO>,
         ctx: &mut OperatorContext,
     ) {
-        let state: Vec<_> = self
+        let state: IndexMap<Builder::Part, Builder::PartitionState> = self
             .partitions
             .iter()
             .map(|(k, v)| (k.clone(), v.snapshot()))
@@ -331,5 +338,131 @@ where
         if let Some((part, part_state)) = partition_state {
             self.add_partition(part, Some(part_state));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Mutex, time::Duration};
+
+    use crate::{
+        operators::*,
+        runtime::SingleThreadRuntime,
+        sinks::{StatelessSink, VecSink},
+        sources::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition},
+        testing::CapturingPersistenceBackend,
+        worker::StreamProvider,
+    };
+
+    struct MockSource(i32);
+    struct MockSourcePartition {
+        max: i32,
+        next: i32,
+        was_snapshotted: Mutex<bool>,
+    }
+
+    impl StatefulSourceImpl<i32, i32> for MockSource {
+        type Part = ();
+
+        type PartitionState = i32;
+
+        type SourcePartition = MockSourcePartition;
+
+        fn list_parts(&self) -> Vec<Self::Part> {
+            vec![()]
+        }
+
+        fn build_part(
+            &mut self,
+            _part: &Self::Part,
+            part_state: Option<Self::PartitionState>,
+        ) -> Self::SourcePartition {
+            MockSourcePartition {
+                max: self.0,
+                next: part_state.unwrap_or_default(),
+                was_snapshotted: Mutex::new(false),
+            }
+        }
+    }
+
+    impl StatefulSourcePartition<i32, i32> for MockSourcePartition {
+        type PartitionState = i32;
+
+        fn poll(&mut self) -> Option<(i32, i32)> {
+            if self.next > self.max {
+                None
+            } else {
+                let out = (self.next, self.next);
+                self.next += 1;
+                Some(out)
+            }
+        }
+
+        fn is_finished(&mut self) -> bool {
+            // only terminate after we have made a snapshot
+            self.next > self.max && *self.was_snapshotted.lock().unwrap()
+        }
+
+        fn snapshot(&self) -> Self::PartitionState {
+            *self.was_snapshotted.lock().unwrap() = true;
+            self.next
+        }
+
+        fn collect(self) -> Self::PartitionState {
+            self.next
+        }
+    }
+
+    /// Check that state gets loaded from persistence backend
+    /// on initial start
+    #[test]
+    fn test_state_is_loaded_from_persistence() {
+        let persistence = CapturingPersistenceBackend::default();
+
+        let first_sink = VecSink::new();
+        let first_collected = first_sink.clone();
+
+        // execute once, this will finish as soon as a snapshot was taken
+        let rt = SingleThreadRuntime::builder()
+            .snapshots(Duration::from_millis(50))
+            .persistence(persistence.clone())
+            .build(move |provider: &mut dyn StreamProvider| {
+                provider
+                    .new_stream()
+                    .source("mock-source", StatefulSource::new(MockSource(10)))
+                    .sink("vec-sink", StatelessSink::new(first_sink));
+            });
+        rt.execute().unwrap();
+        let result: Vec<_> = first_collected
+            .drain_vec(..)
+            .iter()
+            .map(|x| x.value)
+            .collect();
+        let expected: Vec<_> = (0..=10).collect();
+        assert_eq!(result, expected);
+
+        // execute again, only numbers 11-15 should have been counted since we started from the
+        // state which had already counted to 10
+        let second_sink = VecSink::new();
+        let second_collected = second_sink.clone();
+
+        // execute again
+        let rt = SingleThreadRuntime::builder()
+            .snapshots(Duration::from_millis(50))
+            .persistence(persistence)
+            .build(move |provider: &mut dyn StreamProvider| {
+                provider
+                    .new_stream()
+                    .source("mock-source", StatefulSource::new(MockSource(15)))
+                    .sink("vec-sink", StatelessSink::new(second_sink));
+            });
+        rt.execute().unwrap();
+        let result: Vec<_> = second_collected
+            .drain_vec(..)
+            .iter()
+            .map(|x| x.value)
+            .collect();
+        let expected: Vec<_> = (11..=15).collect();
+        assert_eq!(result, expected);
     }
 }
