@@ -192,6 +192,7 @@ impl WorkerService for WorkerGrpcServer {
 
 /// Extract from_worker and operator from Metadata. Returning the appropriate status
 /// if they are not present or invalid
+#[allow(clippy::result_large_err)]
 fn extract_metadata(metadata: &MetadataMap) -> Result<(WorkerId, OperatorId), Status> {
     let operator = metadata
         .get("operator-id")

@@ -105,7 +105,7 @@ where
 
         let parts = parts.into_iter();
         let part_lister =
-            OperatorBuilder::built_by(&format!("{}-list-parts", name), move |build_context| {
+            OperatorBuilder::built_by(&format!("{name}-list-parts"), move |build_context| {
                 let mut inner = if build_context.worker_id == 0 {
                     Box::new(parts)
                 } else {

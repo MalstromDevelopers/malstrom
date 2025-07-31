@@ -1,7 +1,23 @@
 [package]
 name = "malstrom-k8s"
-version = "0.2.0"
-edition = "2021"
+version = "0.1.0"
+edition = "2024"
+description = "Kubernetes runtime for the Malstrom stream processing framework"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MalstromDevelopers/malstrom"
+readme = "../README.md"
+categories = [
+    "concurrency",
+    "api-bindings"
+]
+keywords = [
+    "stream processing",
+    "data processing",
+    "streaming",
+    "distributed",
+    "kubernetes"
+]
+
 
 [dependencies]
 async-stream = "0.3.6"
