@@ -23,14 +23,27 @@ data can be out of order by a few seconds, many hours sometimes even days or wee
 
 To still be able to reason about time and close windowing aggregations, Malstrom allows you to
 generate a special message type called an **Epoch**.
-An Epoch is a special marker message, which acts like a promise: It contains a specific timestamp and any data messages following it, **must** have a timestamp greater than that of the epoch.
+An Epoch is a special marker message, which acts like a promise: It contains a specific timestamp
+and any data messages following it, **must** have a timestamp greater than that of the epoch.
 This in turn means, any operator that an Epoch of time _T_ reaches, can safely assume, that it will
 never see any more messages with a timestamp <= _T_
 
-Let's see how timestamps and epochs can be created on a datastream. For this example we will use the [fake](https://github.com/cksac/fake-rs) crate to generate fake financial transaction data. We will then use the event time to get a weekly balance for each account.
-This is something you would usually do with a window, but we will use the `stateful_op` operator for demonstration purposes here. For a more detailed explanation on `statful_op` see [[CustomOperators]].
+Let's see how timestamps and epochs can be created on a datastream. For this example we will use the
+[fake](https://github.com/cksac/fake-rs) crate to generate fake financial transaction data.
+We will then use the event time to get a weekly balance for each account.
+This is something you would usually do with a window, but we will use the `stateful_op` operator for
+demonstration purposes here. For a more detailed explanation on `statful_op` see [[CustomOperators]].
 
-First install [fake](https://docs.rs/fake/latest/fake/) and [chrono](https://docs.rs/chrono/latest/chrono/): `cargo add chrono fake -F chrono`
+First install
+- [fake](https://docs.rs/fake/latest/fake/)
+- [chrono](https://docs.rs/chrono/latest/chrono/)
+- [serde](https://docs.rs/chrono/latest/serde/)
+
+```sh
+cargo add fake -F derive -F chrono
+cargo add chrono -F serde
+cargo add serde
+```
 
 ```rust
 use fake::{Dummy, Fake, Faker};
