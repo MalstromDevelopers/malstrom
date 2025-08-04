@@ -47,5 +47,8 @@ export default defineConfig({
     config: (md) => {
       md.use(footnote)
     }
+  },
+  sitemap: {
+    hostname: 'https://malstrom.io'
   }
 })
