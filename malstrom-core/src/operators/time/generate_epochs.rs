@@ -131,11 +131,12 @@ where
 /// For example when constructing with `limit_out_of_orderness(Duration::from_secs(30))`
 /// all messages with a timstamp more 30 seconds below the largest timestamp seen so far will be
 /// categorized late due to the epochs emitted.
-pub fn limit_out_of_orderness<K, V, T>(
-    bound: T,
+pub fn limit_out_of_orderness<K, V, T, B>(
+    bound: B,
 ) -> impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static
 where
-    T: Timestamp + std::ops::Sub<Output = T>,
+    T: Timestamp + std::ops::Sub<B, Output = T>,
+    B: Clone + 'static,
 {
     move |msg, last_epoch| {
         let new_epoch = msg.timestamp.clone() - bound.clone();

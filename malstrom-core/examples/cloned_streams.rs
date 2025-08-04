@@ -15,11 +15,13 @@ fn main() {
 }
 
 fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
-    let [numbers, more_numbers] = provider.new_stream().source(
-        "iter-source",
-        StatelessSource::new(SingleIteratorSource::new(0..=100)),
-    )
-    .const_cloned("clone-values");
+    let [numbers, more_numbers] = provider
+        .new_stream()
+        .source(
+            "iter-source",
+            StatelessSource::new(SingleIteratorSource::new(0..=100)),
+        )
+        .const_cloned("clone-values");
 
     numbers.sink("numbers-sink", StatelessSink::new(StdOutSink));
     more_numbers.sink("more-numbers-sink", StatelessSink::new(StdOutSink));

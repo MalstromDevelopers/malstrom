@@ -3,11 +3,7 @@ use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 use malstrom::sinks::{StatelessSink, StdOutSink};
 use malstrom::sources::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
-use malstrom::{
-    runtime::SingleThreadRuntime,
-    snapshot::SlateDbBackend,
-    worker::StreamProvider,
-};
+use malstrom::{runtime::SingleThreadRuntime, snapshot::SlateDbBackend, worker::StreamProvider};
 use object_store::{local::LocalFileSystem, path::Path};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -22,15 +18,13 @@ fn main() {
             .persistence(persistence.clone())
             .snapshots(Duration::from_secs(1))
             .build(build_dataflow);
-        let thread = std::thread::spawn(move || {
-            job.execute().unwrap()
-        });
+        let thread = std::thread::spawn(move || job.execute().unwrap());
         match thread.join() {
             Ok(_) => return,
             Err(_) => {
                 println!("Restarting worker");
                 continue;
-            },
+            }
         }
     }
 }
@@ -40,10 +34,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
     let fail_interval = Duration::from_secs(10);
     provider
         .new_stream()
-        .source(
-            "iter-source",
-            StatefulSource::new(StatefulNumberSource(0)),
-        )
+        .source("iter-source", StatefulSource::new(StatefulNumberSource(0)))
         .key_distribute("key-by-value", |x| x.value & 1 == 1, rendezvous_select)
         .stateful_map("sum", |_key, value, state: i32| {
             let state = state + value;

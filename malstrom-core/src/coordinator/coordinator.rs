@@ -290,13 +290,15 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
                     perform_snapshot_all(&state, next_version).await;
 
                     let serialized_state = serialize_state(&state.get_serializable().await);
-                    persistence_backend = tokio::runtime::Handle::current().spawn_blocking(move || {
-                        persistence_backend
-                            .for_version(COORDINATOR_ID, &next_version)
-                            .persist(&serialized_state, &0);
-                        persistence_backend.commit_version(&next_version);
-                        persistence_backend
-                    }).await?;
+                    persistence_backend = tokio::runtime::Handle::current()
+                        .spawn_blocking(move || {
+                            persistence_backend
+                                .for_version(COORDINATOR_ID, &next_version)
+                                .persist(&serialized_state, &0);
+                            persistence_backend.commit_version(&next_version);
+                            persistence_backend
+                        })
+                        .await?;
                     snapshot_version = Some(next_version);
                 }
                 RequestOperation::Scale(desired) => {
