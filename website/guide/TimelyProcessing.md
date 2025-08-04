@@ -97,7 +97,7 @@ In the code example we are simply ignoring the late stream.
 
 Strategy 2 is usually more useful for any practical applications. Malstrom comes with a prebuilt utility for this:
 
-<<< @../../malstrom-core/examples/event_time_out_of_order.rs{56}
+<<< @../../malstrom-core/examples/event_time_out_of_order.rs{87}
 
 ::: info Output
 ```
