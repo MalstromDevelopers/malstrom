@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - 'main'
+    paths:
+      - 'malstrom-k8s/**'
   workflow_dispatch:
 
 jobs:
