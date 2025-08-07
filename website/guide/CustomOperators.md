@@ -14,7 +14,7 @@ to weird bugs and unpredictable behaviour.
 1. Do not output messages with a different key than the input message[^1]
 2. Do not output messages or epochs with a timestamp less than or equal to the current frontier.
 
-Do not be discourage though, as long as you adhere to these rules, creating a custom operator is
+Do not be discouraged though, as long as you adhere to these rules, creating a custom operator is
 not difficult.
 
 ## Implementing a Custom Stateless Operator
@@ -102,7 +102,7 @@ this case).
 
 ### Caveats
 
-The implementation has an issue: If our stream is finite we may not emit the last window.
+The implementation has an issue: If our stream is finite we may not emit the last batch.
 
 This can be solved by implementing the optional `on_epoch` method of the
 `StatefulLogic` trait. This method will be called for every epoch reaching the operator.
