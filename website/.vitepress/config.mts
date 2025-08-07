@@ -30,6 +30,7 @@ export default defineConfig({
           { text: 'Deploying to Kubernetes', link: '/guide/Kubernetes' },
           { text: 'Custom Sources', link: '/guide/CustomSources' },
           { text: 'Custom Sinks', link: '/guide/CustomSinks' },
+          { text: 'Custom Operators', link: '/guide/CustomOperators' },
         ]
       },
       {
