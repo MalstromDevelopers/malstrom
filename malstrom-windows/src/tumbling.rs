@@ -4,11 +4,91 @@ use std::{
 };
 
 use malstrom::{
-    operators::TtlMap,
+    channels::operator_io::Output,
+    operators::{expiremap::ExpireMap, indexmap::IndexMap, StatefulLogic, StatefulOp},
     runtime::communication::Distributable,
     stream::StreamBuilder,
     types::{DataMessage, Key, MaybeData, Message, Timestamp},
 };
+use serde::{Serialize, de::DeserializeOwned};
+
+struct TumblingWindowOp<F, S, A> {
+    aggregator: F,
+    size: S,
+    zero_alignment: A,
+}
+impl<F, S, A> TumblingWindowOp<F, S, A> {
+    fn new(aggregator: F, size: S, zero_alignment: A) -> Self {
+        Self {
+            aggregator,
+            size,
+            zero_alignment,
+        }
+    }
+}
+
+impl<F, K, VI, T, VO> StatefulLogic<K, VI, T, VO, ExpireMap<T, Vec<VI>, T>>
+    for TumblingWindowOp<F, T, T>
+where
+    K: Key,
+    VO: MaybeData,
+    VI: Serialize + DeserializeOwned,
+    T: Timestamp
+        + Add<Output = T>
+        + Rem<Output = T>
+        + Sub<Output = T>
+        + Eq
+        + Hash
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + 'static,
+    F: FnMut(Vec<VI>) -> VO + 'static,
+{
+    fn on_data(
+        &mut self,
+        msg: DataMessage<K, VI, T>,
+        mut key_state: ExpireMap<T, Vec<VI>, T>,
+        _output: &mut Output<K, VO, T>,
+    ) -> Option<ExpireMap<T, Vec<VI>, T>> {
+        let ts = msg.timestamp;
+
+        let window_end = self.zero_alignment.clone() + ts.clone()
+            - ((ts + self.zero_alignment.clone()) % self.size.clone())
+            + self.size.clone();
+
+        let res: Option<&mut Vec<VI>> = key_state.get_mut(&window_end);
+
+        if let Some(list) = res {
+            list.push(msg.value);
+        } else {
+            key_state.insert(window_end.clone(), vec![msg.value], window_end);
+        }
+
+        Some(key_state)
+    }
+
+    fn on_epoch(
+        &mut self,
+        epoch: &T,
+        state: &mut IndexMap<K, ExpireMap<T, Vec<VI>, T>>,
+        output: &mut Output<K, VO, T>,
+    ) {
+        state.retain(|k, v| {
+            let expired = v.expire(epoch);
+
+            expired.into_iter().for_each(|(_, e)| {
+                output.send(Message::Data(DataMessage::new(
+                    k.clone(),
+                    (self.aggregator)(e.value),
+                    e.expiry,
+                )));
+            });
+
+            !v.is_empty()
+        });
+    }
+}
 
 pub trait TumblingWindow<K, V, T, VO> {
     /// Tumbling event time window which provides the owned values arrived on time
@@ -75,35 +155,12 @@ where
         self,
         name: &str,
         size: T,
-        zero_alignemt: T,
-        mut aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
+        zero_alignment: T,
+        aggregator: impl (FnMut(Vec<V>) -> VO) + 'static,
     ) -> StreamBuilder<K, VO, T> {
-        self.ttl_map(
+        self.stateful_op(
             name,
-            move |_, inp, ts, mut state, _| {
-                // TODO: +size or +size-1?
-                // TODO: What with the clone?
-                let window_end = zero_alignemt + ts - ((ts + zero_alignemt) % size) + size;
-                let res: Option<&mut Vec<V>> = state.get_mut(&window_end);
-
-                if let Some(list) = res {
-                    list.push(inp);
-                } else {
-                    state.insert(window_end, vec![inp], window_end);
-                }
-
-                Some(state)
-            },
-            move |k, _, window, out| {
-                // This should at most contain one entry, as the window is tumbling.
-                window.into_iter().for_each(|(_, e)| {
-                    out.send(Message::Data(DataMessage::new(
-                        k.clone(),
-                        (aggregator)(e.value),
-                        e.expiry,
-                    )));
-                });
-            },
+            TumblingWindowOp::new(aggregator, size, zero_alignment),
         )
     }
 }
