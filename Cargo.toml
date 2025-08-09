@@ -2,8 +2,8 @@
 resolver = "2"
 members = [
     "malstrom-core",
-    "malstrom-kafka", 
     "malstrom-windows",
+    "malstrom-core/examples/*",
     "malstrom-k8s/artifact-downloader",
     "malstrom-k8s/artifact-manager",
     "malstrom-k8s/operator",
@@ -22,3 +22,4 @@ complexity = "warn"
 perf = "warn"
 style = "warn"
 unwrap_used = {level = "warn", priority = 1}
+cargo = "warn"

@@ -41,7 +41,7 @@ There is some performance overhead to keying your stream.
 - the size of the key
 
 However all of these are most likely to be negligible for most programs. One rather large overhead though can be the distribution of messages across networks. This is a necessary evil we must accept to have correct distributed programs. Therefore it is a good idea to reduce message volume and size before keying when possible, for example via filtering.
-In some cases you may not even need key your stream, for example the [[Kafka Source]] already outputs a keyed stream.
+In some cases you may not even need key your stream, for example the [Kafka Source](./Kafka.md) already outputs a keyed stream.
 
 ### Skewed Keyspace
 
@@ -67,6 +67,6 @@ Why is this important? Consider this naive distributing function, where we take 
 |key: i32, workers: Vec<WorkerId>| workers[workers.len() % key]
 ```
 
-This looks straight forward, but if we change the amount of workers (i.e. the size of the `Vec`) our output changes for about **half of the total keyspace**. This in turn means half of our total application state must be redistributed, even if we only add or remove one worker, an expensive operation. Malstrom's built-in `rendezvous_select` function is designed with this in mind and minimises state redistribution.
+This looks straight forward, but if we change the amount of workers (i.e. the size of the `Vec`) our output changes for **most of the total keyspace**. This in turn means most of our total application state must be redistributed, even if we only add or remove one worker, an expensive operation. Malstrom's built-in `rendezvous_select` function is designed with this in mind and minimises state redistribution.
 
 

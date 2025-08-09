@@ -1,9 +1,7 @@
-mod from_data;
+mod assign_timestamps;
+mod generate_epochs;
 mod inspect_frontier;
-mod needs_epochs;
-mod timed_stream;
 mod util;
-pub use self::from_data::GenerateEpochs;
+pub use self::generate_epochs::{limit_out_of_orderness, GenerateEpochs, NeedsEpochs};
 pub use self::inspect_frontier::InspectFrontier;
-pub use self::needs_epochs::NeedsEpochs;
-pub use timed_stream::AssignTimestamps;
+pub use assign_timestamps::AssignTimestamps;

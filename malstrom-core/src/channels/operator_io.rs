@@ -312,15 +312,11 @@ mod test {
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(Barrier::new(
-            Box::new(NoPersistence),
-        )));
+        sender.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::AbsBarrier(Barrier::new(
-            Box::new(NoPersistence),
-        )));
+        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
     }
@@ -334,16 +330,12 @@ mod test {
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(Barrier::new(
-            Box::new(NoPersistence),
-        )));
+        sender.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
-        sender2.send(Message::AbsBarrier(Barrier::new(
-            Box::new(NoPersistence),
-        )));
+        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
 
         let msg = receiver.recv();

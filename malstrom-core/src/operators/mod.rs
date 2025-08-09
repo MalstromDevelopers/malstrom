@@ -28,9 +28,9 @@ pub use source::{Source, StreamSource};
 pub use split::Split;
 pub use stateful_map::StatefulMap;
 pub use stateful_op::{StatefulLogic, StatefulOp};
+pub use stateless_op::{StatelessLogic, StatelessOp};
 pub use time::*;
-pub use ttl_map::expiremap;
-pub use ttl_map::TtlMap;
+pub use ttl_map::{expiremap, TtlMap};
 
 // These are only to be used internally in malstrom
 pub(crate) mod stateless_op;

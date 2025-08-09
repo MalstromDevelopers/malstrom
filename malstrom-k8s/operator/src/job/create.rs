@@ -12,7 +12,7 @@ use crds::{JobState, MalstromJob, MalstromJobStatus};
 /// - the coordinator service
 /// - the worker statefulset
 /// - the worker service
-/// 
+///
 /// Note: It is assumed the resource does not already exists for simplicity.
 /// Returns an `Error` if it does.
 /// # Arguments

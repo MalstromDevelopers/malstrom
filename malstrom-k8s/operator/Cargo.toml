@@ -11,8 +11,6 @@ readme = "Readme.md"
 authors = [
     "nico@acupof.xyz"
 ]
-[lints]
-workspace = true
 
 [[bin]]
 name = "k8s-operator"

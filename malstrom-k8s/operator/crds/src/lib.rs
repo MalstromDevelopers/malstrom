@@ -133,7 +133,7 @@ impl MalstromJob {
             spec: Some(ServiceSpec {
                 cluster_ip: None,
                 selector: Some(labels),
-                publish_not_ready_addresses: Some(false),
+                publish_not_ready_addresses: Some(true),
                 ports: Some(Vec::from_iter([ServicePort {
                     port: 29091,
                     target_port: Some(IntOrString::Int(29091)),
