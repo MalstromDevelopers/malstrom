@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 malstrom = { path = "../malstrom-core" }
+num-traits = { version = "0.2.19", default-features = false, features = ["std"] }
 serde = "1.0.218"
