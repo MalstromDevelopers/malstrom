@@ -115,7 +115,7 @@ pub trait TumblingWindow<K, V, T, VO> {
     ///             .new_stream()
     ///             .source("source", StatelessSource::new(SingleIteratorSource::new(0..100)))
     ///             .assign_timestamps("assigner", |msg| msg.timestamp)
-    ///             .generate_epochs("generate", |_, t| t.to_owned());
+    ///             .generate_epochs("generate", |msg, _| Some(msg.timestamp));
     ///
     ///         on_time
     ///             .key_local("key", |_| false)
@@ -200,7 +200,7 @@ mod tests {
                         ])),
                     )
                     .assign_timestamps("assigner", |msg| msg.timestamp)
-                    .generate_epochs("generate", |_, t| t.to_owned());
+                    .generate_epochs("generate", |msg, _| Some(msg.timestamp));
 
                 on_time
                     .key_local("key", |_| false)
@@ -235,7 +235,7 @@ mod tests {
                         ])),
                     )
                     .assign_timestamps("assigner", |msg| msg.timestamp)
-                    .generate_epochs("generate", |_, t| t.to_owned());
+                    .generate_epochs("generate", |msg, _| Some(msg.timestamp));
 
                 on_time
                     .key_local("key", |_| false)
