@@ -1,19 +1,23 @@
 [package]
-name = "k8s-operator"
-version = "0.2.0"
+name = "malstrom-operator"
+version = "0.1.0"
 edition = "2021"
-description = "Kubernetes operator for Malstrom kubernetes runtime."
-repository = "https://github.com/JetStreamDevelopers/k8s-operator"
-license = "AGPL-3.0"
+description = "Kubernetes operator for Malstrom."
+repository = "https://github.com/MalstromDevelopers/malstrom"
+license = "MIT OR Apache-2.0"
 keywords = ["kubernetes", "stream", "processing", "malstrom"]
-categories = ["command-line-utilities"]
-readme = "Readme.md"
+categories = [
+    "concurrency",
+    "api-bindings"
+]
+readme = "../README.md"
 authors = [
-    "nico@acupof.xyz"
+    "nico@acupof.xyz",
+    "damion.werner@malstrom.io"
 ]
 
 [[bin]]
-name = "k8s-operator"
+name = "malstrom-operator"
 path = "src/main.rs"
 
 [dependencies]

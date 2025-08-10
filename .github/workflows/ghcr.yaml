@@ -29,13 +29,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push k8s-operator
+      - name: Build and Push malstrom-operator
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
           context: malstrom-k8s
-          file: malstrom-k8s/k8s-operator.dockerfile
+          file: malstrom-k8s/malstrom-operator.dockerfile
           push: true
-          tags: ghcr.io/malstromdevelopers/k8s-operator:latest,ghcr.io/malstromdevelopers/k8s-operator:${{ github.sha }}
+          tags: ghcr.io/malstromdevelopers/malstrom-operator:latest,ghcr.io/malstromdevelopers/malstrom-operator:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha
 

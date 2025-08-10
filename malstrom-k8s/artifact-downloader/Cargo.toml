@@ -3,11 +3,11 @@ name = "artifact-downloader"
 version = "0.1.0"
 edition = "2024"
 description = "Versatile downloader for arbitrary object stores and locations."
-repository = "https://github.com/JetStreamDevelopers/k8s-operator"
+repository = "https://github.com/MalstromDevelopers/malstrom"
 authors = [
     "nico@acupof.xyz"
 ]
-license = "AGPL-3.0"
+license = "MIT OR Apache-2.0"
 keywords = ["kubernetes", "stream", "processing", "malstrom"]
 categories = ["cli"]
 readme = "README.md"

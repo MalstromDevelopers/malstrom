@@ -25,5 +25,5 @@ FROM alpine:3.21 AS runner
 WORKDIR /app
 RUN apk add ca-certificates libssl3
 
-COPY --from=builder /app/operator/target/release/k8s-operator /app/executable
+COPY --from=builder /app/operator/target/release/malstrom-operator /app/executable
 ENTRYPOINT ["/app/executable"]

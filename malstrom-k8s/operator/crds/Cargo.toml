@@ -6,11 +6,11 @@ authors = [
     "nico@acupof.xyz"
 ]
 description = "Kubernetes custom resource definitions for Malstrom operator"
-license = "AGPL-3.0"
-repository = "https://github.com/malstromdevelopers/k8s-operator"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MalstromDevelopers/malstrom"
 keywords = ["malstorm", "crd", "kubernetes"]
 categories = ["config"]
-readme = "Readme.md"
+readme = "../../README.md"
 
 [lib]
 name = "crds"

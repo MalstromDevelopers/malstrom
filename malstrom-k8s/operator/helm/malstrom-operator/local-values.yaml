@@ -6,7 +6,7 @@ logLevel: info
 
 operator:
   image:
-    repository: localhost:5001/malstromdevelopers/k8s-operator
+    repository: localhost:5001/malstromdevelopers/malstrom-operator
     tag: latest
     imagePullPolicy: IfNotPresent
   resources: {}
