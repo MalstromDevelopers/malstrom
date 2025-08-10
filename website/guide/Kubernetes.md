@@ -54,7 +54,7 @@ Next we will need a connection to the "artifact-manager" running on Kubernetes. 
 to a port on out local machine. This command makes the "artifact-manager" available under
 `localhost:29918`:
 
-`kubectl port-forward artifact-manager 29918:8000`
+`kubectl port-forward svc/artifact-manager 29918:80`
 
 Next we upload our compiled binary, making it available under the name "foobar":
 
@@ -82,13 +82,13 @@ spec:
   podSpecTemplate:
     containers:
       - name: main
-        image: alpine:3.12
+        image: alpine:3.21
         env:
           - name: IS_K8S
             value: "true"
     initContainers:
       - name: artifact-downloader
-        image: ghcr.io/malstrom/artifact-downloader:latest
+        image: ghcr.io/malstromdevelopers/artifact-downloader:latest
 ```
 
 When applying this manifest with `kubectl apply -f path/to/manifest.yaml` we create and start
