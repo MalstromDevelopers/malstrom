@@ -48,7 +48,7 @@ where
         &mut self,
         msg: DataMessage<K, VI, T>,
         mut key_state: ExpireMap<T, VI, T>,
-        output: &mut Output<K, VO, T>,
+        _output: &mut Output<K, VO, T>,
     ) -> Option<ExpireMap<T, VI, T>> {
         key_state.insert(
             msg.timestamp.clone(),
@@ -57,37 +57,42 @@ where
             msg.timestamp.clone() + self.size.clone() + self.size.clone(),
         );
 
-        // Need to prevent a negative wrap therefore do a checked sub
-        let lower = msg
-            .timestamp
-            .clone()
-            // subtract size - 1
-            .checked_sub(&(self.size.clone() - (self.size.clone() / self.size.clone())))
-            .unwrap_or(T::MIN);
-        let window = key_state.get_range(|k, _| *k < lower, |k, _| *k <= msg.timestamp.clone());
-
-        if let Some(window) = window {
-            let values = window.values().map(|o| &o.value).collect::<Vec<_>>();
-
-            output.send(Message::Data(DataMessage::new(
-                msg.key.clone(),
-                (self.aggregator)(&values),
-                msg.timestamp.clone(),
-            )));
-        }
-
         Some(key_state)
     }
 
     fn on_epoch(
         &mut self,
         epoch: &T,
-        state: &mut IndexMap<K, ExpireMap<T, VI, T>>,
-        _output: &mut Output<K, VO, T>,
+        global_state: &mut IndexMap<K, ExpireMap<T, VI, T>>,
+        output: &mut Output<K, VO, T>,
     ) {
-        state.retain(|_, v| {
-            v.expire(epoch);
-            !v.is_empty()
+        global_state.retain(|k, state| {
+            // Need to prevent a negative wrap therefore do a checked sub
+            let lower = epoch
+                .clone()
+                // subtract size - 1
+                .checked_sub(&(self.size.clone() - (self.size.clone() / self.size.clone())))
+                .unwrap_or(T::MIN);
+            let window = state.get_range(|k, _| *k < lower, |k, _| *k <= epoch.clone());
+
+            match window {
+                // Only call the aggregator on non empty windows
+                Some(window) if !window.is_empty() => {
+                    let values = window.values().map(|o| &o.value).collect::<Vec<_>>();
+
+                    output.send(Message::Data(DataMessage::new(
+                        k.clone(),
+                        (self.aggregator)(&values),
+                        epoch.clone(),
+                    )));
+                }
+                _ => (),
+            }
+
+            // Clean state after execution to ensure all entries are available.
+            // Because of the range query too old entries will not be considered in any case.
+            state.expire(epoch);
+            !state.is_empty()
         });
     }
 }
@@ -96,7 +101,9 @@ pub trait SlidingWindow<K, V, T, VO> {
     /// Sliding event time window which passes a reference of all values part of the window
     /// on epoch update to the aggregator function and emit a record.
     ///
-    /// Note: THe step size is determined by the frequency of emitted epochs.
+    /// If no records for a specific epoch are present, the aggregator funtion is not called.
+    ///
+    /// Note: The step size is determined by the frequency of emitted epochs.
     ///
     /// # Example
     /// ```rust
