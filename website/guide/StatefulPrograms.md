@@ -88,7 +88,7 @@ Unfortunately right now we have too little data, the program will finish before 
 
 <<< @../../malstrom-core/examples/slatedb_backend_failing.rs
 
-Our program will now "fail" and restart every 5 seconds. You may observe some duplicate outputs,
+Our program will now "fail" and restart every 10 seconds. You may observe some duplicate outputs,
 but the running total calculated remains correct, i.e. every integer is added **exactly once**.
 
 ### Exactly Once

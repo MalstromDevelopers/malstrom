@@ -27,8 +27,8 @@ for example use the `MultiThreadRuntime` when running locally. In fact, we recom
 program utilize both, depending on its environment. This makes development simpler, as you can
 easily execute the job on your own machine.
 
-See how this example program uses the `MultiThreadRuntime` when run without arguments, but will
-use the `KubernetesRuntime` when invoked with the argument `k8s`:
+See how this example program uses the `MultiThreadRuntime` when run normally, but will
+use the `KubernetesRuntime` when the `IS_K8S` env var is set to "true":
 
 <<< @../../malstrom-k8s/runtime/examples/basic_program.rs
 
