@@ -73,7 +73,7 @@ Currently Malstrom comes with two different backends to choose from:
 
 Let's see how we can make our program state persistent:
 
-First make sure you have SlateDB and ObjectStore installed: `cargo add malstrom -F slatedb` and `cargo add object_store`
+First make sure you have SlateDB installed: `cargo add malstrom -F slatedb`.
 
 <<< @../../malstrom-core/examples/slatedb_backend.rs
 

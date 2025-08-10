@@ -8,7 +8,7 @@ use malstrom::{
     sources::{SingleIteratorSource, StatelessSource},
     worker::StreamProvider,
 };
-use object_store::{local::LocalFileSystem, path::Path};
+use malstrom::snapshot::slatedb::object_store::{local::LocalFileSystem, path::Path};
 use std::sync::Arc;
 use std::time::Duration;
 
