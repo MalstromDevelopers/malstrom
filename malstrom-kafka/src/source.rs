@@ -24,16 +24,16 @@ type KafkaPartition = i32;
 /// Create a new KafkaSource for a given topic.
 /// This is a partitioned source with each Kafka partition mapping to one [StatefulSourcePartition].
 /// NOTE: Records with an empty payload are not emitted to the stream.
-/// 
+///
 /// # Usage
-/// 
+///
 /// The source can be instantiated using the builder.
 /// Custom [rdkafka configuration](https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md)
 /// can be provided by calling `.conf(key, value)`.
-/// 
+///
 /// ```
 /// use malstrom_kafka::KafkaSource;
-/// 
+///
 /// let kafka_source = KafkaSource::builder()
 ///     .broker("mybroker.com") // at least one broker must be provided
 ///     .broker("myotherbroker.com")
@@ -43,7 +43,7 @@ type KafkaPartition = i32;
 ///     .conf("log_level", "3") // additional custom config
 ///     .conf("security.protocol", "ssl");
 /// ```
-#[derive(Builder)]
+#[derive(Builder, Debug)]
 #[builder(on(String, into))]
 pub struct KafkaSource {
     #[builder(field)]
@@ -51,13 +51,13 @@ pub struct KafkaSource {
     #[builder(field)]
     brokers: Vec<String>,
     /// this is a workaround to check if at least one broker was provided
-    #[builder(overwritable, setters(vis="", name="at_least_one_broker"))]
+    #[builder(overwritable, setters(vis = "", name = "at_least_one_broker"))]
     _at_least_one_broker: (),
     topic: String,
     group_id: String,
     auto_offset_reset: String,
     /// Timeout for fetching Kafka Broker metadata
-    #[builder(default=Duration::from_secs(30))]
+    #[builder(default=Duration::from_secs(10))]
     metadata_fetch_timeout: Duration,
 }
 
@@ -86,7 +86,7 @@ impl StatefulSourceImpl<KafkaRecord, OffsetIndex> for KafkaSource {
             &self.group_id,
             &self.brokers,
             &self.auto_offset_reset,
-            &self.kafka_config
+            &self.kafka_config,
         );
         let metadata = consumer
             .fetch_metadata(Some(&self.topic), self.metadata_fetch_timeout)
@@ -110,15 +110,14 @@ impl StatefulSourceImpl<KafkaRecord, OffsetIndex> for KafkaSource {
             &self.group_id,
             &self.brokers,
             &self.auto_offset_reset,
-            &self.kafka_config
+            &self.kafka_config,
         );
         let mut topic_partitions = TopicPartitionList::with_capacity(1);
         topic_partitions.add_partition(&self.topic, *part);
         consumer
             .assign(&topic_partitions)
             .map_err(KafkaConsumerError::TopicPartition)
-            .malstrom_fatal()
-            ;
+            .malstrom_fatal();
         KafkaSourcePartition::new(consumer, part_state.flatten(), &self.topic, *part)
     }
 }
@@ -127,7 +126,7 @@ fn create_consumer(
     group_id: &str,
     brokers: &[String],
     auto_offset_reset: &str,
-    extra_conf: &HashMap<String, String>
+    extra_conf: &HashMap<String, String>,
 ) -> BaseConsumer {
     let mut kafka_conf = ClientConfig::new();
     for (k, v) in extra_conf.iter() {
@@ -182,7 +181,7 @@ impl StatefulSourcePartition<KafkaRecord, i64> for KafkaSourcePartition {
             .malstrom_fatal();
         let offset = msg.offset();
         self.last_recvd_offset = Some(offset);
-       KafkaRecord::from_message(&msg).map(|x| (x, offset))
+        KafkaRecord::from_message(&msg).map(|x| (x, offset))
     }
 
     fn snapshot(&self) -> Self::PartitionState {
@@ -215,7 +214,6 @@ impl StatefulSourcePartition<KafkaRecord, i64> for KafkaSourcePartition {
     }
 }
 
-
 /// Possible errors which can occur in the KafkaConsumer
 #[derive(Debug, Error)]
 pub enum KafkaConsumerError {
@@ -226,9 +224,8 @@ pub enum KafkaConsumerError {
     #[error("Could not assign topic-partition to consumer")]
     TopicPartition(#[source] rdkafka::error::KafkaError),
     #[error("Failed to fetch metadata from Kafka broker")]
-    FetchMetadata(#[source] rdkafka::error::KafkaError)
+    FetchMetadata(#[source] rdkafka::error::KafkaError),
 }
-
 
 /// Doctests to assert some bad builders do not compile
 /// see: https://stackoverflow.com/a/55327334
@@ -277,11 +274,11 @@ mod tests {
     #[test]
     fn test_builder() {
         let _x = KafkaSource::builder()
-        .topic("foobar")
-        .group_id("groupid")
-        .auto_offset_reset("earliest")
-        .broker("foo.com")
-        .conf("log_level", "3")
-        .build();
+            .topic("foobar")
+            .group_id("groupid")
+            .auto_offset_reset("earliest")
+            .broker("foo.com")
+            .conf("log_level", "3")
+            .build();
     }
 }

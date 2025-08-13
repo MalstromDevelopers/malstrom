@@ -182,8 +182,10 @@ fn new_transport_pair() -> ChannelTransportContainer {
 
 #[cfg(test)]
 mod test {
-    use crate::runtime::{threaded::{InterThreadCommunication, Shared}, OperatorOperatorComm as _};
-
+    use crate::runtime::{
+        threaded::{InterThreadCommunication, Shared},
+        OperatorOperatorComm as _,
+    };
 
     /// check we can send and recv a single message on two transports
     #[test]

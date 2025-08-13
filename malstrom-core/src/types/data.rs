@@ -1,6 +1,7 @@
 //! Types and traits for data processed in JetStream
 
 /// Data which may move through a stream
+#[diagnostic::on_unimplemented(message = "Type must be `Clone + 'static` to be used as data")]
 pub trait Data: Clone + 'static {}
 impl<T: Clone + 'static> Data for T {}
 

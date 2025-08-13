@@ -5,7 +5,7 @@ use crate::{
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
-use super::timed_stream::OnTimeLate;
+use super::assign_timestamps::OnTimeLate;
 
 #[inline(always)]
 pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(

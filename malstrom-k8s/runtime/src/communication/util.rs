@@ -3,6 +3,7 @@ use tonic::Status;
 
 use crate::CONFIG;
 
+#[allow(clippy::result_large_err)]
 pub(super) fn decode_id(raw: &str) -> Result<u64, Status> {
     raw.parse::<u64>()
         .map_err(|e| Status::invalid_argument(format!("Invalid u64: {e:?}")))

@@ -12,6 +12,7 @@ mod split;
 mod stateful_map;
 mod stateful_op;
 mod time;
+mod ttl_map;
 
 // Public Api operators reexported for convenience
 pub use crate::keyed::KeyDistribute;
@@ -27,7 +28,10 @@ pub use source::{Source, StreamSource};
 pub use split::Split;
 pub use stateful_map::StatefulMap;
 pub use stateful_op::{StatefulLogic, StatefulOp};
+pub use stateless_op::{StatelessLogic, StatelessOp};
 pub use time::*;
+pub use ttl_map::{expiremap, TtlMap};
+pub use indexmap;
 
 // These are only to be used internally in malstrom
 pub(crate) mod stateless_op;

@@ -17,3 +17,5 @@ Cargo.lock
 dirty-tests/**/*
 website/node_modules/
 website/.vitepress/cache/
+website/.vitepress/dist/
+.vscode

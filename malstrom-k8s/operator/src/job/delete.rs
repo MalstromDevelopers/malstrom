@@ -10,7 +10,7 @@ use tracing::warn;
 ///
 /// # Arguments:
 /// - `client` - A Kubernetes client to delete the Deployment with
-/// 
+///
 /// Note: It is assumed the deployment exists for simplicity. Otherwise returns an Error.
 pub async fn delete(client: Client, job: Arc<MalstromJob>) -> Result<(), DeleteJobError> {
     let namespace = job.namespace().unwrap_or("default".to_owned());

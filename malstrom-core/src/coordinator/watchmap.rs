@@ -75,9 +75,9 @@ where
     /// value and applies the function if the key is not already present.
     /// # Arguments
     ///
-    /// - `key` - The key associated with the value to be applied or defaulted.
-    /// - `func` - A function that is applied to the value if the key exists, or to the default
-    ///            value if the key does not exist. It takes a mutable reference to the value.
+    /// -`key` - The key associated with the value to be applied or defaulted.
+    /// -`func` - A function that is applied to the value if the key exists, or to the default
+    ///   value if the key does not exist. It takes a mutable reference to the value.
     ///
     /// After applying the function or inserting a default value, it triggers any pending
     /// notifications that depend on changes to the map.

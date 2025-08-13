@@ -23,12 +23,6 @@ where
 pub trait StatelessSinkImpl<K, V, T>: 'static {
     /// Emit a single record
     fn sink(&mut self, msg: DataMessage<K, V, T>);
-
-    /// Suspend this sink.
-    /// Suspend means the execution will be halted, but could continue later.
-    /// Use this method to clean up any recources like external connections or
-    /// file handles
-    fn suspend(&mut self) {}
 }
 
 impl<K, V, T, S> StreamSink<K, V, T> for StatelessSink<K, V, T, S>
@@ -42,12 +36,8 @@ where
         builder.then(OperatorBuilder::direct(
             name,
             move |input: &mut Input<K, V, T>, _output: &mut Output<NoKey, NoData, NoTime>, _ctx| {
-                if let Some(msg) = input.recv() {
-                    match msg {
-                        Message::Data(d) => self.0.sink(d),
-                        Message::SuspendMarker(_s) => self.0.suspend(),
-                        _ => (),
-                    }
+                if let Some(Message::Data(d)) = input.recv() {
+                    self.0.sink(d)
                 }
             },
         ));

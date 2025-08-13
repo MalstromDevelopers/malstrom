@@ -27,7 +27,7 @@ pub trait StatefulSinkImpl<K, V, T>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
-    type Part: Distributable + MaybeKey + Hash + Eq;
+    type Part: DistKey;
     /// State for a partition of this sink. The state is persisted across job restarts
     /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState: Distributable;
@@ -73,9 +73,6 @@ pub trait StatefulSinkPartition<K, V, T> {
     /// collect and shutdown this partition
     /// this gets called when the partition is moved to another worker
     fn collect(self) -> Self::PartitionState;
-
-    /// Gets called when execution gets suspended, possibly resuming later.
-    fn suspend(&mut self) {}
 }
 
 impl<K, V, T, S> StreamSink<K, V, T> for StatefulSink<K, V, T, S>
@@ -233,9 +230,6 @@ where
         _output: &mut Output<Builder::Part, NoData, NoTime>,
         _ctx: &mut OperatorContext,
     ) {
-        for partition in self.partitions.values_mut() {
-            partition.suspend();
-        }
     }
 
     fn on_interrogate(

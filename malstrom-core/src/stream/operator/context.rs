@@ -23,6 +23,7 @@ pub struct OperatorContext<'a> {
     pub(super) communication: &'a mut dyn OperatorOperatorComm,
 }
 
+#[allow(clippy::needless_lifetimes)] // elision does not work as clippy suggests here
 impl<'a> OperatorContext<'a> {
     #[cfg(test)]
     pub(crate) fn new(

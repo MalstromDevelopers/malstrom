@@ -245,7 +245,7 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
     state: SerializableCoordinatorState,
     requests: flume::Receiver<CoordinatorRequest>,
     communication_backend: C,
-    persistence_backend: P,
+    mut persistence_backend: P,
 ) -> Result<(), CoordinatorLoopError> {
     let mut state = CoordinatorState::from_serialized(state, &communication_backend).await?;
     // start job on all workers
@@ -290,16 +290,22 @@ async fn coordinator_loop<C: Send + CoordinatorWorkerComm, P: Send + Persistence
                     perform_snapshot_all(&state, next_version).await;
 
                     let serialized_state = serialize_state(&state.get_serializable().await);
-                    persistence_backend
-                        .for_version(COORDINATOR_ID, &next_version)
-                        .persist(&serialized_state, &0);
-                    persistence_backend.commit_version(&next_version);
+                    persistence_backend = tokio::runtime::Handle::current()
+                        .spawn_blocking(move || {
+                            persistence_backend
+                                .for_version(COORDINATOR_ID, &next_version)
+                                .persist(&serialized_state, &0);
+                            persistence_backend.commit_version(&next_version);
+                            persistence_backend
+                        })
+                        .await?;
                     snapshot_version = Some(next_version);
                 }
                 RequestOperation::Scale(desired) => {
                     let diff = desired.abs_diff(state.active_workers.len() as u64);
                     if diff != 0 {
                         let new_config: IndexSet<WorkerId> = (0..desired).collect();
+                        info!("Starting rescale to {new_config:?}");
                         perform_reconfig_all(&mut state, new_config, &communication_backend)
                             .await?;
                     }

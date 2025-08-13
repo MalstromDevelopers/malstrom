@@ -30,27 +30,29 @@ pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
     ///
     /// ```rust
     /// use malstrom::operators::*;
-    /// use malstrom::operators::Source;
-    /// use malstrom::runtime::{WorkerBuilder, threaded::SingleThreadRuntimeFlavor};
-    /// use malstrom::testing::VecSink;
-    /// use malstrom::sources::SingleIteratorSource;
+    /// use malstrom::runtime::SingleThreadRuntime;
+    /// use malstrom::snapshot::NoPersistence;
+    /// use malstrom::sources::{SingleIteratorSource, StatelessSource};
+    /// use malstrom::worker::StreamProvider;
+    /// use malstrom::sinks::{VecSink, StatelessSink};
     ///
     /// let sink = VecSink::new();
+    /// let sink_clone = sink.clone();
     ///
-    /// let mut worker = WorkerBuilder::new(SingleThreadRuntimeFlavor::default());
+    /// SingleThreadRuntime::builder()
+    ///     .persistence(NoPersistence)
+    ///     .build(move |provider: &mut dyn StreamProvider| {
+    ///         provider.new_stream()
+    ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..10)))
+    ///         .key_local("key_local", |_| 0)
+    ///         .stateful_map(
+    ///             "statefule_map", |_key, value, state: i32| ((state + value), Some(state + value))
+    ///         )
+    ///         .sink("sink", StatelessSink::new(sink_clone));
+    ///     })
+    ///     .execute()
+    ///     .unwrap();
     ///
-    /// worker
-    ///     .new_stream()
-    ///     .source(SingleIteratorSource::new(0..10))
-    ///     // stateful operators require a keyed stream
-    ///     .key_local(|_| 0)
-    ///     // sum up all numbers and thus far
-    ///     .stateful_map(
-    ///         |_key, value, state: i32| ((state + value), Some(state + value)))
-    ///     .sink(sink.clone())
-    ///     .finish();
-    ///
-    /// worker.build().expect("can build").execute();
     /// let expected: Vec<i32> = (0..10).scan(0, |state, x| {*state = *state + x; Some(*state)}).collect();
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);

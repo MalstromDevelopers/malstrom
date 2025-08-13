@@ -1,12 +1,27 @@
 [package]
 name = "malstrom-kafka"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+description = "Kafka protocol sources and sinks for the Malstrom stream processing framework"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MalstromDevelopers/malstrom"
+readme = "../README.md"
+categories = [
+    "concurrency",
+    "api-bindings"
+]
+keywords = [
+    "stream processing",
+    "data processing",
+    "kafka",
+    "streaming",
+    "distributed",
+]
 
 [dependencies]
 bon = { version = "3.5.1", features = ["experimental-overwritable"] }
 malstrom = { path = "../malstrom-core" }
-rdkafka = { version = "0.36.2", features = ["cmake-build"] }
+rdkafka = { version = "0.37.0"}
 thiserror = "2.0.12"
 tracing = "0.1.41"
 

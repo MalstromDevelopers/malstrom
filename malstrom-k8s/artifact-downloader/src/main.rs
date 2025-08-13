@@ -22,7 +22,6 @@ async fn main() {
     }
 }
 
-
 async fn main_inner() -> Result<(), Error> {
     let args = cli::ArtifactDownloader::parse();
     debug!("Got the following args: {args:?}");
@@ -70,7 +69,8 @@ async fn main_inner() -> Result<(), Error> {
                 .build()?
                 .get(&path)
                 .await?
-                .bytes().await?
+                .bytes()
+                .await?
         }
         cli::StorageType::Gcp => {
             let path = args.source;
@@ -79,12 +79,19 @@ async fn main_inner() -> Result<(), Error> {
             GoogleCloudStorageBuilder::from_env()
                 .build()?
                 .get(&path)
-                .await?.bytes().await?
+                .await?
+                .bytes()
+                .await?
         }
         cli::StorageType::S3 => {
             let path = args.source;
             let path = Path::parse(&path).map_err(|e| Error::InvalidPath(path.to_owned(), e))?;
-            AmazonS3Builder::from_env().build()?.get(&path).await?.bytes().await?
+            AmazonS3Builder::from_env()
+                .build()?
+                .get(&path)
+                .await?
+                .bytes()
+                .await?
         }
         cli::StorageType::Unknown => unreachable!(),
     };
@@ -120,5 +127,5 @@ enum Error {
     #[error("Invalid path: {0}, {1}")]
     InvalidPath(String, object_store::path::Error),
     #[error(transparent)]
-    Reqwest(#[from] reqwest::Error)
+    Reqwest(#[from] reqwest::Error),
 }
