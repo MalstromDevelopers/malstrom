@@ -31,6 +31,7 @@ export default defineConfig({
           { text: 'Custom Sources', link: '/guide/CustomSources' },
           { text: 'Custom Sinks', link: '/guide/CustomSinks' },
           { text: 'Custom Operators', link: '/guide/CustomOperators' },
+          { text: 'TTL Map Operator', link: '/guide/TtlMapOperator' },
         ]
       },
       {

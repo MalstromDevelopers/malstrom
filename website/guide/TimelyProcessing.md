@@ -33,7 +33,7 @@ but really any type works as long as it supports ordering and has defined min an
 For some operations, like windowing, it is crucial to know, when a certain timestamp will not
 appear anymore, i.e. when time has advanced past this timestamp.
 
-If our inputs were strictly ordered, meaning timestamps came in an always ascending order, 
+If our inputs were strictly ordered, meaning timestamps came in an always ascending order,
 this would be easy, as we would just need to observe the timestamps attached to our data.
 Unfortunately, the real world often does not grant us this simplicity: In real world applications
 data can be out of order by a few seconds, many hours sometimes even days or weeks.
@@ -44,6 +44,15 @@ An Epoch is a special marker message, which acts like a promise: It contains a s
 and any data messages following it, **must** have a timestamp greater than that of the epoch.
 This in turn means, any operator obeserving an Epoch of time _T_, can safely assume, it will
 never see any more messages with a timestamp <= _T_
+
+The animation below shows how epochs work to limit the out of orderness. We have a simple stream
+consisting of a source, an operator assigning timestamps and the Epoch emitter, which emits epochs
+and splits our stream into streams of on-time and late messages.
+The epochs ensure, our on-time stream never sees a message more than 1 second out of order.
+
+<video controls="controls" src="./animations\limit_out_of_orderness.mp4" />
+
+# Code Example
 
 Let's see how timestamps and epochs can be created on a datastream. For this example we will track
 some made up financial transactions

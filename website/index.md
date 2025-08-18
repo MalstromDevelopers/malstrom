@@ -3,7 +3,7 @@
 layout: home
 
 hero:
-  name: "Malstrom"
+  name: "malstrom"
   text: "Distributed Stream Processing"
   tagline: Stateful, Reliable, Efficient
   actions:
