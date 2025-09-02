@@ -1,0 +1,36 @@
+# Default values for malstrom-operator.
+
+name: malstrom-operator # operator name
+namespace: default # deployment namespace for operator pods
+
+logLevel: info # logging level, operator will log at this level to std out
+
+operator:
+  image:
+    repository: ghcr.io/malstromdevelopers/malstrom-operator
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+
+# artifact manager allows directly uploading malstrom jobs as binaries
+# not recommended for production
+artifactManager:
+  deploy: false
+  image:
+    repository: ghcr.io/malstromdevelopers/artifact-manager
+    tag: latest
+    imagePullPolicy: IfNotPresent
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 80
+  storageClassName: null
+  size: 1Gi
+
+serviceAccount: # service account used by operator
+  name: malstrom-operator
+  namespaces: ["default"]
+
+imagePullSecrets: [] # names of Kubernetes secrets used for pulling the operator images
+
+affinity: {}

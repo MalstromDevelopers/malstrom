@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package malstrom_k8s;
+
+service WorkerService {
+    // Stream from one operator to the same operator on a different worker
+    rpc OperatorOperator(stream OperatorOperatorRequest) returns (OperatorOperatorResponse) {}
+
+    // stream of the coordinator to the worker
+    rpc CoordinatorWorker(stream CoordinatorWorkerRequest) returns (CoordinatorWorkerResponse) {}
+}
+
+service CoordinatorService {
+    /// Stream of worker to coordinator
+    rpc WorkerCoordinator(stream WorkerCoordinatorRequest) returns (WorkerCoordinatorResponse) {}
+}
+
+message OperatorOperatorRequest {bytes data = 1;}
+message OperatorOperatorResponse {}
+
+message CoordinatorWorkerRequest {bytes data =1;}
+message CoordinatorWorkerResponse {}
+
+message WorkerCoordinatorRequest {bytes data = 1;}
+message WorkerCoordinatorResponse {}

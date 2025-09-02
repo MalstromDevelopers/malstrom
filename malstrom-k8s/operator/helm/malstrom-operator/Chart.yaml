@@ -1,0 +1,6 @@
+apiVersion: v2
+name: malstrom-operator
+description: A Helm chart for installing the Malstrom operator
+type: application
+version: 0.6.3
+appVersion: "0.1.0"

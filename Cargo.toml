@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "malstrom-core",
+    "malstrom-core/examples/*",
+    "malstrom-k8s/artifact-downloader",
+    "malstrom-k8s/artifact-manager",
+    "malstrom-k8s/operator",
+    "malstrom-k8s/operator/crds",
+    "malstrom-k8s/runtime",
+    "malstrom-kafka",
+]
+
+[workspace.lints.rust]
+missing-docs = "warn"
+
+[workspace.lints.clippy]
+correctness = "deny"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
+unwrap_used = {level = "warn", priority = 1}
+cargo = "warn"

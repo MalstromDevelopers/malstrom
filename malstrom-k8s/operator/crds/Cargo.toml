@@ -1,0 +1,24 @@
+[package]
+name = "crds"
+version = "0.1.0"
+edition = "2021"
+authors = [
+    "nico@acupof.xyz"
+]
+description = "Kubernetes custom resource definitions for Malstrom operator"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MalstromDevelopers/malstrom"
+keywords = ["malstorm", "crd", "kubernetes"]
+categories = ["config"]
+readme = "../../README.md"
+
+[lib]
+name = "crds"
+path = "src/lib.rs"
+
+[dependencies]
+k8s-openapi = { version = "0.23.0", features = ["v1_30", "schemars"] }
+kube = { version = "0.97.0", features = ["runtime", "derive"] }
+schemars = "0.8.21"
+serde = "1.0.215"
+serde_json = "1.0.133"
