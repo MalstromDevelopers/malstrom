@@ -13,7 +13,6 @@ categories = [
 keywords = [
     "stream",
     "data",
-    "processing",
     "streaming",
     "distributed",
     "kubernetes"
