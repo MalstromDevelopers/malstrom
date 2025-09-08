@@ -103,15 +103,17 @@ where
 }
 
 fn build_stateful_logic<
+    'a, 'b,
     K: Key + Serialize + DeserializeOwned,
     VI,
     T: MaybeTime,
     VO: Clone,
     S: Default + Serialize + DeserializeOwned + 'static,
+    L: StatefulLogic<K, VI, T, VO, S>
 >(
-    context: &BuildContext,
-    mut logic: impl StatefulLogic<K, VI, T, VO, S>,
-) -> impl Logic<K, VI, T, K, VO, T> {
+    context: &'a BuildContext<'b>,
+    mut logic: L,
+) -> impl Logic<K, VI, T, K, VO, T> + use <K, VI, T, VO, S, L> {
     let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
 
     move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, ctx| {

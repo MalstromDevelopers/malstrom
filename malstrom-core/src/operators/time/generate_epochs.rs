@@ -40,7 +40,7 @@ pub trait GenerateEpochs<K, V, T>: Sealed {
         self,
         name: &str,
         // previously issued epoch and time elapsed since last epoch
-        gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
+        r#gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>);
 }
 
@@ -53,9 +53,9 @@ where
     fn generate_epochs(
         self,
         name: &str,
-        gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
+        r#gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
-        self.0.generate_epochs(name, gen)
+        self.0.generate_epochs(name, r#gen)
     }
 }
 
@@ -68,7 +68,7 @@ where
     fn generate_epochs(
         self,
         name: &str,
-        mut gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
+        mut r#gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
         let operator = OperatorBuilder::built_by(name, |build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
@@ -77,7 +77,7 @@ where
                 if let Some(msg) = input.recv() {
                     match msg {
                         Message::Data(d) => {
-                            let new_epoch = gen(&d, &prev_epoch);
+                            let new_epoch = r#gen(&d, &prev_epoch);
                             // send the message to the late stream if it is later than the previously
                             // issued epoch
                             handle_maybe_late_msg(prev_epoch.as_ref(), d, output);
