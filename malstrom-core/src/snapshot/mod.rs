@@ -5,9 +5,9 @@
 #[cfg(feature = "slatedb")]
 pub mod slatedb;
 use crate::types::{OperatorId, WorkerId};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 #[cfg(feature = "slatedb")]
-pub use slatedb::{object_store, SlateDbBackend, SlateDbClient};
+pub use slatedb::{SlateDbBackend, SlateDbClient, object_store};
 use std::{fmt::Debug, rc::Rc, sync::Mutex};
 
 /// Version of a snapshot

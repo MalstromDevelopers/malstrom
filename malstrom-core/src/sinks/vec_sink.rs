@@ -1,6 +1,6 @@
 use crate::{
     sinks::StatelessSinkImpl,
-    types::{Data, DataMessage, MaybeKey, MaybeTime},
+    types::{Data, DataMessage, Kvt, MaybeKey, MaybeTime},
 };
 use std::{ops::RangeBounds, sync::Arc, sync::Mutex};
 
@@ -50,13 +50,11 @@ impl<T> IntoIterator for VecSink<T> {
     }
 }
 
-impl<K, V, T> StatelessSinkImpl<K, V, T> for VecSink<DataMessage<K, V, T>>
+impl<In> StatelessSinkImpl<In> for VecSink<DataMessage<In>>
 where
-    K: MaybeKey,
-    V: Data,
-    T: MaybeTime,
+    In: Kvt
 {
-    fn sink(&mut self, msg: DataMessage<K, V, T>) {
+    fn sink(&mut self, msg: DataMessage<In>) {
         self.give(msg);
     }
 }

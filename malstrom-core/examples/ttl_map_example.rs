@@ -1,12 +1,12 @@
 //! Usage example for the ttl_map operator
+use expiremap::ExpireMap;
+use malstrom::keyed::KeyLocal;
 use malstrom::operators::*;
 use malstrom::runtime::SingleThreadRuntime;
 use malstrom::sinks::{StatelessSink, StdOutSink};
-use malstrom::sources::{SingleIteratorSource, StatelessSource};
 use malstrom::snapshot::NoPersistence;
+use malstrom::sources::{SingleIteratorSource, StatelessSource};
 use malstrom::worker::StreamProvider;
-use malstrom::keyed::KeyLocal;
-use expiremap::ExpireMap;
 use std::time::Duration;
 
 fn main() {

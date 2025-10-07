@@ -7,7 +7,7 @@ use crate::{
     worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
-use super::{communication::InterThreadCommunication, Shared};
+use super::{Shared, communication::InterThreadCommunication};
 use bon::Builder;
 use thiserror::Error;
 

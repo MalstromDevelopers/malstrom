@@ -27,13 +27,13 @@ impl FinishedRouter {
         }
     }
 
-    pub(super) fn route_message<K, V, T>(
+    pub(super) fn route_message<M: Kvt>(
         &mut self,
-        key: &K,
-        partitioner: WorkerPartitioner<K>,
+        key: &<M as Kvt>::Key,
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         this_worker: WorkerId,
         sender: WorkerId,
-        remotes: &Remotes<K, V, T>,
+        remotes: &Remotes<M>,
     ) -> WorkerId {
         let new_target = partitioner(key, &self.new_worker_set);
         if new_target == this_worker {
@@ -64,17 +64,12 @@ impl FinishedRouter {
         }
     }
 
-    pub(crate) fn lifecycle<K, V, T>(
+    pub(crate) fn lifecycle<M: Kvt>(
         self,
-        _partitioner: WorkerPartitioner<K>,
-        output: &mut Output<K, V, T>,
-        remotes: &mut Remotes<K, V, T>,
-    ) -> MessageRouter<K, V, T>
-    where
-        K: Key,
-        V: MaybeData,
-        T: MaybeTime,
-    {
+        _partitioner: WorkerPartitioner<<M as Kvt>::Key>,
+        output: &mut Output<M>,
+        remotes: &mut Remotes<M>,
+    ) -> MessageRouter<M> {
         if remotes.values().all(|(_, state)| {
             state.last_version.map(|v| v == self.version).unwrap_or(false)
                 // we cannot progress if they did not acknowledge our version because
@@ -99,7 +94,7 @@ mod tests {
     use indexmap::IndexSet;
 
     use crate::{
-        channels::operator_io::{full_broadcast, link, Input, Output},
+        channels::operator_io::{Input, Output, full_broadcast, link},
         keyed::{distributed::Remotes, partitioners::rendezvous_select},
         types::Message,
     };
@@ -114,7 +109,7 @@ mod tests {
             IndexSet::from([0, 1]),
             RescaleMessage::new(IndexSet::from([1]), 0),
         );
-        let mut output: Output<usize, usize, usize> = Output::new_unlinked(full_broadcast);
+        let mut output: Output<(usize, usize, usize)> = Output::new_unlinked(full_broadcast);
         let mut input = Input::new_unlinked();
         link(&mut output, &mut input);
         let mut remotes = Remotes::new();

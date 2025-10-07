@@ -3,8 +3,8 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
-use crate::runtime::communication::Distributable;
 use crate::runtime::SingleThreadRuntime;
+use crate::runtime::communication::Distributable;
 use crate::snapshot::{Barrier, SnapshotVersion};
 use crate::types::{Key, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};

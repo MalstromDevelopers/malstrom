@@ -1,17 +1,26 @@
+use std::marker::PhantomData;
+
 use indexmap::IndexMap;
 
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::{Input, Output},
-    stream::{BuildContext, Logic, OperatorBuilder, StreamBuilder},
-    types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
+    stream::{
+        BuildContext, DirectLogic, Logic, LogicBuilder, Malstrom, Operator, OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder
+    },
+    types::{
+        Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp,
+    },
 };
+
+trait State: Serialize + DeserializeOwned + Default + 'static {}
+impl<X> State for X where X: Default + Serialize + DeserializeOwned + 'static {}
 
 /// Helper trait for implementing arbitrary stateful operators for datastreams.
 /// For simpler stateful operations see [malstrom::operators::stateful_map]
-pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
+pub trait StatefulLogic<M: Kvt, N: Kvt, S>: 'static {
     /// Process a single datamessage.
     /// This function receives an owned value of the given message and the state for the message's
     /// key. If there is no state for the key, the default state is given.
@@ -26,12 +35,7 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
     /// 2. The timestamp of any output message may not be smaller than the timestamp of the last
     ///    Epoch received at this operator. If the value of the last Epoch is unknown, it is always
     ///    safe to produce timestamps equal to or greater than the current input message.
-    fn on_data(
-        &mut self,
-        msg: DataMessage<K, VI, T>,
-        key_state: S,
-        output: &mut Output<K, VO, T>,
-    ) -> Option<S>;
+    fn on_data(&mut self, msg: DataMessage<M>, key_state: S, output: &mut Output<N>) -> Option<S>;
 
     /// Handle an epoch arriving at this operator.
     ///
@@ -46,7 +50,13 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
     ///
     /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_epoch(&mut self, epoch: &T, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) {}
+    fn on_epoch(
+        &mut self,
+        epoch: &<M as Kvt>::Timestamp,
+        state: &mut IndexMap<<M as Kvt>::Key, S>,
+        output: &mut Output<N>,
+    ) {
+    }
 
     /// Called whenever this operator is scheduled. There is no guarantee on whether this function
     /// will be called before or after other handler functions.
@@ -57,107 +67,160 @@ pub trait StatefulLogic<K, VI, T, VO, S>: 'static {
     ///
     /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_schedule(&mut self, state: &mut IndexMap<K, S>, output: &mut Output<K, VO, T>) {}
+    fn on_schedule(&mut self, state: &mut IndexMap<<M as Kvt>::Key, S>, output: &mut Output<N>) {}
 }
-impl<X, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for X
+impl<M, N, S, X> StatefulLogic<M, N, S> for X
 where
-    for<'a> X: FnMut(DataMessage<K, VI, T>, S, &'a mut Output<K, VO, T>) -> Option<S> + 'static,
-    K: MaybeKey,
-    VO: MaybeData,
-    T: MaybeTime,
+    M: Kvt,
+    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
+    for<'a> X: FnMut(DataMessage<M>, S, &'a mut Output<N>) -> Option<S> + 'static,
 {
-    fn on_data(
-        &mut self,
-        msg: DataMessage<K, VI, T>,
-        key_state: S,
-        output: &mut Output<K, VO, T>,
-    ) -> Option<S> {
+    fn on_data(&mut self, msg: DataMessage<M>, key_state: S, output: &mut Output<N>) -> Option<S> {
         self(msg, key_state, output)
     }
 }
 
 /// Append a stateful operator to the stream
-pub trait StatefulOp<K, VI, T>: super::sealed::Sealed {
+pub trait StatefulOp<M: Kvt, N: Kvt>: Sealed {
     /// Append an arbitrary stateful operator to the datastream.
-    fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_op<L: StatefulLogic<M, N, S>, S: State + Default + 'static>(
         self,
-        name: &str,
-        logic: impl StatefulLogic<K, VI, T, VO, S>,
-    ) -> StreamBuilder<K, VO, T>;
+        name: impl Into<String>,
+        logic: L,
+    ) -> StreamBuilder<N>;
 }
 
-impl<K, VI, T> StatefulOp<K, VI, T> for StreamBuilder<K, VI, T>
+impl<M, N> StatefulOp<M, N> for StreamBuilder<M>
 where
-    K: Key + Serialize + DeserializeOwned,
-    VI: Data + Serialize + DeserializeOwned,
-    T: Timestamp,
+    M: Kvt,
+    <M as Kvt>::Key: State + Key,
+    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
 {
-    fn stateful_op<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_op<
+        L: StatefulLogic<M, N, S>,
+        S: State,
+    >(
         self,
-        name: &str,
-        logic: impl StatefulLogic<K, VI, T, VO, S>,
-    ) -> StreamBuilder<K, VO, T> {
-        let op = OperatorBuilder::built_by(name, move |ctx| build_stateful_logic(ctx, logic));
+        name: impl Into<String>,
+        logic: L,
+    ) -> StreamBuilder<N> {
+        let op = Operator::built_by(
+            name.into(),
+            StatefulLogicBuilder {
+                _io_types: PhantomData::<(M, N)>,
+                _state_type: PhantomData::<S>,
+                logic,
+            },
+        );
         self.then(op)
     }
 }
 
-fn build_stateful_logic<
-    'a, 'b,
-    K: Key + Serialize + DeserializeOwned,
-    VI,
-    T: MaybeTime,
-    VO: Clone,
-    S: Default + Serialize + DeserializeOwned + 'static,
-    L: StatefulLogic<K, VI, T, VO, S>
->(
-    context: &'a BuildContext<'b>,
-    mut logic: L,
-) -> impl Logic<K, VI, T, K, VO, T> + use <K, VI, T, VO, S, L> {
-    let mut state: IndexMap<K, S> = context.load_state().unwrap_or_default();
+#[derive(Default)]
+struct StatefulLogicBuilder<M, N, S, L> {
+    _io_types: PhantomData<(M, N)>,
+    _state_type: PhantomData<S>,
+    logic: L,
+}
 
-    move |input: &mut Input<K, VI, T>, output: &mut Output<K, VO, T>, ctx| {
-        logic.on_schedule(&mut state, output);
-        let msg = match input.recv() {
-            Some(x) => x,
-            None => return,
-        };
-        match msg {
-            Message::Data(msg) => {
-                let key = msg.key.to_owned();
-                let key_state = state.swap_remove(&key).unwrap_or_default();
-                let new_state = logic.on_data(msg, key_state, output);
-                if let Some(n) = new_state {
-                    state.insert(key.to_owned(), n);
-                }
-            }
-            Message::Interrogate(mut x) => {
-                x.add_keys(&(state.keys().map(|k| k.to_owned()).collect_vec()));
-                output.send(Message::Interrogate(x))
-            }
-            Message::Collect(mut c) => {
-                if let Some(x) = state.swap_remove(&c.key) {
-                    c.add_state(ctx.operator_id, x);
-                }
-                output.send(Message::Collect(c))
-            }
-            Message::Acquire(a) => {
-                if let Some(st) = a.take_state(&ctx.operator_id) {
-                    state.insert(st.0, st.1);
-                }
-                output.send(Message::Acquire(a))
-            }
-            Message::AbsBarrier(mut b) => {
-                b.persist(&state, &ctx.operator_id);
-                output.send(Message::AbsBarrier(b))
-            }
-            Message::Rescale(x) => output.send(Message::Rescale(x)),
-            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
-            Message::Epoch(x) => {
-                logic.on_epoch(&x, &mut state, output);
-                output.send(Message::Epoch(x))
-            }
-        };
+impl<M, N, S, L> LogicBuilder<M, N> for StatefulLogicBuilder<M, N, S, L>
+where
+    M: Kvt,
+    <M as Kvt>::Key: State + Key,
+    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
+    S: State,
+    L: StatefulLogic<M, N, S>,
+{
+    type Logic = SafeLogicWrapper<StatefulLogicWrapper<M, N, S, L>>;
+    
+    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+        let state: IndexMap<<M as Kvt>::Key, S> = ctx.load_state().await.unwrap_or_default();
+        StatefulLogicWrapper {
+            state,
+            logic: self.logic,
+            _output: PhantomData::<N>,
+        }.into_logic()
+    }
+    
+}
+
+struct StatefulLogicWrapper<M, N, S, L>
+where
+    M: Kvt,
+{
+    state: IndexMap<<M as Kvt>::Key, S>,
+    logic: L,
+    _output: PhantomData<N>,
+}
+
+impl<M, N, S, L> SafeLogic<M, N> for StatefulLogicWrapper<M, N, S, L>
+where
+    L: StatefulLogic<M, N, S>,
+    M: Kvt,
+    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
+    <M as Kvt>::Key: Key + State,
+    S: State + 'static,
+{
+    fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut OperatorContext) {
+        self.logic.on_schedule(&mut self.state, output);
+    }
+
+    fn on_data(&mut self, msg: DataMessage<M>, output: &mut Output<N>, ctx: &mut OperatorContext) {
+        let key = msg.key.to_owned();
+        let key_state = self.state.swap_remove(&key).unwrap_or_default();
+        let new_state = self.logic.on_data(msg, key_state, output);
+        if let Some(n) = new_state {
+            self.state.insert(key.to_owned(), n);
+        }
+    }
+
+    fn on_epoch(
+        &mut self,
+        epoch: <M as Kvt>::Timestamp,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        self.logic.on_epoch(&epoch, &mut self.state, output);
+    }
+
+    fn on_barrier(
+        &mut self,
+        barrier: &mut crate::snapshot::Barrier,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        barrier.persist(&self.state, &ctx.operator_id);
+    }
+
+    fn on_interrogate(
+        &mut self,
+        interrogate: &mut crate::keyed::distributed::Interrogate<<M as Kvt>::Key>,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        interrogate.add_keys(&(self.state.keys().map(|k| k.to_owned()).collect_vec()));
+    }
+
+    fn on_collect(
+        &mut self,
+        collect: &mut crate::keyed::distributed::Collect<<M as Kvt>::Key>,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        if let Some(x) = self.state.swap_remove(&collect.key) {
+            collect.add_state(ctx.operator_id, x);
+        }
+    }
+
+    fn on_acquire(
+        &mut self,
+        acquire: &mut crate::keyed::distributed::Acquire<<M as Kvt>::Key>,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        if let Some(st) = acquire.take_state(&ctx.operator_id) {
+            self.state.insert(st.0, st.1);
+        }
     }
 }
 
@@ -180,9 +243,9 @@ mod tests {
     #[test]
     fn test_interrogate() {
         // logic which always just sets the last value as state
-        let logic = |msg: DataMessage<i32, String, NoTime>,
+        let logic = |msg: DataMessage<(i32, String, NoTime)>,
                      _state: String,
-                     _output: &mut Output<i32, (), NoTime>| Some(msg.value);
+                     _output: &mut Output<(i32, (), NoTime)>| Some(msg.value);
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 0, 0..1);
@@ -257,9 +320,9 @@ mod tests {
     #[test]
     fn test_collect() {
         // logic which always just sets the last value as state
-        let logic = |msg: DataMessage<i32, String, NoTime>,
+        let logic = |msg: DataMessage<(i32, String, NoTime)>,
                      _state: String,
-                     _output: &mut Output<i32, (), NoTime>| Some(msg.value);
+                     _output: &mut Output<(i32, (), NoTime)>| Some(msg.value);
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
@@ -294,9 +357,9 @@ mod tests {
     #[test]
     fn test_collect_discarded() {
         // logic which only returns state if the String len is <= 3
-        let logic = |msg: DataMessage<i32, String, NoTime>,
+        let logic = |msg: DataMessage<(i32, String, NoTime)>,
                      _state: String,
-                     _output: &mut Output<i32, (), NoTime>| {
+                     _output: &mut Output<(i32, (), NoTime)>| {
             if msg.value.len() > 3 {
                 None
             } else {
@@ -336,9 +399,9 @@ mod tests {
     fn test_acquire_state() {
         // logic which always returns the state as a message and
         // sets the message value as state
-        let logic = |mut msg: DataMessage<i32, String, NoTime>,
+        let logic = |mut msg: DataMessage<(i32, String, NoTime)>,
                      mut state: String,
-                     output: &mut Output<i32, String, NoTime>| {
+                     output: &mut Output<(i32, String, NoTime)>| {
             std::mem::swap(&mut state, &mut msg.value);
             output.send(Message::Data(msg));
             Some(state)
@@ -368,9 +431,9 @@ mod tests {
     #[test]
     fn test_drop_key_state() {
         // logic which keeps a total per key and emits it
-        let logic = |msg: DataMessage<bool, i32, NoTime>,
+        let logic = |msg: DataMessage<(bool, i32, NoTime)>,
                      state: i32,
-                     output: &mut Output<bool, i32, NoTime>| {
+                     output: &mut Output<(bool, i32, NoTime)>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -410,9 +473,9 @@ mod tests {
     #[test]
     fn test_snapshot_state() {
         // logic which keeps a total per key and emits it
-        let logic = |msg: DataMessage<bool, i32, NoTime>,
+        let logic = |msg: DataMessage<(bool, i32, NoTime)>,
                      state: i32,
-                     output: &mut Output<bool, i32, NoTime>| {
+                     output: &mut Output<(bool, i32, NoTime)>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -439,9 +502,9 @@ mod tests {
     #[test]
     fn test_forward_system_messages() {
         // logic which does nothing
-        let logic = |_msg: DataMessage<i32, String, NoTime>,
+        let logic = |_msg: DataMessage<(i32, String, NoTime)>,
                      _state: String,
-                     _output: &mut Output<i32, (), NoTime>| None;
+                     _output: &mut Output<(i32, (), NoTime)>| None;
 
         let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
             OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);

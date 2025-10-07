@@ -1,6 +1,6 @@
 //! Example of a stateless sink writing to files on the local filesystem
 use malstrom::{
-    keyed::{partitioners::rendezvous_select, KeyDistribute},
+    keyed::{KeyDistribute, partitioners::rendezvous_select},
     operators::{Map, Sink, Source},
     runtime::SingleThreadRuntime,
     sinks::{StatefulSink, StatefulSinkImpl, StatefulSinkPartition},

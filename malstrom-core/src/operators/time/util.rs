@@ -1,17 +1,17 @@
 use crate::{
     channels::operator_io::Output,
     operators::{map::Map, split::Split},
-    stream::StreamBuilder,
-    types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
+    stream::{DirectLogic, Operator, StreamBuilder},
+    types::{DataMessage, Kvt, MaybeData, MaybeKey, Message, Timestamp},
 };
 
 use super::assign_timestamps::OnTimeLate;
 
 #[inline(always)]
-pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    prev_epoch: Option<&T>,
-    d: DataMessage<K, V, T>,
-    output: &mut Output<K, OnTimeLate<V>, T>,
+pub(super) fn handle_maybe_late_msg<M: Kvt>(
+    prev_epoch: Option<&<M as Kvt>::Timestamp>,
+    d: DataMessage<M>,
+    output: &mut Output<(<M as Kvt>::Key, OnTimeLate<<M as Kvt>::Value>, <M as Kvt>::Timestamp)>,
 ) {
     let wrapped = if let Some(prev) = prev_epoch.as_ref() {
         if **prev < d.timestamp {
@@ -26,8 +26,8 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
     output.send(Message::Data(DataMessage::new(d.key, wrapped, d.timestamp)));
 }
 
-pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    mixed: StreamBuilder<K, OnTimeLate<V>, T>,
+pub(super) fn split_mixed_stream<S, O, M: Kvt>(
+    mixed: StreamBuilder<S, O, M>,
 ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
     // create a randint so we do not get name collisions.
     // u32 because unlick u64 it works well when displayed in a

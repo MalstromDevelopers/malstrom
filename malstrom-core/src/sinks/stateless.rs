@@ -3,43 +3,55 @@ use std::marker::PhantomData;
 use crate::{
     channels::operator_io::{Input, Output},
     operators::StreamSink,
-    stream::{OperatorBuilder, StreamBuilder},
-    types::{Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, Timestamp},
+    stream::{Logic, Malstrom as _, Operator, OperatorContext, StreamBuilder},
+    types::{Data, DataMessage, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, Timestamp},
 };
 
 /// A sink emitting records not hold any state (or only ephemeral state)
-pub struct StatelessSink<K, V, T, S: StatelessSinkImpl<K, V, T>>(S, PhantomData<(K, V, T)>);
-impl<K, V, T, S> StatelessSink<K, V, T, S>
+pub struct StatelessSink<In: Kvt, SinkImpl: StatelessSinkImpl<In>>{
+    sink_impl: SinkImpl,
+    _in_type: PhantomData<In>
+}
+
+impl<In, SinkImpl> StatelessSink<In, SinkImpl>
 where
-    S: StatelessSinkImpl<K, V, T>,
+    SinkImpl: StatelessSinkImpl<In>,
+    In: Kvt
 {
     /// Create a new stateless sink by wrapping a sink implementation
-    pub fn new(sink: S) -> Self {
-        Self(sink, PhantomData)
+    pub fn new(sink: SinkImpl) -> Self {
+        Self{sink_impl: sink, _in_type: PhantomData}
     }
 }
 
 /// Implementation of a stateless stream sink
-pub trait StatelessSinkImpl<K, V, T>: 'static {
+pub trait StatelessSinkImpl<M: Kvt>: 'static {
     /// Emit a single record
-    fn sink(&mut self, msg: DataMessage<K, V, T>);
+    fn sink(&mut self, msg: DataMessage<M>);
 }
 
-impl<K, V, T, S> StreamSink<K, V, T> for StatelessSink<K, V, T, S>
+impl<M, S> StreamSink<M> for StatelessSink<M, S>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
-    S: StatelessSinkImpl<K, V, T>,
+    M: Kvt,
+    S: StatelessSinkImpl<M>,
 {
-    fn consume_stream(mut self, name: &str, builder: StreamBuilder<K, V, T>) {
-        builder.then(OperatorBuilder::direct(
-            name,
-            move |input: &mut Input<K, V, T>, _output: &mut Output<NoKey, NoData, NoTime>, _ctx| {
-                if let Some(Message::Data(d)) = input.recv() {
-                    self.0.sink(d)
-                }
-            },
+    fn consume_stream(self, name: &str, builder: StreamBuilder<M>) {
+        builder.then(Operator::direct(
+            name.into(),
+            self,
         ));
+    }
+}
+
+impl<M, S> Logic<M, ()> for StatelessSink<M, S> where M: Kvt, S: StatelessSinkImpl<M> {
+    async fn apply(
+        &mut self,
+        input: &mut Input<M>,
+        output: &mut Output<()>,
+        ctx: &mut OperatorContext<'_>,
+    ) {
+        if let Some(Message::Data(d)) = input.recv() {
+            self.sink_impl.sink(d);
+        }
     }
 }

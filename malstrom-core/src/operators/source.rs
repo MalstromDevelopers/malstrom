@@ -1,10 +1,10 @@
 use crate::{
-    stream::StreamBuilder,
-    types::{Data, MaybeKey, NoData, NoKey, NoTime, Timestamp},
+    stream::{InitialStreamBuilder, Malstrom, StreamBuilder},
+    types::{Data, Kvt, MaybeKey, NoData, NoKey, NoTime, Sealed, Timestamp},
 };
 
 /// Produce new messages into a datastream.
-pub trait Source<K, V, T, S>: super::sealed::Sealed {
+pub trait Source<M: Kvt, S>: Sealed {
     /// Produce new messages into a stream. This method can only be called
     /// on a stream which does not yet have any other source. To use multiple sources
     /// create multiple streams and merge them by calling (.union())[StreamBuilder::union].
@@ -35,7 +35,7 @@ pub trait Source<K, V, T, S>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn source(self, name: &str, source: S) -> StreamBuilder<K, V, T>;
+    fn source(self, name: &str, source: S) -> StreamBuilder<M>;
 }
 
 #[diagnostic::on_unimplemented(message = "Not a Source: 
@@ -43,24 +43,18 @@ pub trait Source<K, V, T, S>: super::sealed::Sealed {
 /// A stream input which produces messages, usually reading them from some external system.
 /// For users it is normally not necessary to implement this trait unless they are writing
 /// custom inputs for sources which Malstrom does not (yet) support.
-pub trait StreamSource<K, V, T> {
+pub trait StreamSource<M: Kvt> {
     /// Turn this source into a stream by consuming the given stream builder.
     /// Source operators **must** read their inputs and forward all system messages downstream.
-    fn into_stream(
-        self,
-        name: &str,
-        builder: StreamBuilder<NoKey, NoData, NoTime>,
-    ) -> StreamBuilder<K, V, T>;
+    fn into_stream(self, name: &str, builder: InitialStreamBuilder) -> StreamBuilder<M>;
 }
 
-impl<K, V, T, S> Source<K, V, T, S> for StreamBuilder<NoKey, NoData, NoTime>
+impl<M, S> Source<M, S> for InitialStreamBuilder
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
-    S: StreamSource<K, V, T>,
+    M: Kvt,
+    S: StreamSource<M>,
 {
-    fn source(self, name: &str, source: S) -> StreamBuilder<K, V, T> {
+    fn source(self, name: &str, source: S) -> StreamBuilder<M> {
         source.into_stream(name, self)
     }
 }

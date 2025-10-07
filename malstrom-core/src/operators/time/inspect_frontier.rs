@@ -1,5 +1,5 @@
 use crate::channels::operator_io::Input;
-use crate::stream::OperatorBuilder;
+use crate::stream::Operator;
 use crate::stream::StreamBuilder;
 
 use crate::stream::OperatorContext;
@@ -30,7 +30,7 @@ where
         name: &str,
         mut inspector: impl FnMut(&T, &OperatorContext) + 'static,
     ) -> StreamBuilder<K, V, T> {
-        self.then(OperatorBuilder::direct(
+        self.then(Operator::direct(
             name,
             move |input: &mut Input<K, V, T>, output, ctx| {
                 if let Some(msg) = input.recv() {

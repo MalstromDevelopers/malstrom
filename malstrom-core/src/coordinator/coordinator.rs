@@ -8,7 +8,7 @@
 //!
 //! There is always one (and only one) Coordinator per job.
 use super::{
-    communication::{setup_comm, SetupCommunicationError},
+    communication::{SetupCommunicationError, setup_comm},
     state::{FromSerializedError, WorkerPhase, WorkerState},
     types::CoordinationMessage,
 };
@@ -20,12 +20,12 @@ use crate::{
         watchmap::ConditionIter,
     },
     snapshot::{
-        deserialize_state, serialize_state, PersistenceBackend, PersistenceClient, SnapshotVersion,
+        PersistenceBackend, PersistenceClient, SnapshotVersion, deserialize_state, serialize_state,
     },
     types::WorkerId,
 };
 use async_trait::async_trait;
-use futures::{future::join_all, TryFutureExt};
+use futures::{TryFutureExt, future::join_all};
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use std::sync::Mutex;
@@ -134,7 +134,9 @@ async fn auto_snapshot(snapshot_interval: Duration, req_tx: flume::Sender<Coordi
         match CoordinatorRequest::send(RequestOperation::Snapshot, req_tx.clone()).await {
             Ok(_) => info!("Completed automatic snapshot"),
             Err(CoordinatorRequestError::NotRunning) => {
-                error!("Snapshot skipped, coordinator not running. No further snapshots will be attempted");
+                error!(
+                    "Snapshot skipped, coordinator not running. No further snapshots will be attempted"
+                );
                 return;
             }
             Err(CoordinatorRequestError::ConcurrentOperation(e)) => {

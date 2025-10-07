@@ -13,7 +13,7 @@ use crate::{
     worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
-use super::{communication::InterThreadCommunication, Shared};
+use super::{Shared, communication::InterThreadCommunication};
 
 /// Runs all dataflows on multiple threads within one machine
 ///

@@ -2,7 +2,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     operators::sealed::Sealed,
-    stream::{OperatorBuilder, StreamBuilder},
+    stream::{Operator, StreamBuilder},
     types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
 };
 
@@ -70,7 +70,7 @@ where
         name: &str,
         mut r#gen: impl FnMut(&DataMessage<K, V, T>, &Option<T>) -> Option<T> + 'static,
     ) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
-        let operator = OperatorBuilder::built_by(name, |build_context| {
+        let operator = Operator::built_by(name, |build_context| {
             let mut prev_epoch: Option<T> = build_context.load_state();
 
             move |input, output, ctx| {

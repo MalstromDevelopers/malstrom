@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     runtime::{
-        communication::{CommunicationBackendError, CoordinatorWorkerComm},
         CommunicationClient,
+        communication::{CommunicationBackendError, CoordinatorWorkerComm},
     },
     types::WorkerId,
 };

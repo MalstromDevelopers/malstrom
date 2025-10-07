@@ -27,25 +27,38 @@ impl<T: MaybeTime + Distributable> DistTimestamp for T {}
 
 pub(super) type Version = u64;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(super) enum NetworkMessage<K, V, T> {
-    Data(NetworkDataMessage<K, V, T>),
-    Epoch(T),
+#[derive(Serialize, Deserialize, Clone)]
+pub(super) enum NetworkMessage<M: Kvt> {
+    #[serde(bound(
+        serialize = "M::Key: Serialize, M::Value: Serialize, M::Timestamp: Serialize",
+        deserialize = "M::Key: Deserialize<'de>, M::Value: Deserialize<'de>, M::Timestamp: Deserialize<'de>"
+    ))]
+    Data(NetworkDataMessage<M>),
+    #[serde(bound(serialize = "M::Timestamp: Serialize", deserialize = "M::Timestamp: Deserialize<'de>"))]
+    Epoch(<M as Kvt>::Timestamp),
     BarrierMarker,
     SuspendMarker,
-    Acquire(NetworkAcquire<K>),
+    #[serde(bound(serialize = "M::Key: Serialize", deserialize = "M::Key: Deserialize<'de>"))]
+    Acquire(NetworkAcquire<<M as Kvt>::Key>),
     Upgrade(Version),
     AckUpgrade(Version),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(super) struct NetworkDataMessage<K, V, T> {
-    pub content: DataMessage<K, V, T>,
+#[derive(Serialize, Deserialize, Clone)]
+pub(super) struct NetworkDataMessage<M: Kvt> {
+    #[serde(bound(
+        serialize = "M::Key: Serialize, M::Value: Serialize, M::Timestamp: Serialize",
+        deserialize = "M::Key: Deserialize<'de>, M::Value: Deserialize<'de>, M::Timestamp: Deserialize<'de>"
+    ))]
+    pub content: DataMessage<M>,
     pub version: Version,
 }
 
-impl<K, V, T> NetworkDataMessage<K, V, T> {
-    pub(super) fn new(content: DataMessage<K, V, T>, version: Version) -> Self {
+impl<M> NetworkDataMessage<M>
+where
+    M: Kvt,
+{
+    pub(super) fn new(content: DataMessage<M>, version: Version) -> Self {
         Self { content, version }
     }
 }

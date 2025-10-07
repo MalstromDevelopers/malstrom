@@ -1,0 +1,5 @@
+[build]
+rustflags = [
+    "-A", "warnings",
+    "--cfg", "tokio_unstable"
+]

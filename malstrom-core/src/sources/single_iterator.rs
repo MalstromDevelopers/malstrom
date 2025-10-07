@@ -51,7 +51,7 @@ impl<T> SingleIteratorSource<T> {
     }
 }
 
-impl<V> StatelessSourceImpl<V, usize> for SingleIteratorSource<V>
+impl<V> StatelessSourceImpl<(NoKey, V, usize)> for SingleIteratorSource<V>
 where
     V: Data,
 {
@@ -71,7 +71,7 @@ where
 
 pub struct SingleIteratorPartition<V>(Peekable<Enumerate<Box<dyn Iterator<Item = V>>>>);
 
-impl<V> StatelessSourcePartition<V, usize> for SingleIteratorPartition<V> {
+impl<V> StatelessSourcePartition<(NoKey, V, usize)> for SingleIteratorPartition<V> where V: Data {
     fn poll(&mut self) -> Option<(V, usize)> {
         self.0.next().map(|x| (x.1, x.0))
     }
@@ -140,9 +140,9 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        stream::OperatorBuilder,
-        testing::get_test_rt,
+        stream::Operator,
         testing::VecSink,
+        testing::get_test_rt,
         types::{Message, NoKey},
     };
 
@@ -200,7 +200,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(0..10)),
                 )
-                .then(OperatorBuilder::direct(
+                .then(Operator::direct(
                     "sink-epochs",
                     move |input: &mut Input<NoKey, i32, usize>, output, _ctx| match input.recv() {
                         Some(Message::Epoch(x)) => {

@@ -1,6 +1,6 @@
 use crate::{
     operators::sealed::Sealed,
-    stream::{OperatorBuilder, StreamBuilder},
+    stream::{Operator, StreamBuilder},
     types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
@@ -36,7 +36,7 @@ where
         name: &str,
         mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
     ) -> NeedsEpochs<K, V, TO> {
-        let operator = OperatorBuilder::direct(name, move |input, output, _| {
+        let operator = Operator::direct(name, move |input, output, _| {
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Data(d) => {
@@ -70,7 +70,7 @@ mod tests {
         operators::{GenerateEpochs, Sink, Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        stream::OperatorBuilder,
+        stream::Operator,
         testing::get_test_rt,
         testing::VecSink,
         types::{MaybeData, MaybeTime, Message, NoKey},
@@ -82,13 +82,13 @@ mod tests {
     fn epoch_collector<K, V, T>(
         name: &str,
         collector: VecSink<T>,
-    ) -> OperatorBuilder<K, V, T, K, V, T>
+    ) -> Operator<K, V, T, K, V, T>
     where
         K: MaybeKey,
         V: MaybeData,
         T: MaybeTime + Clone,
     {
-        OperatorBuilder::direct(name, move |input: &mut Input<K, V, T>, output, _| {
+        Operator::direct(name, move |input: &mut Input<K, V, T>, output, _| {
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Epoch(e) => {
@@ -204,7 +204,7 @@ mod tests {
                 .assign_timestamps("value-as-ts", |x| x.value)
                 .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
 
-            ontime.then(OperatorBuilder::direct(
+            ontime.then(Operator::direct(
                 "collect-msgs",
                 move |input: &mut Input<NoKey, i32, i32>, out, _| {
                     match input.recv() {

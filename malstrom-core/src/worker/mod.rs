@@ -5,19 +5,19 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Mutex;
 
-use crate::channels::operator_io::{full_broadcast, link, merge_inputs, Input, Output};
-use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
+use crate::channels::operator_io::{Input, Output, full_broadcast, link, merge_inputs};
 use crate::coordinator::CoordinatorExecutionError;
+use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
 use crate::snapshot::{Barrier, NoPersistence, PersistenceBackend, PersistenceClient};
-use crate::stream::StreamBuilder;
-use crate::stream::{BuildContext, BuildableOperator, RunnableOperator};
+use crate::stream::BuildContext;
+use crate::stream::{BuildableOperator, InitialStreamBuilder, RunnableOperator, StreamBuilder};
 use crate::types::{
     MaybeData, MaybeKey, Message, NoData, NoKey, RescaleMessage, SuspendMarker, WorkerId,
 };
 use crate::types::{MaybeTime, NoTime};
 use indexmap::IndexSet;
 use thiserror::Error;
-use tracing::{info, span, Level};
+use tracing::{Level, info, span};
 
 use crate::runtime::communication::CommunicationBackendError;
 use crate::runtime::runtime_flavor::CommunicationError;
@@ -31,7 +31,7 @@ pub struct WorkerBuilder<F, P> {
     inner: Rc<Mutex<InnerRuntimeBuilder>>,
     flavor: F,
     persistence: P,
-    root_stream: Output<NoKey, NoData, NoTime>,
+    root_stream: Output<()>,
 }
 
 impl<F, P> WorkerBuilder<F, P>
@@ -58,16 +58,16 @@ where
 pub trait StreamProvider {
     /// Create a new empty stream. This stream will not contain any data.
     /// Call `.source()` on the stream to add a source.
-    fn new_stream(&mut self) -> StreamBuilder<NoKey, NoData, NoTime>;
+    fn new_stream(&mut self) -> InitialStreamBuilder;
 }
 
 impl<F, P> StreamProvider for WorkerBuilder<F, P> {
-    fn new_stream(&mut self) -> StreamBuilder<NoKey, NoData, NoTime> {
+    fn new_stream(&mut self) -> InitialStreamBuilder {
         // link our new stream to the root stream we will build later
         // so it can receive system messages
         let mut receiver = Input::new_unlinked();
         link(&mut self.root_stream, &mut receiver);
-        StreamBuilder::from_receiver(receiver, self.inner.clone())
+        InitialStreamBuilder::new(receiver, self.inner.clone())
     }
 }
 
@@ -88,6 +88,7 @@ where
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
+
         let ref_count = Rc::strong_count(&self.inner);
         let inner = Rc::try_unwrap(self.inner)
             .map_err(|_| WorkerExecutionError::UnfinishedStreams(ref_count - 1))?;
@@ -111,6 +112,8 @@ where
             None => Rc::new(NoPersistence) as Rc<dyn PersistenceClient>,
         };
 
+        let rt = tokio::runtime::LocalRuntime::new()?;
+        let handle = rt.handle();
         let mut operators = vec![];
         #[allow(clippy::unwrap_used)]
         operators.extend(inner.into_inner().unwrap().finish());
@@ -132,7 +135,7 @@ where
                     &mut communication_backend,
                     buildinfo.worker_set.clone(),
                 );
-                Result::<RunnableOperator, WorkerExecutionError>::Ok(x.into_runnable(&mut ctx))
+                Result::<RunnableOperator, WorkerExecutionError>::Ok(x.into_runnable(&handle, &mut ctx))
             })
             .collect::<Result<Vec<RunnableOperator>, WorkerExecutionError>>()?;
         let mut worker = Worker {
@@ -140,9 +143,10 @@ where
             operators,
             communication: communication_backend,
             persistence: self.persistence,
+            rt,
         };
         coordinator.send(WorkerMessage::BuildComplete);
-
+        
         let coordinator = rt.block_on(async move {
             match coordinator.recv_async().await {
                 CoordinationMessage::StartExecution => coordinator,
@@ -182,11 +186,11 @@ pub(crate) struct InnerRuntimeBuilder {
     operators: Vec<Box<dyn BuildableOperator>>,
 }
 impl InnerRuntimeBuilder {
-    pub(crate) fn add_operators(
+    pub(crate) fn add_operator(
         &mut self,
-        operators: impl IntoIterator<Item = Box<dyn BuildableOperator>>,
+        operator: Box<dyn BuildableOperator>,
     ) {
-        self.operators.extend(operators)
+        self.operators.push(operator)
     }
     // destroy this builder and return the operators
     fn finish(self) -> Vec<Box<dyn BuildableOperator>> {
@@ -194,21 +198,22 @@ impl InnerRuntimeBuilder {
     }
 }
 
-/// Unions N streams with identical output types into a single stream
-pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
-    runtime: Rc<Mutex<InnerRuntimeBuilder>>,
-    streams: impl Iterator<Item = StreamBuilder<K, V, T>>,
-) -> StreamBuilder<K, V, T> {
-    let stream_receivers = streams.map(|x| x.finish_pop_tail()).collect();
-    let merged = merge_inputs(stream_receivers);
-    StreamBuilder::from_receiver(merged, runtime)
-}
+// /// Unions N streams with identical output types into a single stream
+// pub(crate) fn union<K: MaybeKey, V: MaybeData, T: MaybeTime>(
+//     runtime: Rc<Mutex<InnerRuntimeBuilder>>,
+//     streams: impl Iterator<Item = StreamBuilder<K, V, T>>,
+// ) -> StreamBuilder<K, V, T> {
+//     let stream_receivers = streams.map(|x| x.finish_pop_tail()).collect();
+//     let merged = merge_inputs(stream_receivers);
+//     StreamBuilder::from_receiver(merged, runtime)
+// }
 
 struct Worker<C, P> {
     worker_id: WorkerId,
     operators: Vec<RunnableOperator>,
     communication: C,
     persistence: P,
+    rt: tokio::runtime::LocalRuntime,
 }
 impl<C, P> Worker<C, P>
 where
@@ -225,9 +230,9 @@ where
             if op.is_suspended() {
                 continue;
             }
-            op.step(&mut self.communication);
+            op.step(&mut self.communication, &self.rt);
             while op.has_queued_work() {
-                op.step(&mut self.communication);
+                op.step(&mut self.communication, &self.rt);
             }
             all_done &= op.is_finalized();
         }
@@ -239,7 +244,7 @@ where
     /// be the case
     fn execute(
         &mut self,
-        root: &mut Output<NoKey, NoData, NoTime>,
+        root: &mut Output<()>,
         coordinator: CommunicationClient<WorkerMessage, CoordinationMessage>,
     ) -> CommunicationClient<WorkerMessage, CoordinationMessage> {
         coordinator.send(WorkerMessage::ExecutionStarted);
@@ -279,7 +284,7 @@ where
 }
 
 fn perform_reconfig(
-    output: &mut Output<NoKey, NoData, NoTime>,
+    output: &mut Output<()>,
     new_set: IndexSet<WorkerId>,
     new_version: u64,
     schedule_fn: &mut impl FnMut() -> bool,
@@ -292,7 +297,7 @@ fn perform_reconfig(
 }
 
 fn perform_snapshot<P>(
-    output: &mut Output<NoKey, NoData, NoTime>,
+    output: &mut Output<()>,
     persistence_client: P,
     schedule_fn: &mut impl FnMut() -> bool,
 ) where
@@ -306,7 +311,7 @@ fn perform_snapshot<P>(
 }
 
 fn perform_suspend(
-    output: &mut Output<NoKey, NoData, NoTime>,
+    output: &mut Output<()>,
     schedule_fn: &mut impl FnMut() -> bool,
 ) {
     let suspend = SuspendMarker::default();

@@ -1,10 +1,10 @@
 use crate::{
-    stream::StreamBuilder,
-    types::{Data, MaybeKey, Timestamp},
+    stream::{Malstrom, StreamBuilder},
+    types::{Data, Kvt, MaybeKey, Sealed, Timestamp},
 };
 
 /// Output messages from a Malstrom stream somewhere
-pub trait Sink<K, V, T, S>: super::sealed::Sealed {
+pub trait Sink<M, S>: Sealed {
     /// Sink all messages in this stream to the given output.
     /// This will consume the messages. If you whish to write to multiple outputs,
     /// consider calling [.cloned()](crate::operators::Cloned::cloned) on the stream.
@@ -43,17 +43,15 @@ pub trait Sink<K, V, T, S>: super::sealed::Sealed {
 /// custom outputs for sinks which Malstrom does not (yet) support.
 #[diagnostic::on_unimplemented(message = "Not a Sink: 
     You might need to wrap this in `StatefulSink::new` or `StatelessSink::new`")]
-pub trait StreamSink<K, V, T> {
+pub trait StreamSink<M: Kvt> {
     /// Consume a datastream to the end.
-    fn consume_stream(self, name: &str, builder: StreamBuilder<K, V, T>);
+    fn consume_stream(self, name: &str, builder: StreamBuilder<M>);
 }
 
-impl<K, V, T, S> Sink<K, V, T, S> for StreamBuilder<K, V, T>
+impl<M, S> Sink<M, S> for StreamBuilder<M>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
-    S: StreamSink<K, V, T>,
+    M: Kvt,
+    S: StreamSink<M>,
 {
     fn sink(self, name: &str, sink: S) {
         sink.consume_stream(name, self)

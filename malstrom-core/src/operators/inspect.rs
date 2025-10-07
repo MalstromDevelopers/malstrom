@@ -1,5 +1,5 @@
 use crate::{
-    stream::{OperatorBuilder, OperatorContext, StreamBuilder},
+    stream::{Operator, OperatorContext, StreamBuilder},
     types::{Data, DataMessage, MaybeKey, Message, Timestamp},
 };
 
@@ -63,7 +63,7 @@ where
         mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
     ) -> StreamBuilder<K, V, T> {
         let operator =
-            OperatorBuilder::direct(name, move |input, output, ctx| match input.recv() {
+            Operator::direct(name, move |input, output, ctx| match input.recv() {
                 Some(Message::Data(d)) => {
                     inspector(&d, ctx);
                     output.send(Message::Data(d));

@@ -8,7 +8,7 @@ use super::{PersistenceBackend, PersistenceClient, SnapshotVersion};
 use crate::types::WorkerId;
 pub use object_store;
 use object_store::PutPayload;
-use object_store::{path::Path, ObjectStore};
+use object_store::{ObjectStore, path::Path};
 use slatedb::db::Db;
 use thiserror::Error;
 use tokio::runtime::{Handle, Runtime};

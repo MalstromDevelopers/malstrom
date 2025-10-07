@@ -3,7 +3,21 @@
 mod builder;
 mod operator;
 
-pub use builder::StreamBuilder;
-pub use operator::{BuildContext, Logic, LogicWrapper, OperatorBuilder, OperatorContext};
+pub use builder::{InitialStreamBuilder, Malstrom, StreamBuilder};
+pub use operator::{BuildContext, DirectLogic, LogicBuilder, Operator, OperatorContext};
+pub(crate) use operator::{Logic, SafeLogic, SafeLogicWrapper};
+// pub(super) use operator::{AppendableOperator, BuildableOperator, RunnableOperator};
+pub(super) use operator::{BuildableOperator, RunnableOperator};
 
-pub(super) use operator::{AppendableOperator, BuildableOperator, RunnableOperator};
+use crate::{
+    channels::operator_io::{Input, Output},
+    types::Kvt,
+};
+
+trait GetOutput<M: Kvt> {
+    fn get_output_mut(&mut self) -> &mut Output<M>;
+}
+
+trait GetInput<M: Kvt> {
+    fn get_input_mut(&mut self) -> &mut Input<M>;
+}

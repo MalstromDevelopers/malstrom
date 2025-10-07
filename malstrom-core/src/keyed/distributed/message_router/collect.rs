@@ -1,4 +1,7 @@
+use std::hash::Hash;
+
 use indexmap::IndexSet;
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     channels::operator_io::Output,
@@ -8,28 +11,30 @@ use crate::{
 };
 
 use super::super::types::*;
-use super::{finished::FinishedRouter, MessageRouter, NetworkMessage};
+use super::{MessageRouter, NetworkMessage, finished::FinishedRouter};
 
-#[derive(Debug)]
-pub(crate) struct CollectRouter<K, V, T> {
+pub(crate) struct CollectRouter<M: Kvt> {
     pub(super) version: Version,
-    pub(super) whitelist: IndexSet<K>, // pub for testing
+    pub(super) whitelist: IndexSet<<M as Kvt>::Key>, // pub for testing
     old_worker_set: IndexSet<WorkerId>,
     pub(super) new_worker_set: IndexSet<WorkerId>,
     /// Datamessages for the key we are currently collecting
-    buffered: Vec<DataMessage<K, V, T>>,
-    current_collect: Option<Collect<K>>,
+    buffered: Vec<DataMessage<M>>,
+    current_collect: Option<Collect<<M as Kvt>::Key>>,
     // these are control messages we can not handle while rescaling
     // so we will buffer them, waiting for the normal dist to deal with them
     trigger: RescaleMessage,
 }
 
-impl<K, V, T> CollectRouter<K, V, T>
+impl<M> CollectRouter<M>
 where
-    K: Key,
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     pub(super) fn new(
-        whitelist: IndexSet<K>,
+        whitelist: IndexSet<<M as Kvt>::Key>,
         old_worker_set: IndexSet<WorkerId>,
         new_worker_set: IndexSet<WorkerId>,
         trigger: RescaleMessage,
@@ -47,11 +52,11 @@ where
 
     pub(super) fn route_message(
         &mut self,
-        msg: DataMessage<K, V, T>,
-        partitioner: WorkerPartitioner<K>,
+        msg: DataMessage<M>,
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         this_worker: WorkerId,
         sender: WorkerId,
-    ) -> Option<(DataMessage<K, V, T>, WorkerId)> {
+    ) -> Option<(DataMessage<M>, WorkerId)> {
         let key = &msg.key;
         let new_target = partitioner(key, &self.new_worker_set);
 
@@ -85,18 +90,19 @@ where
     }
 }
 
-impl<K, V, T> CollectRouter<K, V, T>
+impl<M> CollectRouter<M>
 where
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     pub(crate) fn lifecycle(
         mut self,
-        partitioner: WorkerPartitioner<K>,
-        output: &mut Output<K, V, T>,
-        remotes: &Remotes<K, V, T>,
-    ) -> MessageRouter<K, V, T> {
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
+        output: &mut Output<M>,
+        remotes: &Remotes<M>,
+    ) -> MessageRouter<M> {
         // try finishing the state collection
         match self.current_collect.take().map(NetworkAcquire::try_from) {
             Some(Ok(acquire)) => {
@@ -133,7 +139,7 @@ where
         }
     }
 
-    fn set_and_emit_collect(&mut self, output: &mut Output<K, V, T>) {
+    fn set_and_emit_collect(&mut self, output: &mut Output<M>) {
         if self.current_collect.is_none() {
             self.current_collect = self.whitelist.pop().map(Collect::new).inspect(|collect| {
                 output.send(Message::Collect(collect.clone()));
@@ -146,7 +152,7 @@ where
 mod test {
 
     use crate::{
-        channels::operator_io::{full_broadcast, link, Input},
+        channels::operator_io::{Input, full_broadcast, link},
         runtime::CommunicationClient,
         testing::{FakeCommunication, SentMessage},
     };
@@ -158,8 +164,8 @@ mod test {
         *s.get_index(i % s.len()).unwrap()
     }
 
-    fn get_input_output<K: MaybeKey, V: MaybeData, T: MaybeTime>(
-    ) -> (Output<K, V, T>, Input<K, V, T>) {
+    fn get_input_output<M: Kvt>()
+    -> (Output<M>, Input<M>) {
         let mut sender = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
@@ -168,7 +174,7 @@ mod test {
 
     #[test]
     fn sets_version_to_trigger() {
-        let dist: CollectRouter<i32, NoData, usize> = CollectRouter::new(
+        let dist: CollectRouter<(i32, NoData, usize)> = CollectRouter::new(
             IndexSet::new(),
             IndexSet::new(),
             IndexSet::new(),
@@ -184,7 +190,7 @@ mod test {
     #[test]
     fn handle_data_rule_1_1() {
         let key = 15;
-        let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let mut dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
@@ -214,15 +220,15 @@ mod test {
     #[test]
     fn handle_data_rule_1_2() {
         let key = 15;
-        let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([key.clone()]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
             RescaleMessage::new(IndexSet::from([]), 0),
         );
 
-        let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
-        let mut remotes: Remotes<usize, i32, usize> = Remotes::new();
+        let mut comm = FakeCommunication::<NetworkMessage<(usize, i32, usize)>>::default();
+        let mut remotes: Remotes<(usize, i32, usize)> = Remotes::new();
         remotes.insert(
             1,
             (
@@ -262,7 +268,7 @@ mod test {
     ///   it under the new configuration • -> distribute via F'
     #[test]
     fn handle_data_rule_2() {
-        let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let mut dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([3]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
@@ -286,7 +292,7 @@ mod test {
     /// • if F(K) == Sender: -> pass downstream • else: distribute the message via F
     #[test]
     fn handle_data_rule_3() {
-        let mut dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let mut dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([3]),
             IndexSet::from([0, 1]),
             IndexSet::from([0]),
@@ -321,15 +327,15 @@ mod test {
     /// Should create collectors and and send them downstream
     #[test]
     fn creates_collectors() {
-        let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([1, 3, 5]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
             RescaleMessage::new(IndexSet::from([]), 0),
         );
 
-        let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
-        let mut remotes: Remotes<usize, i32, usize> = Remotes::new();
+        let mut comm = FakeCommunication::<NetworkMessage<(usize, i32, usize)>>::default();
+        let mut remotes: Remotes<(usize, i32, usize)> = Remotes::new();
         remotes.insert(
             1,
             (
@@ -359,15 +365,15 @@ mod test {
     /// Should create an acquire message and emit buffered messages
     #[test]
     fn creates_acquire_and_emits_buffers() {
-        let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::from([1]),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
             RescaleMessage::new(IndexSet::from([1]), 1),
         );
 
-        let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
-        let mut remotes: Remotes<usize, i32, usize> = Remotes::new();
+        let mut comm = FakeCommunication::<NetworkMessage<(usize, i32, usize)>>::default();
+        let mut remotes: Remotes<(usize, i32, usize)> = Remotes::new();
         remotes.insert(
             1,
             (
@@ -422,15 +428,15 @@ mod test {
     /// Should broadcast an "upgrade" message when done
     #[test]
     fn broadcast_update() {
-        let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1, 2]),
             RescaleMessage::new(IndexSet::from([1, 2]), 1),
         );
 
-        let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
-        let mut remotes: Remotes<usize, i32, usize> = Remotes::new();
+        let mut comm = FakeCommunication::<NetworkMessage<(usize, i32, usize)>>::default();
+        let mut remotes: Remotes<(usize, i32, usize)> = Remotes::new();
         remotes.insert(
             1,
             (
@@ -484,15 +490,15 @@ mod test {
     /// check we transition back to a normal dist if all routers are done
     #[test]
     fn transitions_to_normal() {
-        let dist: CollectRouter<usize, i32, usize> = CollectRouter::new(
+        let dist: CollectRouter<(usize, i32, usize)> = CollectRouter::new(
             IndexSet::new(),
             IndexSet::from([0]),
             IndexSet::from([0, 1]),
             RescaleMessage::new(IndexSet::from([1]), 555),
         );
 
-        let mut comm = FakeCommunication::<NetworkMessage<usize, i32, usize>>::default();
-        let mut remotes: Remotes<usize, i32, usize> = Remotes::new();
+        let mut comm = FakeCommunication::<NetworkMessage<(usize, i32, usize)>>::default();
+        let mut remotes: Remotes<(usize, i32, usize)> = Remotes::new();
         remotes.insert(
             1,
             (
@@ -513,6 +519,6 @@ mod test {
         remotes.get_mut(&1).unwrap().1.last_ack_version = Some(555);
 
         let dist = dist.lifecycle(partiton_index, &mut sender, &mut remotes);
-        assert!(matches!(dist, MessageRouter::Normal(_)), "{dist:?}");
+        assert!(matches!(dist, MessageRouter::Normal(_)));
     }
 }

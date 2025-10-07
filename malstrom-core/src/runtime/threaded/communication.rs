@@ -1,10 +1,10 @@
 use crate::{
     runtime::{
+        OperatorOperatorComm,
         communication::{
             BiStreamTransport, CommunicationBackendError, CoordinatorWorkerComm, TransportError,
             WorkerCoordinatorComm,
         },
-        OperatorOperatorComm,
     },
     types::{OperatorId, WorkerId},
 };
@@ -183,8 +183,8 @@ fn new_transport_pair() -> ChannelTransportContainer {
 #[cfg(test)]
 mod test {
     use crate::runtime::{
-        threaded::{InterThreadCommunication, Shared},
         OperatorOperatorComm as _,
+        threaded::{InterThreadCommunication, Shared},
     };
 
     /// check we can send and recv a single message on two transports

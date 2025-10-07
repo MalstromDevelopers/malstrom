@@ -4,18 +4,19 @@ use std::marker::PhantomData;
 use crate::{
     operators::{Source, StreamSource},
     runtime::communication::Distributable,
-    stream::StreamBuilder,
-    types::{Data, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp},
+    stream::{InitialStreamBuilder, Malstrom, StreamBuilder},
+    types::{Data, Key, Kvt, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp},
 };
 
 use super::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
 
 /// A source which provides records for processing and does not hold any state
 /// (or only ephemeral state)
-pub struct StatelessSource<V, T, S: StatelessSourceImpl<V, T>>(SourceWrapper<V, T, S>);
-impl<V, T, S> StatelessSource<V, T, S>
+pub struct StatelessSource<M: Kvt, S: StatelessSourceImpl<M>>(SourceWrapper<M, S>);
+impl<M, S> StatelessSource<M, S>
 where
-    S: StatelessSourceImpl<V, T>,
+    M: Kvt,
+    S: StatelessSourceImpl<M>,
 {
     /// Create a new stateless source from the given source implementation.
     pub fn new(source: S) -> Self {
@@ -24,7 +25,7 @@ where
 }
 
 /// Implementation of a stateless stream source
-pub trait StatelessSourceImpl<V, T>: 'static {
+pub trait StatelessSourceImpl<M: Kvt>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
@@ -33,7 +34,7 @@ pub trait StatelessSourceImpl<V, T>: 'static {
     /// Partitions may be moved to different workers, when the jobs worker set changes. Usually
     /// partitions will directly relate to some partitioning used by the external system providing
     /// the data.
-    type SourcePartition: StatelessSourcePartition<V, T>;
+    type SourcePartition: StatelessSourcePartition<M>;
 
     /// List all initial partitions for this source
     fn list_parts(&self) -> Vec<Self::Part>;
@@ -44,9 +45,9 @@ pub trait StatelessSourceImpl<V, T>: 'static {
 
 /// A single partition of a stateless source. A partition is the smallest unit of a source and may
 /// be moved to a different worker when the job's worker set changes.
-pub trait StatelessSourcePartition<V, T> {
+pub trait StatelessSourcePartition<M: Kvt> {
     /// Poll this partition, return anywhere from 0 to N new records
-    fn poll(&mut self) -> Option<(V, T)>;
+    fn poll(&mut self) -> Option<(<M as Kvt>::Value, <M as Kvt>::Timestamp)>;
 
     /// Suspend this partition.
     /// Suspend means the execution will be halted, but could continue later.
@@ -59,12 +60,12 @@ pub trait StatelessSourcePartition<V, T> {
 }
 
 /// NewType on which we can implement StatefulSourceImpl
-struct SourceWrapper<V, T, S: StatelessSourceImpl<V, T>>(S, PhantomData<(V, T)>);
-impl<S, V, T> StatefulSourceImpl<V, T> for SourceWrapper<V, T, S>
+struct SourceWrapper<M: Kvt, S: StatelessSourceImpl<M>>(S, PhantomData<M>);
+
+impl<Out, S> StatefulSourceImpl<Out> for SourceWrapper<Out, S>
 where
-    V: Data,
-    T: MaybeTime,
-    S: StatelessSourceImpl<V, T>,
+    Out: Kvt<Key = S::Part>,
+    S: StatelessSourceImpl<Out>,
 {
     type Part = S::Part;
     type PartitionState = ();
@@ -85,13 +86,14 @@ where
 
 struct PartitionWrapper<S>(S);
 
-impl<S, V, T> StatefulSourcePartition<V, T> for PartitionWrapper<S>
+impl<S, M> StatefulSourcePartition<M> for PartitionWrapper<S>
 where
-    S: StatelessSourcePartition<V, T>,
+    M: Kvt,
+    S: StatelessSourcePartition<M>,
 {
     type PartitionState = ();
 
-    fn poll(&mut self) -> Option<(V, T)> {
+    fn poll(&mut self) -> Option<(<M as Kvt>::Value, <M as Kvt>::Timestamp)> {
         self.0.poll()
     }
 
@@ -110,17 +112,13 @@ where
     }
 }
 
-impl<V, T, S> StreamSource<S::Part, V, T> for StatelessSource<V, T, S>
+impl<S, M> StreamSource<M> for StatelessSource<M, S>
 where
-    V: Data,
-    T: Timestamp,
-    S: StatelessSourceImpl<V, T>,
+    M: Kvt<Key = S::Part>,
+    M::Timestamp: Timestamp,
+    S: StatelessSourceImpl<M>,
 {
-    fn into_stream(
-        self,
-        name: &str,
-        builder: StreamBuilder<NoKey, NoData, NoTime>,
-    ) -> StreamBuilder<S::Part, V, T> {
+    fn into_stream(self, name: &str, builder: InitialStreamBuilder) -> StreamBuilder<M> {
         builder.source(name, StatefulSource::new(self.0))
     }
 }

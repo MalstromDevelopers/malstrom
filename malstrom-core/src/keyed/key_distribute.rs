@@ -1,18 +1,22 @@
+use std::marker::PhantomData;
+
+use serde::{de::DeserializeOwned, Serialize};
+
 use crate::{
-    stream::{OperatorBuilder, StreamBuilder},
-    types::{DataMessage, Key, MaybeKey},
+    stream::{BuildContext, LogicBuilder, Malstrom, Operator, StreamBuilder},
+    types::{DataMessage, Key, Kvt, MaybeKey},
 };
 
 use super::{
-    distributed::{
-        types::{DistData, DistKey, DistTimestamp, WorkerPartitioner},
-        Distributor,
-    },
     KeyLocal,
+    distributed::{
+        Distributor,
+        types::{DistData, DistKey, DistTimestamp, WorkerPartitioner},
+    },
 };
 
 /// Key a stream and distribute message to workers according to their key
-pub trait KeyDistribute<X, K: Key, V, T> {
+pub trait KeyDistribute<In: Kvt, Key: DistKey> {
     /// Turn a stream into a keyed stream and distribute
     /// messages across workers via the partitioning function.
     /// The keyed stream returned by this method is capable
@@ -21,48 +25,80 @@ pub trait KeyDistribute<X, K: Key, V, T> {
     fn key_distribute(
         self,
         name: &str,
-        key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-        partitioner: WorkerPartitioner<K>,
-    ) -> StreamBuilder<K, V, T>;
+        key_func: impl Fn(&DataMessage<In>) -> Key + 'static,
+        partitioner: WorkerPartitioner<Key>,
+    ) -> StreamBuilder<(Key, In::Value, In::Timestamp)>;
 }
 
-impl<X, K, V, T> KeyDistribute<X, K, V, T> for StreamBuilder<X, V, T>
+impl<In, Key> KeyDistribute<In, Key> for StreamBuilder<In>
 where
-    X: MaybeKey,
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+    In: Kvt,
+    In::Value: Serialize + DeserializeOwned,
+    In::Timestamp: Serialize + DeserializeOwned,
+    Key: DistKey,
 {
     fn key_distribute(
         self,
         name: &str,
-        key_func: impl Fn(&DataMessage<X, V, T>) -> K + 'static,
-        partitioner: WorkerPartitioner<K>,
-    ) -> StreamBuilder<K, V, T> {
-        self.key_local(&format!("{name}-key"), key_func)
-            .distribute(&format!("{name}-distribute"), partitioner)
+        key_func: impl Fn(&DataMessage<In>) -> Key + 'static,
+        partitioner: WorkerPartitioner<Key>,
+    ) -> StreamBuilder<(Key, In::Value, In::Timestamp)> {
+        self.key_local(format!("{name}-key"), key_func)
+            .distribute(format!("{name}-distribute"), partitioner)
     }
 }
 
-pub(crate) trait Distribute<K: Key, V, T> {
+pub(crate) trait Distribute<K: Key, M: Kvt> {
     /// Turn a stream into a keyed stream and distribute
     /// messages across workers via the partitioning function.
     /// The keyed stream returned by this method is capable
     /// of redistributing state on cluster size changes
     /// with no downtime.
-    fn distribute(self, name: &str, partitioner: WorkerPartitioner<K>) -> StreamBuilder<K, V, T>;
+    fn distribute(
+        self,
+        name: impl Into<String>,
+        partitioner: WorkerPartitioner<K>,
+    ) -> StreamBuilder<M>;
 }
 
-impl<K, V, T> Distribute<K, V, T> for StreamBuilder<K, V, T>
+impl<K, M, X> Distribute<K, M> for X
 where
+    X: Malstrom<M>,
     K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+    M: Kvt<Key = K>,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
-    fn distribute(self, name: &str, partitioner: WorkerPartitioner<K>) -> StreamBuilder<K, V, T> {
-        self.then(OperatorBuilder::built_by(name, move |ctx| {
-            let mut dist = Distributor::new(partitioner, ctx);
-            move |input, output, op_ctx| dist.run(input, output, op_ctx)
-        }))
+    fn distribute(
+        self,
+        name: impl Into<String>,
+        partitioner: WorkerPartitioner<K>,
+    ) -> StreamBuilder<M> {
+        self.then(Operator::built_by(
+            name.into(),
+            DistributorBuilder {
+                partitioner,
+                _message_type: PhantomData::<M>,
+            },
+        ))
     }
+}
+
+struct DistributorBuilder<K, M> {
+    partitioner: WorkerPartitioner<K>,
+    _message_type: PhantomData<M>,
+}
+impl<M, K> LogicBuilder<M, M> for DistributorBuilder<K, M>
+where
+    M: Kvt<Key = K>,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
+    K: Key + Serialize + DeserializeOwned
+{
+    type Logic = Distributor<M>;
+
+    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+        Distributor::<M>::new(self.partitioner, ctx).await
+    }
+    
 }

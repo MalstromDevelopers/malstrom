@@ -1,11 +1,13 @@
 use std::rc::Rc;
 
 use indexmap::IndexSet;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use super::super::types::*;
 use super::RescaleMessage;
-use super::{collect::CollectRouter, MessageRouter};
-use crate::types::{Key, WorkerId};
+use super::{MessageRouter, collect::CollectRouter};
+use crate::types::{Key, Kvt, WorkerId};
 
 #[derive(Debug)]
 pub(crate) struct InterrogateRouter<K> {
@@ -19,7 +21,7 @@ pub(crate) struct InterrogateRouter<K> {
 }
 impl<K> InterrogateRouter<K>
 where
-    K: Key,
+    K: Key + Serialize + DeserializeOwned,
 {
     pub(super) fn new(
         version: Version,
@@ -76,7 +78,7 @@ where
         }
     }
 
-    pub(crate) fn lifecycle<V, T>(self) -> MessageRouter<K, V, T> {
+    pub(crate) fn lifecycle<M>(self) -> MessageRouter<M> where M: Kvt<Key = K>, M::Value: Serialize + DeserializeOwned, M::Timestamp: Serialize + DeserializeOwned {
         match self.interrogate_msg.try_unwrap() {
             Ok(whitelist) => {
                 // interrogate is done
@@ -134,7 +136,7 @@ mod tests {
         drop(interrogate);
 
         // should create a collector since we dropped
-        let collect: MessageRouter<u64, i32, i32> = router.lifecycle();
+        let collect: MessageRouter<(u64, i32, i32)> = router.lifecycle();
         match collect {
             MessageRouter::Collect(c) => {
                 assert_eq!(c.whitelist, IndexSet::from([1, 3, 5]))
@@ -150,14 +152,14 @@ mod tests {
         let (router, interrogate) =
             InterrogateRouter::new(0, IndexSet::from([0]), trigger, index_select);
 
-        let router: MessageRouter<u64, i32, i32> = router.lifecycle();
+        let router: MessageRouter<(u64, i32, i32)> = router.lifecycle();
         let router = match router {
             MessageRouter::Interrogate(x) => x,
             _ => panic!(),
         };
 
         drop(interrogate);
-        let collect: MessageRouter<u64, i32, i32> = router.lifecycle();
+        let collect: MessageRouter<(u64, i32, i32)> = router.lifecycle();
         assert!(matches!(collect, MessageRouter::Collect(_)));
     }
 
@@ -175,7 +177,7 @@ mod tests {
         assert_eq!(target, 0);
 
         drop(interrogate);
-        let collect: MessageRouter<u64, i32, i32> = router.lifecycle();
+        let collect: MessageRouter<(u64, i32, i32)> = router.lifecycle();
         match collect {
             MessageRouter::Collect(c) => {
                 assert!(c.whitelist.contains(&43))

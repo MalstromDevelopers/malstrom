@@ -1,5 +1,5 @@
 use super::{
-    communication::{setup_comm, SetupCommunicationError, WorkerSender},
+    communication::{SetupCommunicationError, WorkerSender, setup_comm},
     watchmap::WatchMap,
 };
 use crate::{

@@ -3,33 +3,66 @@
 //! data or be control messages
 
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use std::{fmt::Debug, rc::Rc};
 
 use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::Barrier,
+    types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
 };
 
 use super::{Timestamp, WorkerId};
 
+/// A helper trait which saves us from specifying the key, value and timestamp generics
+/// everywhere
+pub trait Kvt: Clone + 'static{
+    type Key: MaybeKey;
+    type Value: MaybeData;
+    type Timestamp: MaybeTime;
+}
+
+impl<K, V, T> Kvt for (K, V, T)
+where
+    K: MaybeKey,
+    V: MaybeData,
+    T: MaybeTime,
+{
+    type Key = K;
+    type Value = V;
+    type Timestamp = T;
+}
+
+impl Kvt for () {
+    type Key = NoKey;
+    type Value = NoData;
+    type Timestamp = NoTime;
+}
+
 /// A message which gets processed in a JetStream
 /// Messages always include a timestamp and content.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DataMessage<K, V, T> {
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DataMessage<M: Kvt> {
     /// The key of the message. The message key controls how a message is distributed in a job
     /// with multiple workers. Also all state in Malstrom is keyed, so a message will (usually)
     /// only modify the state belonging to its key in stateful operators.
-    pub key: K,
+    #[serde(bound(serialize = "<M as Kvt>::Key: Serialize", deserialize = "<M as Kvt>::Key: Deserialize<'de>"))]
+    pub key: <M as Kvt>::Key,
     /// Message value
-    pub value: V,
+    #[serde(bound(serialize = "<M as Kvt>::Value: Serialize", deserialize = "<M as Kvt>::Value: Deserialize<'de>"))]
+    pub value: <M as Kvt>::Value,
     /// Message timestamp. Timestamps are logical and not necessarily related to real world time.
     /// Timestamps are useful to control ordering and out-of-orderness
-    pub timestamp: T,
+    #[serde(bound(serialize = "<M as Kvt>::Timestamp: Serialize", deserialize = "<M as Kvt>::Timestamp: Deserialize<'de>"))]
+    pub timestamp: <M as Kvt>::Timestamp,
 }
-impl<K, V, T> DataMessage<K, V, T> {
+impl<M: Kvt> DataMessage<M> {
     /// Create a new DataMessage from a key, value and timestamp
-    pub fn new(key: K, value: V, timestamp: T) -> Self {
+    pub fn new(
+        key: <M as Kvt>::Key,
+        value: <M as Kvt>::Value,
+        timestamp: <M as Kvt>::Timestamp,
+    ) -> Self {
         Self {
             timestamp,
             key,
@@ -37,17 +70,28 @@ impl<K, V, T> DataMessage<K, V, T> {
         }
     }
 }
+
+impl<M> Debug for DataMessage<M> where M: Kvt, M::Key: Debug, M::Value: Debug, M::Timestamp: Debug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataMessage").field("key", &self.key).field("value", &self.value).field("timestamp", &self.timestamp).finish()
+    }
+}
+impl<M> PartialEq for DataMessage<M> where M: Kvt, M::Key: PartialEq, M::Value: PartialEq, M::Timestamp: PartialEq {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.value == other.value && self.timestamp == other.timestamp
+    }
+}
+
 /// Content variants of a JetStream message.
 /// Most messages will be of the data flavour, i.e. data to be processed,
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
-#[derive(Debug)]
-pub enum Message<K, V, T> {
+pub enum Message<M: Kvt> {
     /// A data record flowing through the data stream
-    Data(DataMessage<K, V, T>),
+    Data(DataMessage<M>),
     /// An epoch of the contained value. No messages with a timestamp less than or equal to the
     /// timestamp of this Epoch will follow
-    Epoch(T),
+    Epoch(<M as Kvt>::Timestamp),
     /// Barrier used for asynchronous snapshotting
     AbsBarrier(Barrier),
     /// Informational message that the job is currently rescaling
@@ -57,16 +101,38 @@ pub enum Message<K, V, T> {
     SuspendMarker(SuspendMarker),
 
     /// Rescaling state movement messages
-    Interrogate(Interrogate<K>),
+    Interrogate(Interrogate<<M as Kvt>::Key>),
     /// Collect the current state for the key to be moved to another worker
-    Collect(Collect<K>),
+    Collect(Collect<<M as Kvt>::Key>),
     /// Acquire the state for the key, i.e. add it to the state managed on this worker
-    Acquire(Acquire<K>),
+    Acquire(Acquire<<M as Kvt>::Key>),
 }
+
+impl<M> Debug for Message<M> where M: Kvt, M::Key: Debug, M::Value: Debug, M::Timestamp: Debug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Data(arg0) => f.debug_tuple("Data").field(arg0).finish(),
+            Self::Epoch(arg0) => f.debug_tuple("Epoch").field(arg0).finish(),
+            Self::AbsBarrier(arg0) => f.debug_tuple("AbsBarrier").field(arg0).finish(),
+            Self::Rescale(arg0) => f.debug_tuple("Rescale").field(arg0).finish(),
+            Self::SuspendMarker(arg0) => f.debug_tuple("SuspendMarker").field(arg0).finish(),
+            Self::Interrogate(arg0) => f.debug_tuple("Interrogate").field(arg0).finish(),
+            Self::Collect(arg0) => f.debug_tuple("Collect").field(arg0).finish(),
+            Self::Acquire(arg0) => f.debug_tuple("Acquire").field(arg0).finish(),
+        }
+    }
+}
+
 macro_rules! impl_from_variants {
     ($($variant:ident($variant_type:ty)),* $(,)?) => {
         $(
-            impl<K, V, T> From<$variant_type> for Message<K, V, T> {
+            impl<M, K, V, T> From<$variant_type> for Message<M>
+            where
+                M: Kvt<Key = K, Value = V, Timestamp = T>,
+                K: MaybeKey,
+                V: MaybeData,
+                T: MaybeTime,
+            {
                 fn from(value: $variant_type) -> Self {
                     Message::$variant(value)
                 }
@@ -75,7 +141,7 @@ macro_rules! impl_from_variants {
     };
 }
 impl_from_variants!(
-    Data(DataMessage<K, V, T>),
+    Data(DataMessage<M>),
     AbsBarrier(Barrier),
     Rescale(RescaleMessage),
     SuspendMarker(SuspendMarker),
@@ -83,8 +149,9 @@ impl_from_variants!(
     Collect(Collect<K>),
     Acquire(Acquire<K>),
 );
-impl<K, V, T> From<T> for Message<K, V, T>
+impl<M, T> From<T> for Message<M>
 where
+    M: Kvt<Timestamp = T>,
     T: Timestamp,
 {
     fn from(value: T) -> Self {
@@ -131,11 +198,9 @@ impl RescaleMessage {
     }
 }
 
-impl<K, V, T> Clone for Message<K, V, T>
+impl<M> Clone for Message<M>
 where
-    K: Clone,
-    V: Clone,
-    T: Clone,
+    M: Kvt + Clone,
 {
     fn clone(&self) -> Self {
         // for some reason this could not be derived

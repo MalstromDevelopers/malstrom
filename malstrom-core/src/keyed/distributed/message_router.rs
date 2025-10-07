@@ -2,8 +2,9 @@ use collect::CollectRouter;
 use finished::FinishedRouter;
 use indexmap::IndexSet;
 use interrogate::InterrogateRouter;
+use serde::{de::DeserializeOwned, Serialize};
 
-use super::{types::*, Remotes};
+use super::{Remotes, types::*};
 use crate::{channels::operator_io::Output, types::*};
 
 mod collect;
@@ -13,17 +14,19 @@ mod normal;
 
 pub(super) use normal::NormalRouter;
 
-#[derive(Debug)]
-pub(super) enum MessageRouter<K, V, T> {
+pub(super) enum MessageRouter<M: Kvt> {
     Normal(NormalRouter),
-    Interrogate(InterrogateRouter<K>),
-    Collect(CollectRouter<K, V, T>),
+    Interrogate(InterrogateRouter<<M as Kvt>::Key>),
+    Collect(CollectRouter<M>),
     Finished(FinishedRouter),
 }
 
-impl<K, V, T> MessageRouter<K, V, T>
+impl<M> MessageRouter<M>
 where
-    K: Key,
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     pub(super) fn new(worker_set: IndexSet<WorkerId>, version: Version) -> Self {
         let normal = NormalRouter::new(worker_set, version);
@@ -32,13 +35,13 @@ where
 
     pub(super) fn route_message(
         &mut self,
-        msg: DataMessage<K, V, T>,
+        msg: DataMessage<M>,
         msg_version: Option<Version>,
-        partitioner: WorkerPartitioner<K>,
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         this_worker: WorkerId,
         sender: WorkerId,
-        remotes: &Remotes<K, V, T>,
-    ) -> Option<(DataMessage<K, V, T>, WorkerId)> {
+        remotes: &Remotes<M>,
+    ) -> Option<(DataMessage<M>, WorkerId)> {
         if msg_version.is_some_and(|x| x > self.get_version()) {
             return Some((msg, this_worker));
         }
@@ -77,18 +80,19 @@ where
     }
 }
 
-impl<K, V, T> MessageRouter<K, V, T>
+impl<M> MessageRouter<M>
 where
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     pub(super) fn handle_rescale(
         self,
         message: RescaleMessage,
-        partitioner: WorkerPartitioner<K>,
-        output: &mut Output<K, V, T>,
-    ) -> MessageRouter<K, V, T> {
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
+        output: &mut Output<M>,
+    ) -> MessageRouter<M> {
         match self {
             MessageRouter::Normal(normal_router) => {
                 let (new_router, interrogate) = InterrogateRouter::new(
@@ -107,11 +111,11 @@ where
     }
 
     pub(super) fn lifecycle(
-        self: MessageRouter<K, V, T>,
-        partitioner: WorkerPartitioner<K>,
-        output: &mut Output<K, V, T>,
-        remotes: &mut Remotes<K, V, T>,
-    ) -> MessageRouter<K, V, T> {
+        self: MessageRouter<M>,
+        partitioner: WorkerPartitioner<<M as Kvt>::Key>,
+        output: &mut Output<M>,
+        remotes: &mut Remotes<M>,
+    ) -> MessageRouter<M> {
         match self {
             MessageRouter::Normal(normal_router) => MessageRouter::Normal(normal_router),
             MessageRouter::Interrogate(interrogate_router) => interrogate_router.lifecycle(),
@@ -136,7 +140,7 @@ mod tests {
     /// Check messages are always returned locally if they have a higher version
     #[test]
     fn higher_version(this_worker in 0u64..3, sender in 0u64..3, key in 0u64..100) {
-        let remotes = Remotes::default();
+        let remotes = Remotes::<(u64, i32, i32)>::default();
         let mut normal_router = MessageRouter::Normal(NormalRouter::new(IndexSet::from([0, 1, 2]), 33));
         let mut interrogate_router = MessageRouter::Interrogate(InterrogateRouter::new(
             33,

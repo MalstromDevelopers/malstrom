@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 mod message_router;
 pub mod types;
@@ -13,85 +14,44 @@ use crate::{
     channels::operator_io::{Input, Output},
     runtime::BiCommunicationClient,
     snapshot::Barrier,
-    stream::{BuildContext, OperatorContext},
-    types::{DataMessage, MaybeTime, Message, RescaleMessage, SuspendMarker, WorkerId},
+    stream::{BuildContext, Logic, OperatorContext},
+    types::{DataMessage, Key, Kvt, MaybeTime, Message, RescaleMessage, SuspendMarker, WorkerId},
 };
 
 use crate::runtime::communication::broadcast;
 
-type Remotes<K, V, T> = IndexMap<
+type Remotes<M: Kvt> = IndexMap<
     WorkerId,
     (
-        BiCommunicationClient<NetworkMessage<K, V, T>>,
-        RemoteState<T>,
+        BiCommunicationClient<NetworkMessage<M>>,
+        RemoteState<<M as Kvt>::Timestamp>,
     ),
 >;
 
-pub(super) struct Distributor<K, V, T> {
-    router: Container<MessageRouter<K, V, T>>,
-    remotes: Remotes<K, V, T>,
-    partitioner: WorkerPartitioner<K>,
+pub(super) struct Distributor<M: Kvt> {
+    router: Container<MessageRouter<M>>,
+    remotes: Remotes<M>,
+    partitioner: WorkerPartitioner<<M as Kvt>::Key>,
     local_barrier: Option<Barrier>,
     local_shutdown: Option<SuspendMarker>,
-    local_frontier: Option<T>,
+    local_frontier: Option<<M as Kvt>::Timestamp>,
 }
 
-type DistributorState<T> = (NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>);
-impl<K, V, T> Distributor<K, V, T>
-where
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+impl<M> Logic<M, M> for Distributor<M> where
+M: Kvt,
+M::Key: Key + Serialize + DeserializeOwned,
+M::Value: Serialize + DeserializeOwned,
+M::Timestamp: Serialize + DeserializeOwned,
 {
-    pub(super) fn new(paritioner: WorkerPartitioner<K>, ctx: &mut BuildContext) -> Self {
-        let snapshot: Option<DistributorState<T>> = ctx.load_state();
-        let other_workers = ctx
-            .get_worker_ids()
-            .iter()
-            .copied()
-            .filter(|x| *x != ctx.worker_id)
-            .collect_vec();
-
-        let (state, remotes, frontier) = match snapshot {
-            Some((router, remote_states, local_frontier)) => {
-                // restoring from a differently sized snapshot is not supported
-                if remote_states.len() != other_workers.len() {
-                    // +1 to include this worker
-                    panic_wrong_scale(ctx.get_worker_ids().len(), remote_states.len() + 1);
-                }
-                let remotes = create_remotes(&other_workers, ctx);
-                (MessageRouter::Normal(router), remotes, local_frontier)
-            }
-            None => {
-                let remotes = create_remotes(&other_workers, ctx);
-                let state = MessageRouter::new(
-                    ctx.get_worker_ids().iter().copied().collect(),
-                    Version::default(),
-                );
-                (state, remotes, None)
-            }
-        };
-
-        Self {
-            router: Container::new(state),
-            remotes,
-            partitioner: paritioner,
-            local_barrier: None,
-            local_shutdown: None,
-            local_frontier: frontier,
-        }
-    }
-
-    /// Schedule this as an operator in the dataflow
-    pub(super) fn run(
+    async fn apply(
         &mut self,
-        input: &mut Input<K, V, T>,
-        output: &mut Output<K, V, T>,
-        ctx: &mut OperatorContext,
+        input: &mut Input<M>,
+        output: &mut Output<M>,
+        ctx: &mut OperatorContext<'_>,
     ) {
         // HACK we collect messages into the vec because
         // we can't hold onto a &self when invoking the handlers
-        let remote_message: Vec<(WorkerId, NetworkMessage<K, V, T>)> = self
+        let remote_message: Vec<(WorkerId, NetworkMessage<M>)> = self
             .remotes
             .iter()
             .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_suspend)
@@ -171,12 +131,60 @@ where
         self.router
             .apply(|x| x.lifecycle(self.partitioner, output, &mut self.remotes));
     }
+}
+
+type DistributorState<T> = (NormalRouter, IndexMap<WorkerId, RemoteState<T>>, Option<T>);
+impl<M> Distributor<M>
+where
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
+{
+    pub(super) async fn new(paritioner: WorkerPartitioner<<M as Kvt>::Key>, ctx: &mut BuildContext<'_>) -> Self {
+        let snapshot: Option<DistributorState<<M as Kvt>::Timestamp>> = ctx.load_state().await;
+        let other_workers = ctx
+            .get_worker_ids()
+            .iter()
+            .copied()
+            .filter(|x| *x != ctx.worker_id)
+            .collect_vec();
+
+        let (state, remotes, frontier) = match snapshot {
+            Some((router, remote_states, local_frontier)) => {
+                // restoring from a differently sized snapshot is not supported
+                if remote_states.len() != other_workers.len() {
+                    // +1 to include this worker
+                    panic_wrong_scale(ctx.get_worker_ids().len(), remote_states.len() + 1);
+                }
+                let remotes = create_remotes(&other_workers, ctx);
+                (MessageRouter::Normal(router), remotes, local_frontier)
+            }
+            None => {
+                let remotes = create_remotes(&other_workers, ctx);
+                let state = MessageRouter::new(
+                    ctx.get_worker_ids().iter().copied().collect(),
+                    Version::default(),
+                );
+                (state, remotes, None)
+            }
+        };
+
+        Self {
+            router: Container::new(state),
+            remotes,
+            partitioner: paritioner,
+            local_barrier: None,
+            local_shutdown: None,
+            local_frontier: frontier,
+        }
+    }
 
     /// Handle a data message we received from our local upstream
     fn handle_local_data_message(
         &mut self,
-        message: DataMessage<K, V, T>,
-        output: &mut Output<K, V, T>,
+        message: DataMessage<M>,
+        output: &mut Output<M>,
         ctx: &OperatorContext,
     ) {
         let routing = {
@@ -196,9 +204,9 @@ where
 
     fn handle_remote_data_message(
         &mut self,
-        message: NetworkDataMessage<K, V, T>,
+        message: NetworkDataMessage<M>,
         sent_by: &WorkerId,
-        output: &mut Output<K, V, T>,
+        output: &mut Output<M>,
         ctx: &OperatorContext,
     ) {
         let routing = {
@@ -218,9 +226,9 @@ where
 
     fn send_data_message(
         &self,
-        message: DataMessage<K, V, T>,
+        message: DataMessage<M>,
         target: WorkerId,
-        output: &mut Output<K, V, T>,
+        output: &mut Output<M>,
         ctx: &OperatorContext,
     ) {
         match target == ctx.worker_id {
@@ -241,7 +249,7 @@ where
     }
 
     /// Handle an epoch we received from our local upstrea
-    fn handle_epoch(&self, output: &mut Output<K, V, T>) {
+    fn handle_epoch(&self, output: &mut Output<M>) {
         let all_timestamps = self
             .remotes
             .values()
@@ -265,7 +273,7 @@ where
     fn handle_rescale_message(
         &mut self,
         message: RescaleMessage,
-        output: &mut Output<K, V, T>,
+        output: &mut Output<M>,
         ctx: &mut OperatorContext,
     ) {
         // we can not remove clients of workers here because we need them during the rescale
@@ -285,7 +293,7 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_barrier(&mut self, output: &mut Output<K, V, T>) {
+    fn try_emit_barrier(&mut self, output: &mut Output<M>) {
         if self.local_barrier.is_some()
             && self
                 .remotes
@@ -306,7 +314,7 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_shutdown(&mut self, output: &mut Output<K, V, T>) {
+    fn try_emit_shutdown(&mut self, output: &mut Output<M>) {
         if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
             // can unwrap because we just checked is_some
             #[allow(clippy::unwrap_used)]
@@ -316,11 +324,11 @@ where
     }
 }
 
-fn create_remotes<K, V, T>(other_workers: &[WorkerId], ctx: &mut BuildContext) -> Remotes<K, V, T>
-where
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+fn create_remotes<M>(other_workers: &[WorkerId], ctx: &mut BuildContext) -> Remotes<M> where
+    M: Kvt,
+    M::Key: Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned
 {
     let remotes = other_workers
         .iter()

@@ -9,12 +9,12 @@ use async_trait::async_trait;
 
 use crate::types::*;
 use crate::{
-    channels::operator_io::{full_broadcast, link, Input, Output},
+    channels::operator_io::{Input, Output, full_broadcast, link},
     runtime::{
+        BiCommunicationClient, OperatorOperatorComm,
         communication::{
             BiStreamTransport, CommunicationBackendError, Distributable, TransportError,
         },
-        BiCommunicationClient, OperatorOperatorComm,
     },
     snapshot::NoPersistence,
     stream::{BuildContext, Logic, OperatorContext},

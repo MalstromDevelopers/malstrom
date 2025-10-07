@@ -10,26 +10,30 @@ use super::{BuildContext, OperatorContext, RunnableOperator};
 /// into a FrontieredOperator
 /// This trait exists mainly for type erasure, so that the Jetstream
 /// need not know the input type of its last operator
-pub trait AppendableOperator<K, V, T> {
-    fn get_output_mut(&mut self) -> &mut Output<K, V, T>;
+// pub trait AppendableOperator<K, V, T> {
+//     fn get_output_mut(&mut self) -> &mut Output<K, V, T>;
 
-    fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
-}
+//     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator>;
+// }
 
 /// An operator which can be turned into a runnable operator, by supplying a BuildContext
-pub trait BuildableOperator {
-    fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator;
+pub(crate) trait BuildableOperator: 'static {
+    fn into_runnable(
+        self: Box<Self>,
+        rt: &tokio::runtime::Handle,
+        context: &mut BuildContext,
+    ) -> RunnableOperator;
     fn get_name(&self) -> &str;
     fn get_id(&self) -> u64;
 }
 
-/// Each runnable operator contains an object of this trait which is the actual logic that will get executed
-pub trait Operator {
+// /// Each runnable operator contains an object of this trait which is the actual logic that will get executed
+pub trait RunOperator {
     /// Calling step instructs the operator, that it should attempt to make
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its input and writes
     /// to its output
-    fn step(&mut self, context: &mut OperatorContext);
+    fn schedule(&mut self, context: &mut OperatorContext, rt: &tokio::runtime::Runtime);
 
     /// still not happy with this function name
     fn has_queued_work(&self) -> bool;

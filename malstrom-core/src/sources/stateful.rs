@@ -19,15 +19,14 @@ use crate::{
         BiCommunicationClient,
     },
     snapshot::Barrier,
-    stream::{BuildContext, LogicWrapper, OperatorBuilder, OperatorContext, StreamBuilder},
+    stream::{BuildContext, InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator, OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder},
     types::{
-        Data, DataMessage, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker,
-        Timestamp, WorkerId,
+        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker, Timestamp, WorkerId
     },
 };
 
 /// Implementation of a stateful source.
-pub trait StatefulSourceImpl<V, T>: 'static {
+pub trait StatefulSourceImpl<Out: Kvt<Key = Self::Part>>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
@@ -39,7 +38,7 @@ pub trait StatefulSourceImpl<V, T>: 'static {
     /// Partitions may be moved to different workers, when the jobs worker set changes. Usually
     /// partitions will directly relate to some partitioning used by the external system providing
     /// the data.
-    type SourcePartition: StatefulSourcePartition<V, T, PartitionState = Self::PartitionState>;
+    type SourcePartition: StatefulSourcePartition<Out, PartitionState = Self::PartitionState>;
 
     /// List all partitions for this source
     fn list_parts(&self) -> Vec<Self::Part>;
@@ -53,26 +52,28 @@ pub trait StatefulSourceImpl<V, T>: 'static {
 }
 
 /// A source which provides records for processing and holds some persistent state.
-pub struct StatefulSource<V, T, S: StatefulSourceImpl<V, T>>(S, PhantomData<(V, T)>);
-impl<V, T, S> StatefulSource<V, T, S>
+pub struct StatefulSource<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>>(SrcImpl, PhantomData<Out>);
+
+impl<Out, SrcImpl> StatefulSource<Out, SrcImpl>
 where
-    S: StatefulSourceImpl<V, T>,
+    Out: Kvt<Key = SrcImpl::Part>,
+    SrcImpl: StatefulSourceImpl<Out>
 {
     /// Create a new stateful source from the given source implementation.
-    pub fn new(source: S) -> Self {
+    pub fn new(source: SrcImpl) -> Self {
         Self(source, PhantomData)
     }
 }
 
 /// A single partition of a statefull source. A partition is the smallest unit of a source and may
 /// be moved to a different worker when the job's worker set changes.
-pub trait StatefulSourcePartition<V, T> {
+pub trait StatefulSourcePartition<Out: Kvt> {
     /// Persistent state of this partition. This state will be retained across job restarts and
     /// moved along with the partition if the jobs worker set changes
     type PartitionState;
 
     /// Poll this partition, possibly returning a record
-    fn poll(&mut self) -> Option<(V, T)>;
+    fn poll(&mut self) -> Option<(Out::Value, Out::Timestamp)>;
 
     /// Return true if this parition is finished and can be removed
     fn is_finished(&mut self) -> bool;
@@ -88,62 +89,74 @@ pub trait StatefulSourcePartition<V, T> {
     fn suspend(&mut self) {}
 }
 
-impl<V, T, S> StreamSource<S::Part, V, T> for StatefulSource<V, T, S>
+impl<Out, SrcImpl> StreamSource<Out> for StatefulSource<Out, SrcImpl>
 where
-    S: StatefulSourceImpl<V, T>,
-    V: Data,
-    T: Timestamp,
+    SrcImpl: StatefulSourceImpl<Out>,
+    Out: Kvt<Key = SrcImpl::Part>,
+    Out::Value: Data,
+    Out::Timestamp: Timestamp,
 {
     fn into_stream(
         self,
         name: &str,
-        builder: StreamBuilder<NoKey, NoData, NoTime>,
-    ) -> StreamBuilder<S::Part, V, T> {
+        builder: InitialStreamBuilder,
+    ) -> StreamBuilder<Out> {
         let parts = self.0.list_parts();
-        let all_partitions: IndexMap<S::Part, bool> =
+        let all_partitions: IndexMap<SrcImpl::Part, bool> =
             parts.iter().map(|x| (x.clone(), false)).collect();
 
-        let parts = parts.into_iter();
-        let part_lister =
-            OperatorBuilder::built_by(&format!("{name}-list-parts"), move |build_context| {
-                let mut inner = if build_context.worker_id == 0 {
-                    Box::new(parts)
-                } else {
-                    // do not emit on non-0 worker
-                    Box::new(std::iter::empty::<S::Part>()) as Box<dyn Iterator<Item = S::Part>>
-                };
-                move |input: &mut Input<NoKey, NoData, NoTime>,
-                      output: &mut Output<S::Part, (), NoTime>,
-                      _ctx| {
-                    for part in inner.by_ref() {
-                        output.send(Message::Data(DataMessage::new(part, (), NoTime)));
-                    }
-                    if let Some(msg) = input.recv() {
-                        match msg {
-                            Message::Data(_) => (),
-                            Message::Epoch(_) => (),
-                            Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
-                            Message::Rescale(x) => output.send(Message::Rescale(x)),
-                            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
-                            Message::Interrogate(_) => unreachable!(),
-                            Message::Collect(_) => unreachable!(),
-                            Message::Acquire(_) => unreachable!(),
-                        }
-                    }
-                }
-            });
+        let part_lister = Operator::built_by(format!("{name}-list-parts"), PartListerBuilder{parts});
 
         builder
             .then(part_lister)
             .distribute(&format!("{name}-distribute-partitions"), rendezvous_select)
-            .then(OperatorBuilder::built_by(
-                &format!("{name}-partition"),
-                |ctx| {
-                    let partition_op =
-                        StatefulSourcePartitionOp::<V, T, S>::new(ctx, self.0, all_partitions);
-                    partition_op.into_logic()
-                },
+            .then(Operator::built_by(
+                format!("{name}-partition"),
+                StatefulSourcePartitionOpBuilder{src_impl: self.0, all_partitions, _out_type: PhantomData::<Out>}
             ))
+    }
+}
+
+struct PartListerBuilder<Part>{parts: Vec<Part>}
+
+impl<Part> LogicBuilder<(), (Part, NoData, NoTime)> for PartListerBuilder<Part> where Part: Key {
+    type Logic = PartLister<Part>;
+
+    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+        let parts = if ctx.worker_id == 0 {
+            Box::new(self.parts.into_iter())
+        } else {
+            // do not emit on non-0 worker
+            Box::new(std::iter::empty::<Part>()) as Box<dyn Iterator<Item = Part>>
+        };
+        PartLister{parts}
+    }
+}
+
+struct PartLister<Part>{parts: Box<dyn Iterator<Item =Part>>}
+
+impl<Part> Logic<(), (Part, NoData, NoTime)> for PartLister<Part> where Part: Key {
+    async fn apply(
+        &mut self,
+        input: &mut Input<()>,
+        output: &mut Output<(Part, NoData, NoTime)>,
+        _ctx: &mut OperatorContext<'_>,
+    ) {
+        for part in self.parts.by_ref() {
+            output.send(Message::Data(DataMessage::new(part, NoData, NoTime)));
+        }
+        if let Some(msg) = input.recv() {
+            match msg {
+                Message::Data(_) => (),
+                Message::Epoch(_) => (),
+                Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)),
+                Message::Rescale(x) => output.send(Message::Rescale(x)),
+                Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
+                Message::Interrogate(_) => unreachable!(),
+                Message::Collect(_) => unreachable!(),
+                Message::Acquire(_) => unreachable!(),
+            }
+        }
     }
 }
 
@@ -154,29 +167,53 @@ where
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone)]
 struct PartitionFinished<Part>(Part);
 
-struct StatefulSourcePartitionOp<V, T, Builder: StatefulSourceImpl<V, T>> {
-    partitions: IndexMap<Builder::Part, Builder::SourcePartition>,
-    part_builder: Builder,
-    all_partitions: IndexMap<Builder::Part, bool>, // true if partition is finished
-    comm_clients: IndexMap<WorkerId, BiCommunicationClient<PartitionFinished<Builder::Part>>>,
-    // final marker, we keep it in an option to only send it once
-    max_t: Option<T>,
-    _phantom: PhantomData<(Builder::PartitionState, V)>,
+/// Java-esque name, maybe we should name it Factory instead of Builder?
+struct StatefulSourcePartitionOpBuilder<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>>{
+    src_impl: SrcImpl,
+    all_partitions: IndexMap<SrcImpl::Part, bool>,
+    _out_type: PhantomData<Out>
+}
+impl<In, Out, SrcImpl> LogicBuilder<In, Out> for StatefulSourcePartitionOpBuilder<Out, SrcImpl>
+where
+    SrcImpl: StatefulSourceImpl<Out>,
+    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = NoTime>,
+    Out: Kvt<Key = SrcImpl::Part>,
+    Out::Value: Data,
+    Out::Timestamp: Timestamp,
+{
+    type Logic = SafeLogicWrapper<StatefulSourcePartitionOp<Out, SrcImpl>>;
+
+    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+        let op = StatefulSourcePartitionOp::new(ctx, self.src_impl, self.all_partitions).await;
+        SafeLogic::<In, Out>::into_logic(op)
+    }
 }
 
-impl<V, T, Builder> StatefulSourcePartitionOp<V, T, Builder>
+
+struct StatefulSourcePartitionOp<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>> {
+    partitions: IndexMap<SrcImpl::Part, SrcImpl::SourcePartition>,
+    part_builder: SrcImpl,
+    all_partitions: IndexMap<SrcImpl::Part, bool>, // true if partition is finished
+    comm_clients: IndexMap<WorkerId, BiCommunicationClient<PartitionFinished<SrcImpl::Part>>>,
+    // final marker, we keep it in an option to only send it once
+    max_t: Option<Out::Timestamp>,
+    _phantom: PhantomData<(SrcImpl::PartitionState, Out::Value)>,
+}
+
+impl<Out, SrcImpl> StatefulSourcePartitionOp<Out, SrcImpl>
 where
-    Builder: StatefulSourceImpl<V, T>,
-    Builder::Part: Hash + Eq,
-    T: Timestamp,
+    Out: Kvt<Key = SrcImpl::Part>,
+    SrcImpl: StatefulSourceImpl<Out>,
+    SrcImpl::Part: Key,
+    Out::Timestamp: Timestamp,
 {
-    fn new(
-        ctx: &mut BuildContext,
-        part_builder: Builder,
-        all_partitions: IndexMap<Builder::Part, bool>,
+    async fn new(
+        ctx: &mut BuildContext<'_>,
+        part_builder: SrcImpl,
+        all_partitions: IndexMap<SrcImpl::Part, bool>,
     ) -> Self {
         let comm_clients =
-            ctx.create_all_communication_clients::<PartitionFinished<Builder::Part>>();
+            ctx.create_all_communication_clients::<PartitionFinished<SrcImpl::Part>>();
         let mut this = Self {
             partitions: IndexMap::new(),
             part_builder,
@@ -184,11 +221,11 @@ where
             comm_clients,
             // This is technically state which gets lost on restarts, but sending T::MAX multiple
             // times should not be an issue
-            max_t: Some(T::MAX),
+            max_t: Some(Out::Timestamp::MAX),
             _phantom: PhantomData,
         };
 
-        if let Some(state) = ctx.load_state::<IndexMap<Builder::Part, Builder::PartitionState>>() {
+        if let Some(state) = ctx.load_state::<IndexMap<SrcImpl::Part, SrcImpl::PartitionState>>().await {
             for (k, v) in state.into_iter() {
                 this.add_partition(k, Some(v));
             }
@@ -196,22 +233,24 @@ where
         this
     }
 
-    fn add_partition(&mut self, part: Builder::Part, part_state: Option<Builder::PartitionState>) {
+    fn add_partition(&mut self, part: SrcImpl::Part, part_state: Option<SrcImpl::PartitionState>) {
         let partition = self.part_builder.build_part(&part, part_state);
         self.partitions.insert(part, partition);
     }
 }
 
-impl<VO, TO, Builder> LogicWrapper<Builder::Part, (), NoTime, VO, TO>
-    for StatefulSourcePartitionOp<VO, TO, Builder>
+impl<In, Out, SrcImpl> SafeLogic<In, Out>
+    for StatefulSourcePartitionOp<Out, SrcImpl>
 where
-    Builder: StatefulSourceImpl<VO, TO>,
-    VO: Data,
-    TO: Timestamp,
+    SrcImpl: StatefulSourceImpl<Out>,
+    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = NoTime>,
+    Out: Kvt<Key = SrcImpl::Part>,
+    Out::Value: Data,
+    Out::Timestamp: Timestamp,
 {
     fn on_schedule(
         &mut self,
-        output: &mut Output<Builder::Part, VO, TO>,
+        output: &mut Output<Out>,
         _ctx: &mut OperatorContext,
     ) {
         // TODO: All these iterations may be kinda inefficient
@@ -246,8 +285,8 @@ where
 
     fn on_data(
         &mut self,
-        data_message: DataMessage<Builder::Part, (), NoTime>,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        data_message: DataMessage<In>,
+        _output: &mut Output<Out>,
         _ctx: &mut OperatorContext,
     ) {
         let part = data_message.key;
@@ -260,7 +299,7 @@ where
     fn on_epoch(
         &mut self,
         _epoch: NoTime,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        _output: &mut Output<Out>,
         _ctx: &mut OperatorContext,
     ) {
     }
@@ -268,10 +307,10 @@ where
     fn on_barrier(
         &mut self,
         barrier: &mut Barrier,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        _output: &mut Output<Out>,
         ctx: &mut OperatorContext,
     ) {
-        let state: IndexMap<Builder::Part, Builder::PartitionState> = self
+        let state: IndexMap<SrcImpl::Part, SrcImpl::PartitionState> = self
             .partitions
             .iter()
             .map(|(k, v)| (k.clone(), v.snapshot()))
@@ -282,7 +321,7 @@ where
     fn on_rescale(
         &mut self,
         rescale_message: &mut RescaleMessage,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        _output: &mut Output<Out>,
         ctx: &mut OperatorContext,
     ) {
         let new_workers = rescale_message.get_new_workers();
@@ -298,7 +337,7 @@ where
     fn on_suspend(
         &mut self,
         _suspend_marker: &mut SuspendMarker,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        _output: &mut Output<Out>,
         _ctx: &mut OperatorContext,
     ) {
         for partition in self.partitions.values_mut() {
@@ -308,8 +347,8 @@ where
 
     fn on_interrogate(
         &mut self,
-        interrogate: &mut Interrogate<Builder::Part>,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        interrogate: &mut Interrogate<SrcImpl::Part>,
+        _output: &mut Output<Out>,
         _ctx: &mut OperatorContext,
     ) {
         let keys = self.partitions.keys();
@@ -318,8 +357,8 @@ where
 
     fn on_collect(
         &mut self,
-        collect: &mut Collect<Builder::Part>,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        collect: &mut Collect<SrcImpl::Part>,
+        _output: &mut Output<Out>,
         ctx: &mut OperatorContext,
     ) {
         let key_state = self.partitions.swap_remove(&collect.key);
@@ -330,8 +369,8 @@ where
 
     fn on_acquire(
         &mut self,
-        acquire: &mut Acquire<Builder::Part>,
-        _output: &mut Output<Builder::Part, VO, TO>,
+        acquire: &mut Acquire<SrcImpl::Part>,
+        _output: &mut Output<Out>,
         ctx: &mut OperatorContext,
     ) {
         let partition_state = acquire.take_state(&ctx.operator_id);

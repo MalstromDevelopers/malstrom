@@ -3,13 +3,13 @@ use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::errorhandling::MalstromFatal;
 use crate::runtime::communication::Distributable;
 use crate::runtime::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
-use crate::snapshot::{deserialize_state, PersistenceClient};
+use crate::snapshot::{PersistenceClient, deserialize_state};
 use crate::types::{OperatorId, WorkerId};
 
 /// This is a type injected to logic function at runtime
@@ -87,7 +87,7 @@ impl<'a> BuildContext<'a> {
 
     /// Load the persisted state for this operator.
     /// If no persisted state exists, this returns `None`
-    pub fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
+    pub async fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
         self.persistence_backend
             .load(&self.operator_id)
             .map(deserialize_state)

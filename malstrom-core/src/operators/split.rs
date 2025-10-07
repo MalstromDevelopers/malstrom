@@ -1,5 +1,5 @@
 use crate::channels::operator_io::{link, Input, Output};
-use crate::stream::{AppendableOperator, OperatorBuilder, StreamBuilder};
+use crate::stream::{AppendableOperator, Operator, StreamBuilder};
 use crate::types::{DataMessage, MaybeData, MaybeKey, MaybeTime};
 use std::rc::Rc;
 
@@ -75,7 +75,7 @@ where
 
         let output = Output::new_unlinked(partitioner);
 
-        let mut partition_op = OperatorBuilder::new_with_output(
+        let mut partition_op = Operator::new_with_output(
             name,
             |_| {
                 |input, output, _ctx| {
