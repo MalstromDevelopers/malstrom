@@ -1,6 +1,6 @@
 use std::{
     hash::Hash,
-    ops::{Add, Div, Rem, Sub},
+    ops::{Div, Rem},
 };
 
 use malstrom::{
@@ -10,7 +10,7 @@ use malstrom::{
     stream::StreamBuilder,
     types::{DataMessage, Key, MaybeData, Message, Timestamp},
 };
-use num_traits::CheckedSub;
+use num_traits::{CheckedAdd, CheckedSub};
 use serde::{Serialize, de::DeserializeOwned};
 
 struct SlidingWindowOp<F, S> {
@@ -32,9 +32,8 @@ where
     VO: MaybeData,
     VI: Serialize + DeserializeOwned,
     T: Timestamp
-        + Add<Output = T>
-        + Sub<Output = T>
         + CheckedSub<Output = T>
+        + CheckedAdd<Output = T>
         + Div<Output = T>
         + Eq
         + Hash
@@ -54,7 +53,7 @@ where
             msg.timestamp.clone(),
             msg.value,
             // Keep for double the size/duration to ensure its available on epoch
-            msg.timestamp.clone() + self.size.clone() + self.size.clone(),
+            msg.timestamp.clone() + self.size.clone(),
         );
 
         Some(key_state)
@@ -73,20 +72,20 @@ where
                 // subtract size - 1
                 .checked_sub(&(self.size.clone() - (self.size.clone() / self.size.clone())))
                 .unwrap_or(T::MIN);
-            let window = state.get_range(|k, _| *k < lower, |k, _| *k <= epoch.clone());
+            // Add the size of the window to have a performant lookup by index in the backing expire map
+            let window = state.get_range(
+                lower.checked_add(&self.size).unwrap_or(T::MAX)
+                    ..=epoch.clone().checked_add(&self.size).unwrap_or(T::MAX),
+            );
 
-            match window {
-                // Only call the aggregator on non empty windows
-                Some(window) if !window.is_empty() => {
-                    let values = window.values().map(|o| &o.value).collect::<Vec<_>>();
+            if !window.is_empty() {
+                let values = window.values().map(|o| &o.value).collect::<Vec<_>>();
 
-                    output.send(Message::Data(DataMessage::new(
-                        k.clone(),
-                        (self.aggregator)(&values),
-                        epoch.clone(),
-                    )));
-                }
-                _ => (),
+                output.send(Message::Data(DataMessage::new(
+                    k.clone(),
+                    (self.aggregator)(&values),
+                    epoch.clone(),
+                )));
             }
 
             // Clean state after execution to ensure all entries are available.
@@ -153,9 +152,8 @@ where
     VO: MaybeData + Distributable,
     T: Timestamp
         + Distributable
-        + Add<Output = T>
-        + Sub<Output = T>
         + CheckedSub<Output = T>
+        + CheckedAdd<Output = T>
         + Div<Output = T>
         + Rem<Output = T>
         + Hash
