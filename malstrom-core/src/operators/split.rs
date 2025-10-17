@@ -108,11 +108,11 @@ impl<Msg> SafeLogic<Msg, Msg> for Forward<Msg>
 where
     Msg: Kvt,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         data_message: DataMessage<Msg>,
         output: &mut Output<Msg>,
-        ctx: &mut crate::stream::OperatorContext,
+        ctx: &mut crate::stream::OperatorContext<'_>,
     ) {
         output.send(Message::Data(data_message));
     }

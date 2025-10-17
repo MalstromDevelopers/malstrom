@@ -1,10 +1,11 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
+use crate::operators::StatelessLogic;
 use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Apply a function to every message in a stream
-pub trait Map<In: Kvt, T: Data>: Sealed {
+pub trait Map<In: Kvt, T: Data, Fut>: Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
     ///
@@ -25,7 +26,7 @@ pub trait Map<In: Kvt, T: Data>: Sealed {
     ///     .build(move |provider: &mut dyn StreamProvider| {
     ///         provider.new_stream()
     ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
-    ///         .map("map", |x| x * 2)
+    ///         .map("map", async |x| x * 2)
     ///         .sink("sink", StatelessSink::new(sink_clone));
     ///     })
     ///     .execute()
@@ -38,27 +39,44 @@ pub trait Map<In: Kvt, T: Data>: Sealed {
     fn map(
         self,
         name: &str,
-        mapper: impl (FnMut(In::Value) -> T) + 'static,
+        mapper: impl (FnMut(In::Value) -> Fut) + 'static,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<In, T> Map<In, T> for StreamBuilder<In>
+impl<In, T, Fut> Map<In, T, Fut> for StreamBuilder<In>
 where
     In: Kvt,
     T: Data,
+    Fut: Future<Output = T>,
 {
     fn map(
         self,
         name: &str,
-        mut mapper: impl (FnMut(In::Value) -> T) + 'static,
+        mapper: impl (FnMut(In::Value) -> Fut) + 'static,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
-        self.stateless_op(name, move |item: DataMessage<In>, out: &mut Output<_>| {
-            out.send(Message::Data(DataMessage::new(
-                item.key,
-                mapper(item.value),
-                item.timestamp,
-            )));
-        })
+        self.stateless_op(name, MapOp { mapper })
+    }
+}
+
+struct MapOp<F> {
+    mapper: F,
+}
+
+impl<In, T, F, Fut> StatelessLogic<In, T> for MapOp<F>
+where
+    In: Kvt,
+    T: Data,
+    F: (FnMut(In::Value) -> Fut) + 'static,
+    Fut: Future<Output = T>,
+{
+    async fn on_data(
+        &mut self,
+        mut msg: DataMessage<In>,
+        output: &mut Output<(<In as Kvt>::Key, T, <In as Kvt>::Timestamp)>,
+    ) {
+        let new_value = (self.mapper)(msg.value).await;
+        let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
+        output.send(Message::Data(out_msg));
     }
 }
 

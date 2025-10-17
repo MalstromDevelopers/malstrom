@@ -36,7 +36,7 @@ pub trait StatefulLogic<In: Kvt, T: Data, S>: 'static {
     /// 2. The timestamp of any output message may not be smaller than the timestamp of the last
     ///    Epoch received at this operator. If the value of the last Epoch is unknown, it is always
     ///    safe to produce timestamps equal to or greater than the current input message.
-    fn on_data(
+    async fn on_data(
         &mut self,
         msg: DataMessage<In>,
         key_state: S,
@@ -56,7 +56,7 @@ pub trait StatefulLogic<In: Kvt, T: Data, S>: 'static {
     ///
     /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
         epoch: &<In as Kvt>::Timestamp,
         state: &mut IndexMap<<In as Kvt>::Key, S>,
@@ -73,29 +73,30 @@ pub trait StatefulLogic<In: Kvt, T: Data, S>: 'static {
     ///
     /// The default implementation is a no-op
     #[allow(unused)]
-    fn on_schedule(
+    async fn on_schedule(
         &mut self,
         state: &mut IndexMap<<In as Kvt>::Key, S>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
     ) {
     }
 }
-impl<In, T, S, X> StatefulLogic<In, T, S> for X
-where
-    In: Kvt,
-    T: Data,
-    for<'a> X: FnMut(DataMessage<In>, S, &'a mut Output<(In::Key, T, In::Timestamp)>) -> Option<S>
-        + 'static,
-{
-    fn on_data(
-        &mut self,
-        msg: DataMessage<In>,
-        key_state: S,
-        output: &mut Output<(In::Key, T, In::Timestamp)>,
-    ) -> Option<S> {
-        self(msg, key_state, output)
-    }
-}
+// impl<In, T, S, X, Fut> StatefulLogic<In, T, S> for X
+// where
+//     In: Kvt,
+//     T: Data,
+//     Fut: Future<Output = Option<S>
+//     for<'a> X: FnMut(DataMessage<In>, S, &'a mut Output<(In::Key, T, In::Timestamp)>) -> Option<S>
+//         + 'static,
+// {
+//     async fn on_data(
+//         &mut self,
+//         msg: DataMessage<In>,
+//         key_state: S,
+//         output: &mut Output<(In::Key, T, In::Timestamp)>,
+//     ) -> Option<S> {
+//         self(msg, key_state, output).await
+//     }
+// }
 
 /// Append a stateful operator to the stream
 pub trait StatefulOp<In: Kvt, T: Data>: Sealed {
@@ -176,71 +177,71 @@ where
     <In as Kvt>::Key: Key + State,
     S: State + 'static,
 {
-    fn on_schedule(
+    async fn on_schedule(
         &mut self,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         self.logic.on_schedule(&mut self.state, output);
     }
 
-    fn on_data(
+    async fn on_data(
         &mut self,
         msg: DataMessage<In>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         let key = msg.key.to_owned();
         let key_state = self.state.swap_remove(&key).unwrap_or_default();
-        let new_state = self.logic.on_data(msg, key_state, output);
+        let new_state = self.logic.on_data(msg, key_state, output).await;
         if let Some(n) = new_state {
             self.state.insert(key.to_owned(), n);
         }
     }
 
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
         epoch: &<In as Kvt>::Timestamp,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         self.logic.on_epoch(epoch, &mut self.state, output);
     }
 
-    fn on_barrier(
+    async fn on_barrier(
         &mut self,
         barrier: &mut crate::snapshot::Barrier,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         barrier.persist(&self.state, &ctx.operator_id);
     }
 
-    fn on_interrogate(
+    async fn on_interrogate(
         &mut self,
         interrogate: &mut crate::keyed::distributed::Interrogate<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         interrogate.add_keys(&(self.state.keys().map(|k| k.to_owned()).collect_vec()));
     }
 
-    fn on_collect(
+    async fn on_collect(
         &mut self,
         collect: &mut crate::keyed::distributed::Collect<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         if let Some(x) = self.state.swap_remove(&collect.key) {
             collect.add_state(ctx.operator_id, x);
         }
     }
 
-    fn on_acquire(
+    async fn on_acquire(
         &mut self,
         acquire: &mut crate::keyed::distributed::Acquire<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         if let Some(st) = acquire.take_state(&ctx.operator_id) {
             self.state.insert(st.0, st.1);

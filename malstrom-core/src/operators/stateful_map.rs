@@ -12,7 +12,7 @@ use crate::{
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
 /// Apply a stateful function to every message in the stream
-pub trait StatefulMap<In: Kvt, T: Data>: Sealed {
+pub trait StatefulMap<In: Kvt, T: Data, Mapper, S>: Sealed {
     /// Transforms data utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.
@@ -60,11 +60,8 @@ pub trait StatefulMap<In: Kvt, T: Data>: Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn stateful_map<S: Default + Serialize + DeserializeOwned + 'static>(
-        self,
-        name: &str,
-        mapper: impl FnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
-    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
+    fn stateful_map(self, name: &str, mapper: Mapper)
+    -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
 struct MapperOp<F> {
@@ -76,37 +73,41 @@ impl<F> MapperOp<F> {
     }
 }
 
-impl<F, In, OutVal, S> StatefulLogic<In, OutVal, S> for MapperOp<F>
+impl<In, OutVal, S, Mapper, Fut> StatefulLogic<In, OutVal, S> for MapperOp<Mapper>
 where
     In: Kvt,
     In::Key: State + Key,
     OutVal: Data,
-    F: FnMut(&In::Key, In::Value, S) -> (OutVal, Option<S>) + 'static,
     S: Serialize + DeserializeOwned,
+    Mapper: FnMut(&In::Key, In::Value, S) -> Fut + 'static,
+    Fut: Future<Output = (OutVal, Option<S>)>,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         msg: DataMessage<In>,
         key_state: S,
         output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) -> Option<S> {
-        let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state);
+        let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state).await;
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
         output.send(Message::Data(out_msg));
         new_state
     }
 }
 
-impl<In, T> StatefulMap<In, T> for StreamBuilder<In>
+impl<In, T, Mapper, Fut, S> StatefulMap<In, T, Mapper, S> for StreamBuilder<In>
 where
     In: Kvt,
     In::Key: State + Key,
     T: Data,
+    Mapper: FnMut(&In::Key, In::Value, S) -> Fut + 'static,
+    Fut: Future<Output = (T, Option<S>)>,
+    S: Default + Serialize + DeserializeOwned + 'static,
 {
-    fn stateful_map<S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_map(
         self,
         name: &str,
-        mapper: impl FnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
+        mapper: Mapper,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
         self.stateful_op(name, MapperOp::new(mapper))
     }

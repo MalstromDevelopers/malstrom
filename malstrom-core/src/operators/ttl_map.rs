@@ -14,7 +14,7 @@ use crate::{
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
 /// Map with automatic state clean up based on ttl.
-pub trait TtlMap<In: Kvt, OutVal: Data>: Sealed {
+pub trait TtlMap<In: Kvt, OutVal: Data, Mapper, StateKey, StateVal>: Sealed {
     /// Transforms data utilizing managed state where every value has a finite Time to Live (TTL).
     /// When an Epoch reaches this operator, all state values with a whos expiry time is less than
     /// or equal to the value of the Epoch will be removed from state.
@@ -26,55 +26,44 @@ pub trait TtlMap<In: Kvt, OutVal: Data>: Sealed {
     ///
     /// Any state can be used as long as it implements the `Default`, `Serialize`
     /// and `DeserializeOwned` traits.
-    fn ttl_map<S, UK, F>(
-        self,
-        name: &str,
-        function: F,
-    ) -> StreamBuilder<(In::Key, OutVal, In::Timestamp)>
-    where
-        S: Default + Serialize + DeserializeOwned + 'static,
-        UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-        F: FnMut(
-                &In::Key,
-                In::Value,
-                &In::Timestamp,
-                ExpireMap<UK, S, In::Timestamp>,
-            ) -> (OutVal, Option<ExpireMap<UK, S, In::Timestamp>>)
-            + 'static;
+    fn ttl_map(self, name: &str, mapper: Mapper)
+    -> StreamBuilder<(In::Key, OutVal, In::Timestamp)>;
 }
 
 struct TtlOp<F> {
-    function: F,
+    mapper: F,
 }
 impl<F> TtlOp<F> {
-    fn new(function: F) -> Self {
-        Self { function }
+    fn new(mapper: F) -> Self {
+        Self { mapper }
     }
 }
 
-impl<F, In, OutVal, S, UK> StatefulLogic<In, OutVal, ExpireMap<UK, S, In::Timestamp>> for TtlOp<F>
+impl<In, OutVal, Mapper, StateKey, StateVal, Fut>
+    StatefulLogic<In, OutVal, ExpireMap<StateKey, StateVal, In::Timestamp>> for TtlOp<Mapper>
 where
     In: Kvt,
     In::Key: State + Key,
     In::Timestamp: Ord,
     OutVal: Data,
-    S: Serialize + DeserializeOwned,
-    UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-    F: FnMut(
+    StateKey: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
+    StateVal: Serialize + DeserializeOwned,
+    Mapper: FnMut(
             &In::Key,
             In::Value,
             &In::Timestamp,
-            ExpireMap<UK, S, In::Timestamp>,
-        ) -> (OutVal, Option<ExpireMap<UK, S, In::Timestamp>>)
+            ExpireMap<StateKey, StateVal, In::Timestamp>,
+        ) -> Fut
         + 'static,
+    Fut: Future<Output = (OutVal, Option<ExpireMap<StateKey, StateVal, In::Timestamp>>)>,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         msg: DataMessage<In>,
-        key_state: ExpireMap<UK, S, In::Timestamp>,
+        key_state: ExpireMap<StateKey, StateVal, In::Timestamp>,
         output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
-    ) -> Option<ExpireMap<UK, S, In::Timestamp>> {
-        let (value, state) = (self.function)(&msg.key, msg.value, &msg.timestamp, key_state);
+    ) -> Option<ExpireMap<StateKey, StateVal, In::Timestamp>> {
+        let (value, state) = (self.mapper)(&msg.key, msg.value, &msg.timestamp, key_state).await;
         output.send(Message::Data(DataMessage::new(
             msg.key,
             value,
@@ -83,10 +72,10 @@ where
         state
     }
 
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
         epoch: &In::Timestamp,
-        state: &mut indexmap::IndexMap<In::Key, ExpireMap<UK, S, In::Timestamp>>,
+        state: &mut indexmap::IndexMap<In::Key, ExpireMap<StateKey, StateVal, In::Timestamp>>,
         _output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) {
         state.retain(|_, v| {
@@ -96,30 +85,30 @@ where
     }
 }
 
-impl<In, OutVal> TtlMap<In, OutVal> for StreamBuilder<In>
+impl<In, OutVal, Mapper, StateKey, StateVal, Fut> TtlMap<In, OutVal, Mapper, StateKey, StateVal>
+    for StreamBuilder<In>
 where
     In: Kvt,
     In::Key: State + Key,
-    In::Timestamp: State + Ord,
+    In::Timestamp: Ord + State,
     OutVal: Data,
+    StateKey: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
+    StateVal: Serialize + DeserializeOwned + 'static,
+    Mapper: FnMut(
+            &In::Key,
+            In::Value,
+            &In::Timestamp,
+            ExpireMap<StateKey, StateVal, In::Timestamp>,
+        ) -> Fut
+        + 'static,
+    Fut: Future<Output = (OutVal, Option<ExpireMap<StateKey, StateVal, In::Timestamp>>)>,
 {
-    fn ttl_map<S, UK, F>(
+    fn ttl_map(
         self,
         name: &str,
-        function: F,
-    ) -> StreamBuilder<(In::Key, OutVal, In::Timestamp)>
-    where
-        S: Default + Serialize + DeserializeOwned + 'static,
-        UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-        F: FnMut(
-                &In::Key,
-                In::Value,
-                &In::Timestamp,
-                ExpireMap<UK, S, In::Timestamp>,
-            ) -> (OutVal, Option<ExpireMap<UK, S, In::Timestamp>>)
-            + 'static,
-    {
-        self.stateful_op(name, TtlOp::new(function))
+        mapper: Mapper,
+    ) -> StreamBuilder<(In::Key, OutVal, In::Timestamp)> {
+        self.stateful_op(name, TtlOp::new(mapper))
     }
 }
 
