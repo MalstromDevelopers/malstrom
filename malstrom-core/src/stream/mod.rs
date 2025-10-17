@@ -5,7 +5,7 @@ mod operator;
 
 pub use builder::{InitialStreamBuilder, Malstrom, StreamBuilder};
 pub use operator::{BuildContext, DirectLogic, LogicBuilder, Operator, OperatorContext};
-pub(crate) use operator::{Logic, SafeLogic, SafeLogicWrapper};
+pub(crate) use operator::{IntoBuildable, Logic, SafeLogic, SafeLogicWrapper};
 // pub(super) use operator::{AppendableOperator, BuildableOperator, RunnableOperator};
 pub(super) use operator::{BuildableOperator, RunnableOperator};
 

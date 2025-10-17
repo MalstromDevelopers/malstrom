@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     stream::{BuildContext, LogicBuilder, Malstrom, Operator, StreamBuilder},
@@ -93,12 +93,11 @@ where
     M: Kvt<Key = K>,
     M::Value: Serialize + DeserializeOwned,
     M::Timestamp: Serialize + DeserializeOwned,
-    K: Key + Serialize + DeserializeOwned
+    K: Key + Serialize + DeserializeOwned,
 {
     type Logic = Distributor<M>;
 
     async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
         Distributor::<M>::new(self.partitioner, ctx).await
     }
-    
 }

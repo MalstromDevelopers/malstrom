@@ -135,9 +135,13 @@ where
                     &mut communication_backend,
                     buildinfo.worker_set.clone(),
                 );
-                Result::<RunnableOperator, WorkerExecutionError>::Ok(x.into_runnable(&handle, &mut ctx))
+                Result::<RunnableOperator, WorkerExecutionError>::Ok(
+                    x.into_runnable(&handle, &mut ctx),
+                )
             })
             .collect::<Result<Vec<RunnableOperator>, WorkerExecutionError>>()?;
+
+        let handle = rt.handle().to_owned();
         let mut worker = Worker {
             worker_id: this_worker,
             operators,
@@ -146,8 +150,8 @@ where
             rt,
         };
         coordinator.send(WorkerMessage::BuildComplete);
-        
-        let coordinator = rt.block_on(async move {
+
+        let coordinator = handle.block_on(async move {
             match coordinator.recv_async().await {
                 CoordinationMessage::StartExecution => coordinator,
                 _ => unreachable!(),
@@ -186,10 +190,7 @@ pub(crate) struct InnerRuntimeBuilder {
     operators: Vec<Box<dyn BuildableOperator>>,
 }
 impl InnerRuntimeBuilder {
-    pub(crate) fn add_operator(
-        &mut self,
-        operator: Box<dyn BuildableOperator>,
-    ) {
+    pub(crate) fn add_operator(&mut self, operator: Box<dyn BuildableOperator>) {
         self.operators.push(operator)
     }
     // destroy this builder and return the operators
@@ -310,10 +311,7 @@ fn perform_snapshot<P>(
     }
 }
 
-fn perform_suspend(
-    output: &mut Output<()>,
-    schedule_fn: &mut impl FnMut() -> bool,
-) {
+fn perform_suspend(output: &mut Output<()>, schedule_fn: &mut impl FnMut() -> bool) {
     let suspend = SuspendMarker::default();
     output.send(Message::SuspendMarker(suspend.clone()));
     while suspend.strong_count() > 1 {

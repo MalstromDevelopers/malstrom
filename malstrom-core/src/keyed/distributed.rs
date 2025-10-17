@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 use itertools::Itertools;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod message_router;
 pub mod types;
@@ -37,11 +37,12 @@ pub(super) struct Distributor<M: Kvt> {
     local_frontier: Option<<M as Kvt>::Timestamp>,
 }
 
-impl<M> Logic<M, M> for Distributor<M> where
-M: Kvt,
-M::Key: Key + Serialize + DeserializeOwned,
-M::Value: Serialize + DeserializeOwned,
-M::Timestamp: Serialize + DeserializeOwned,
+impl<M> Logic<M, M> for Distributor<M>
+where
+    M: Kvt,
+    M::Key: Key + Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     async fn apply(
         &mut self,
@@ -141,7 +142,10 @@ where
     M::Value: Serialize + DeserializeOwned,
     M::Timestamp: Serialize + DeserializeOwned,
 {
-    pub(super) async fn new(paritioner: WorkerPartitioner<<M as Kvt>::Key>, ctx: &mut BuildContext<'_>) -> Self {
+    pub(super) async fn new(
+        paritioner: WorkerPartitioner<<M as Kvt>::Key>,
+        ctx: &mut BuildContext<'_>,
+    ) -> Self {
         let snapshot: Option<DistributorState<<M as Kvt>::Timestamp>> = ctx.load_state().await;
         let other_workers = ctx
             .get_worker_ids()
@@ -324,11 +328,12 @@ where
     }
 }
 
-fn create_remotes<M>(other_workers: &[WorkerId], ctx: &mut BuildContext) -> Remotes<M> where
+fn create_remotes<M>(other_workers: &[WorkerId], ctx: &mut BuildContext) -> Remotes<M>
+where
     M: Kvt,
     M::Key: Serialize + DeserializeOwned,
     M::Value: Serialize + DeserializeOwned,
-    M::Timestamp: Serialize + DeserializeOwned
+    M::Timestamp: Serialize + DeserializeOwned,
 {
     let remotes = other_workers
         .iter()

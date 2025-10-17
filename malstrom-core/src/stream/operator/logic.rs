@@ -26,7 +26,7 @@ pub(crate) trait Logic<M: Kvt, N: Kvt>: 'static {
 /// [malstrom::operators::StatefulLogic](StatefulLogic) instead.
 pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     /// Called whenever this operator is scheduled by its worker
-    fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut OperatorContext){}
+    fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut OperatorContext) {}
 
     /// Called for every data message reaching the operator
     fn on_data(
@@ -39,10 +39,11 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     /// Called for every epoch reaching the operator
     fn on_epoch(
         &mut self,
-        epoch: <M as Kvt>::Timestamp,
+        epoch: &<M as Kvt>::Timestamp,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    );
+    ) {
+    }
 
     /// Called for every snapshot barrier reaching the operator
     fn on_barrier(
@@ -50,7 +51,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         barrier: &mut Barrier,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Called whenever a rescale message reaches the operator
     fn on_rescale(
@@ -58,7 +60,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         rescale_message: &mut RescaleMessage,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Called when the SuspendMarker reaches the operator. This indicates the job will shutdown,
     /// even though execution is not finished.
@@ -68,7 +71,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         suspend_marker: &mut SuspendMarker,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Called when a key interrogation message reaches the operator.
     /// The operator must inform the interrogation message about all keys it currently
@@ -78,7 +82,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         interrogate: &mut Interrogate<<M as Kvt>::Key>,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Called when a key-state collection message reaches the operator.
     /// The operator must hand the state for the given key to the collection message.
@@ -88,7 +93,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         collect: &mut Collect<<M as Kvt>::Key>,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Called when a key-state acquire message reaches the operator.
     /// The operator must take the state given by the acquire message and add it to its local key
@@ -98,7 +104,8 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         acquire: &mut Acquire<<M as Kvt>::Key>,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
-    ){}
+    ) {
+    }
 
     /// Turn this type into a schedulable function which can be scheduled by the Malstrom worker.
     fn into_logic(self) -> SafeLogicWrapper<Self> {
@@ -126,7 +133,7 @@ pub struct SafeLogicWrapper<L> {
 impl<M, N, L> Logic<M, N> for SafeLogicWrapper<L>
 where
     M: Kvt,
-    N: Kvt<Key = M::Key>,
+    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
     L: SafeLogic<M, N>,
 {
     async fn apply(
@@ -142,7 +149,10 @@ where
         };
         match msg {
             Message::Data(data_message) => self.implementation.on_data(data_message, output, ctx),
-            Message::Epoch(epoch) => self.implementation.on_epoch(epoch, output, ctx),
+            Message::Epoch(epoch) => {
+                self.implementation.on_epoch(&epoch, output, ctx);
+                output.send(Message::Epoch(epoch));
+            }
             Message::AbsBarrier(mut barrier) => {
                 self.implementation.on_barrier(&mut barrier, output, ctx);
                 output.send(barrier.into());

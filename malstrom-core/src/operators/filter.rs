@@ -1,11 +1,10 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::StreamBuilder;
-use crate::types::{Data, DataMessage, MaybeKey};
-use crate::types::{Message, Timestamp};
+use crate::stream::{Malstrom, Operator, SafeLogic, StreamBuilder};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Filter messages in a stream
-pub trait Filter<K, V, T>: super::sealed::Sealed {
+pub trait Filter<In: Kvt>: Sealed {
     /// Filters the datastream based on a given predicate.
     ///
     /// The given function receives an immutable reference to the value
@@ -42,30 +41,43 @@ pub trait Filter<K, V, T>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn filter(self, name: &str, filter: impl FnMut(&V) -> bool + 'static)
-        -> StreamBuilder<K, V, T>;
+    fn filter(
+        self,
+        name: impl Into<String>,
+        filter: impl FnMut(&In::Value) -> bool + 'static,
+    ) -> StreamBuilder<In>;
 }
 
-impl<K, V, T> Filter<K, V, T> for StreamBuilder<K, V, T>
+impl<In> Filter<In> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
+    In: Kvt,
 {
     fn filter(
         self,
-        name: &str,
+        name: impl Into<String>,
+        filter: impl FnMut(&In::Value) -> bool + 'static,
+    ) -> StreamBuilder<In> {
+        let op = SafeLogic::<In, In>::into_logic(FilterOp(filter));
+        self.then(Operator::direct(name.into(), op))
+    }
+}
 
-        mut filter: impl FnMut(&V) -> bool + 'static,
-    ) -> StreamBuilder<K, V, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, V, T>, out: &mut Output<K, V, T>| {
-                if filter(&item.value) {
-                    out.send(Message::Data(item))
-                }
-            },
-        )
+struct FilterOp<F>(F);
+
+impl<In, F> SafeLogic<In, In> for FilterOp<F>
+where
+    In: Kvt,
+    F: FnMut(&In::Value) -> bool + 'static,
+{
+    fn on_data(
+        &mut self,
+        data_message: DataMessage<In>,
+        output: &mut Output<In>,
+        ctx: &mut crate::stream::OperatorContext,
+    ) {
+        if (self.0)(&data_message.value) {
+            output.send(Message::Data(data_message))
+        }
     }
 }
 
@@ -75,7 +87,7 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]

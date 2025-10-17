@@ -1,11 +1,10 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
 use crate::stream::StreamBuilder;
-
-use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Apply a function to every message in a stream
-pub trait Map<K, V, T, VO>: super::sealed::Sealed {
+pub trait Map<In: Kvt, T: Data>: Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
     ///
@@ -36,42 +35,42 @@ pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn map(self, name: &str, mapper: impl (FnMut(V) -> VO) + 'static) -> StreamBuilder<K, VO, T>;
+    fn map(
+        self,
+        name: &str,
+        mapper: impl (FnMut(In::Value) -> T) + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<K, V, T, VO> Map<K, V, T, VO> for StreamBuilder<K, V, T>
+impl<In, T> Map<In, T> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    V: Data,
-    VO: Data,
-    T: Timestamp,
+    In: Kvt,
+    T: Data,
 {
     fn map(
         self,
         name: &str,
-        mut mapper: impl (FnMut(V) -> VO) + 'static,
-    ) -> StreamBuilder<K, VO, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, V, T>, out: &mut Output<K, VO, T>| {
-                out.send(Message::Data(DataMessage::new(
-                    item.key,
-                    mapper(item.value),
-                    item.timestamp,
-                )));
-            },
-        )
+        mut mapper: impl (FnMut(In::Value) -> T) + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
+        self.stateless_op(name, move |item: DataMessage<In>, out: &mut Output<_>| {
+            out.send(Message::Data(DataMessage::new(
+                item.key,
+                mapper(item.value),
+                item.timestamp,
+            )));
+        })
     }
 }
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{map::Map, source::Source, Sink},
+        operators::{Sink, map::Map, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]

@@ -12,7 +12,7 @@ where
     M: Kvt,
     M::Key: Debug,
     M::Value: Debug,
-    M::Timestamp: Debug
+    M::Timestamp: Debug,
 {
     fn sink(&mut self, msg: DataMessage<M>) {
         println!(

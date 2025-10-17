@@ -6,7 +6,7 @@ use crate::stream::{Logic, Malstrom, Operator, StreamBuilder};
 use crate::types::{Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message};
 
 /// Create a keyed stream **without** distributing messages.
-pub trait KeyLocal<M: Kvt, N: Kvt> {
+pub trait KeyLocal<Msg: Kvt, K: Key> {
     /// Turn a stream into a keyed stream and **do not** distribute
     /// messages across workers.
     /// # ⚠️ Warning:
@@ -15,30 +15,25 @@ pub trait KeyLocal<M: Kvt, N: Kvt> {
     /// If the worker gets de-scheduled all state is potentially lost.
     /// To have the state moved to a different worker in this case, use
     /// `key_distribute`.
-    fn key_local<F: Fn(&DataMessage<M>) -> N::Key + 'static>(
+    fn key_local<F: Fn(&DataMessage<Msg>) -> K + 'static>(
         self,
         name: impl Into<String>,
         key_func: F,
-    ) -> StreamBuilder<N>;
+    ) -> StreamBuilder<(K, Msg::Value, Msg::Timestamp)>;
 }
 
-impl<M, N, X> KeyLocal<M, N> for X
+impl<Msg, K, X> KeyLocal<Msg, K> for X
 where
-    X: Malstrom<M>,
-    M: Kvt,
-    N: Kvt<Value = M::Value, Timestamp = M::Timestamp>,
+    X: Malstrom<Msg>,
+    Msg: Kvt,
+    K: Key,
 {
-    fn key_local<F: Fn(&DataMessage<M>) -> N::Key + 'static>(
+    fn key_local<F: Fn(&DataMessage<Msg>) -> K + 'static>(
         self,
         name: impl Into<String>,
         key_func: F,
-    ) -> StreamBuilder<N> {
-        let op = Operator::direct(
-            name.into(),
-            KeyLocalImpl {
-                key_func,
-            },
-        );
+    ) -> StreamBuilder<(K, Msg::Value, Msg::Timestamp)> {
+        let op = Operator::direct(name.into(), KeyLocalImpl { key_func });
         self.then(op)
     }
 }

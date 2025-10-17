@@ -20,43 +20,43 @@ use serde::{Deserialize, Serialize};
 static TRANSACTIONS: [Transaction; 10] = [
     Transaction {
         amount: 1000.0,
-        transaction_time: TransactionTime::new(2025, 1, 1),
+        time: TransactionTime::new(2025, 1, 1),
     },
     Transaction {
         amount: -20.0,
-        transaction_time: TransactionTime::new(2025, 1, 5),
+        time: TransactionTime::new(2025, 1, 5),
     },
     Transaction {
         amount: -150.0,
-        transaction_time: TransactionTime::new(2025, 1, 17),
+        time: TransactionTime::new(2025, 1, 17),
     },
     Transaction {
         amount: -300.0,
-        transaction_time: TransactionTime::new(2025, 2, 4),
+        time: TransactionTime::new(2025, 2, 4),
     },
     Transaction {
         amount: 60.0,
-        transaction_time: TransactionTime::new(2025, 2, 16),
+        time: TransactionTime::new(2025, 2, 16),
     },
     Transaction {
         amount: 75.0,
-        transaction_time: TransactionTime::new(2025, 2, 25),
+        time: TransactionTime::new(2025, 2, 25),
     },
     Transaction {
         amount: -55.0,
-        transaction_time: TransactionTime::new(2025, 3, 16),
+        time: TransactionTime::new(2025, 3, 16),
     },
     Transaction {
         amount: 200.0,
-        transaction_time: TransactionTime::new(2025, 3, 31),
+        time: TransactionTime::new(2025, 3, 31),
     },
     Transaction {
         amount: -10.0,
-        transaction_time: TransactionTime::new(2025, 4, 5),
+        time: TransactionTime::new(2025, 4, 5),
     },
     Transaction {
         amount: -5.0,
-        transaction_time: TransactionTime::new(2025, 4, 19),
+        time: TransactionTime::new(2025, 4, 19),
     },
 ];
 
@@ -79,12 +79,12 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
         .key_distribute(
             "key-year-month",
             |msg| {
-                let ts = msg.value.transaction_time.0;
+                let ts = msg.value.time.0;
                 (ts.year(), ts.month())
             },
             rendezvous_select,
         )
-        .assign_timestamps("assign-time", |msg| msg.value.transaction_time.clone())
+        .assign_timestamps("assign-time", |msg| msg.value.time.clone())
         .generate_epochs("end-of-month", move |msg, prev_epoch| {
             // issue an epoch everytime we advance a month or if we have not yet issued an epoch
             let ts = msg.timestamp.0;
@@ -111,13 +111,13 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
 // Counter keeping monthly balances
 struct TransactionCounter;
 
-impl StatefulLogic<(i32, u32), Transaction, TransactionTime, f32, f32> for TransactionCounter {
+impl StatefulLogic<((i32, u32), Transaction, TransactionTime), f32, f32> for TransactionCounter {
     // executed on every data message
     fn on_data(
         &mut self,
-        msg: DataMessage<(i32, u32), Transaction, TransactionTime>,
+        msg: DataMessage<((i32, u32), Transaction, TransactionTime)>,
         key_state: f32,
-        _output: &mut Output<(i32, u32), f32, TransactionTime>,
+        _output: &mut Output<((i32, u32), f32, TransactionTime)>,
     ) -> Option<f32> {
         // update the balance
         Some(key_state + msg.value.amount)
@@ -128,7 +128,7 @@ impl StatefulLogic<(i32, u32), Transaction, TransactionTime, f32, f32> for Trans
         &mut self,
         epoch: &TransactionTime,
         state: &mut IndexMap<(i32, u32), f32>,
-        output: &mut Output<(i32, u32), f32, TransactionTime>,
+        output: &mut Output<((i32, u32), f32, TransactionTime)>,
     ) {
         // remove all closed months from state
         state.retain(|(year, month), balance| {
@@ -151,7 +151,7 @@ impl StatefulLogic<(i32, u32), Transaction, TransactionTime, f32, f32> for Trans
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     amount: f32,
-    transaction_time: TransactionTime,
+    time: TransactionTime,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Serialize, Deserialize)]

@@ -1,10 +1,10 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
 use crate::stream::StreamBuilder;
-use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Filter messages in a stream while at the same time applying a function to all values.
-pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
+pub trait FilterMap<In: Kvt, T: Data>: Sealed {
     /// Applies a function to every element of the stream.
     /// All elements for which the function returns `Some(x)` are emitted downstream
     /// as `x`, all elements for which the function returns `None` are removed from
@@ -41,34 +41,28 @@ pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn filter_map<VO: Data>(
+    fn filter_map(
         self,
         name: &str,
-
-        mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> StreamBuilder<K, VO, T>;
+        mapper: impl FnMut(In::Value) -> Option<T> + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<K, VI, T> FilterMap<K, VI, T> for StreamBuilder<K, VI, T>
+impl<In, T> FilterMap<In, T> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    VI: Data,
-    T: Timestamp,
+    In: Kvt,
+    T: Data,
 {
-    fn filter_map<VO: Data>(
+    fn filter_map(
         self,
         name: &str,
-
-        mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> StreamBuilder<K, VO, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
-                if let Some(x) = mapper(item.value) {
-                    out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
-                }
-            },
-        )
+        mut mapper: impl FnMut(In::Value) -> Option<T> + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
+        self.stateless_op(name, move |item: DataMessage<In>, out: &mut Output<_>| {
+            if let Some(x) = mapper(item.value) {
+                out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
+            }
+        })
     }
 }
 
@@ -78,7 +72,7 @@ mod tests {
         operators::{sink::Sink, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     use super::*;

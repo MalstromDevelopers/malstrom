@@ -71,7 +71,10 @@ where
 
 pub struct SingleIteratorPartition<V>(Peekable<Enumerate<Box<dyn Iterator<Item = V>>>>);
 
-impl<V> StatelessSourcePartition<(NoKey, V, usize)> for SingleIteratorPartition<V> where V: Data {
+impl<V> StatelessSourcePartition<(NoKey, V, usize)> for SingleIteratorPartition<V>
+where
+    V: Data,
+{
     fn poll(&mut self) -> Option<(V, usize)> {
         self.0.next().map(|x| (x.1, x.0))
     }

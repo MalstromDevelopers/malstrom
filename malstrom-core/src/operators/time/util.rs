@@ -8,11 +8,14 @@ use crate::{
 use super::assign_timestamps::OnTimeLate;
 
 #[inline(always)]
-pub(super) fn handle_maybe_late_msg<M: Kvt>(
-    prev_epoch: Option<&<M as Kvt>::Timestamp>,
-    d: DataMessage<M>,
-    output: &mut Output<(<M as Kvt>::Key, OnTimeLate<<M as Kvt>::Value>, <M as Kvt>::Timestamp)>,
-) {
+pub(super) fn handle_maybe_late_msg<In, Out>(
+    prev_epoch: Option<&In::Timestamp>,
+    d: DataMessage<In>,
+    output: &mut Output<Out>,
+) where
+    In: Kvt,
+    Out: Kvt<Key = In::Key, Value = OnTimeLate<In::Value>, Timestamp = In::Timestamp>,
+{
     let wrapped = if let Some(prev) = prev_epoch.as_ref() {
         if **prev < d.timestamp {
             OnTimeLate::OnTime(d.value)
@@ -26,9 +29,12 @@ pub(super) fn handle_maybe_late_msg<M: Kvt>(
     output.send(Message::Data(DataMessage::new(d.key, wrapped, d.timestamp)));
 }
 
-pub(super) fn split_mixed_stream<S, O, M: Kvt>(
-    mixed: StreamBuilder<S, O, M>,
-) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
+pub(super) fn split_mixed_stream<T: MaybeData, In: Kvt<Value = OnTimeLate<T>>>(
+    mixed: StreamBuilder<In>,
+) -> (
+    StreamBuilder<(In::Key, T, In::Timestamp)>,
+    StreamBuilder<(In::Key, T, In::Timestamp)>,
+) {
     // create a randint so we do not get name collisions.
     // u32 because unlick u64 it works well when displayed in a
     // browser (floats only)

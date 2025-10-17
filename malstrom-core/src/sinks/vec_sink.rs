@@ -52,7 +52,7 @@ impl<T> IntoIterator for VecSink<T> {
 
 impl<In> StatelessSinkImpl<In> for VecSink<DataMessage<In>>
 where
-    In: Kvt
+    In: Kvt,
 {
     fn sink(&mut self, msg: DataMessage<In>) {
         self.give(msg);

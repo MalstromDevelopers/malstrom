@@ -7,83 +7,98 @@ use crate::{
 };
 
 /// A custom stateless operator for Malstrom streams
-pub trait StatelessLogic<M: Kvt, N: Kvt<Key = M::Key, Timestamp = M::Timestamp>>: 'static {
+pub trait StatelessLogic<In: Kvt, T: Data>: 'static {
     /// Return Some to retain the key-state and None to discard it
-    fn on_data(&mut self, msg: DataMessage<M>, output: &mut Output<N>);
+    fn on_data(&mut self, msg: DataMessage<In>, output: &mut Output<(In::Key, T, In::Timestamp)>);
 
     /// Handle an incoming epoch. The default implementation is a no-op
-    fn on_epoch(&mut self, _epoch: &<M as Kvt>::Timestamp, _output: &mut Output<N>) {}
+    fn on_epoch(
+        &mut self,
+        _epoch: &<In as Kvt>::Timestamp,
+        _output: &mut Output<(In::Key, T, In::Timestamp)>,
+    ) {
+    }
 }
 
-impl<X, M, N> StatelessLogic<M, N> for X
+impl<X, In, T> StatelessLogic<In, T> for X
 where
-    M: Kvt,
-    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
-    X: FnMut(DataMessage<M>, &mut Output<N>) + 'static,
+    In: Kvt,
+    T: Data,
+    X: FnMut(DataMessage<In>, &mut Output<(In::Key, T, In::Timestamp)>) + 'static,
 {
-    fn on_data(&mut self, msg: DataMessage<M>, output: &mut Output<N>) {
+    fn on_data(&mut self, msg: DataMessage<In>, output: &mut Output<(In::Key, T, In::Timestamp)>) {
         self(msg, output);
     }
 }
 
 /// Add a custom stateless operator to the stream. See [StatelessLogic] for how to implement a
 /// custom stateless operator
-pub trait StatelessOp<M, N>: Sealed where M: Kvt, N: Kvt<Key = M::Key, Timestamp = M::Timestamp>{
+pub trait StatelessOp<In, T>: Sealed
+where
+    In: Kvt,
+    T: Data,
+{
     /// A small wrapper around StandardOperator to make allow simpler
     /// implementations of stateless, time-unaware operators like map or filter
     ///
     /// The mapper is only called for data messages, all other messages are passed
     /// along as they are.
-    fn stateless_op<L: StatelessLogic<M, N>>(
+    fn stateless_op<L: StatelessLogic<In, T>>(
         self,
         name: impl Into<String>,
         logic: L,
-    ) -> StreamBuilder<N>;
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-type StatelessOperator<M, N, L> = Operator<M, DirectLogic<L>, N>;
+type StatelessOperator<In: Kvt, T, L> = Operator<In, DirectLogic<L>, (In::Key, T, In::Timestamp)>;
 
-impl<M, N, X> StatelessOp<M, N> for X
+impl<In, T, X> StatelessOp<In, T> for X
 where
-    X: Malstrom<M>,
-    M: Kvt,
-    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
+    X: Malstrom<In>,
+    In: Kvt,
+    T: Data,
 {
-    fn stateless_op<L: StatelessLogic<M, N>>(
+    fn stateless_op<L: StatelessLogic<In, T>>(
         self,
         name: impl Into<String>,
         logic: L,
-    ) -> StreamBuilder<N> {
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
         let op = Operator::direct(
             name.into(),
             StatelessOperatorImpl {
                 logic,
-                _input: PhantomData::<M>,
-                _output: PhantomData::<N>,
-            }.into_logic()
+                _input: PhantomData::<In>,
+                _output: PhantomData::<T>,
+            }
+            .into_logic(),
         );
         self.then(op)
     }
 }
 
-struct StatelessOperatorImpl<M, N, L> {
+struct StatelessOperatorImpl<In, T, L> {
     logic: L,
-    _input: PhantomData<M>,
-    _output: PhantomData<N>,
+    _input: PhantomData<In>,
+    _output: PhantomData<T>,
 }
 
-impl<L, M, N> SafeLogic<M, N> for StatelessOperatorImpl<M, N, L>
+impl<L, In, T> SafeLogic<In, (In::Key, T, In::Timestamp)> for StatelessOperatorImpl<In, T, L>
 where
-    M: Kvt,
-    N: Kvt<Key = M::Key, Timestamp = M::Timestamp>,
-    L: StatelessLogic<M, N>,
+    In: Kvt,
+    T: Data,
+    L: StatelessLogic<In, T>,
 {
-    fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut crate::stream::OperatorContext) {}
+    fn on_schedule(
+        &mut self,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
+        ctx: &mut crate::stream::OperatorContext,
+    ) {
+    }
 
     fn on_data(
         &mut self,
-        data_message: DataMessage<M>,
-        output: &mut Output<N>,
+        data_message: DataMessage<In>,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut crate::stream::OperatorContext,
     ) {
         (self.logic).on_data(data_message, output);
@@ -91,59 +106,10 @@ where
 
     fn on_epoch(
         &mut self,
-        epoch: <M as Kvt>::Timestamp,
-        output: &mut Output<N>,
+        epoch: &<In as Kvt>::Timestamp,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut crate::stream::OperatorContext,
     ) {
         (self.logic).on_epoch(&epoch, output);
-        output.send(Message::Epoch(epoch));
-    }
-
-    fn on_barrier(
-        &mut self,
-        barrier: &mut crate::snapshot::Barrier,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
-    }
-
-    fn on_rescale(
-        &mut self,
-        rescale_message: &mut crate::types::RescaleMessage,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
-    }
-
-    fn on_suspend(
-        &mut self,
-        suspend_marker: &mut crate::types::SuspendMarker,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
-    }
-
-    fn on_interrogate(
-        &mut self,
-        interrogate: &mut crate::keyed::distributed::Interrogate<<M as Kvt>::Key>,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
-    }
-
-    fn on_collect(
-        &mut self,
-        collect: &mut crate::keyed::distributed::Collect<<M as Kvt>::Key>,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
-    }
-
-    fn on_acquire(
-        &mut self,
-        acquire: &mut crate::keyed::distributed::Acquire<<M as Kvt>::Key>,
-        output: &mut Output<N>,
-        ctx: &mut crate::stream::OperatorContext,
-    ) {
     }
 }

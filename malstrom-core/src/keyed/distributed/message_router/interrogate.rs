@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use indexmap::IndexSet;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::super::types::*;
 use super::RescaleMessage;
@@ -78,7 +78,12 @@ where
         }
     }
 
-    pub(crate) fn lifecycle<M>(self) -> MessageRouter<M> where M: Kvt<Key = K>, M::Value: Serialize + DeserializeOwned, M::Timestamp: Serialize + DeserializeOwned {
+    pub(crate) fn lifecycle<M>(self) -> MessageRouter<M>
+    where
+        M: Kvt<Key = K>,
+        M::Value: Serialize + DeserializeOwned,
+        M::Timestamp: Serialize + DeserializeOwned,
+    {
         match self.interrogate_msg.try_unwrap() {
             Ok(whitelist) => {
                 // interrogate is done

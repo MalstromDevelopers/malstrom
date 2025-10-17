@@ -35,7 +35,7 @@ pub trait Source<M: Kvt, S>: Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn source(self, name: &str, source: S) -> StreamBuilder<M>;
+    fn source(self, name: &str, source: S) -> StreamBuilder<(M::Key, M::Value, M::Timestamp)>;
 }
 
 #[diagnostic::on_unimplemented(message = "Not a Source: 
@@ -46,7 +46,11 @@ pub trait Source<M: Kvt, S>: Sealed {
 pub trait StreamSource<M: Kvt> {
     /// Turn this source into a stream by consuming the given stream builder.
     /// Source operators **must** read their inputs and forward all system messages downstream.
-    fn into_stream(self, name: &str, builder: InitialStreamBuilder) -> StreamBuilder<M>;
+    fn into_stream(
+        self,
+        name: &str,
+        builder: InitialStreamBuilder,
+    ) -> StreamBuilder<(M::Key, M::Value, M::Timestamp)>;
 }
 
 impl<M, S> Source<M, S> for InitialStreamBuilder
@@ -54,7 +58,7 @@ where
     M: Kvt,
     S: StreamSource<M>,
 {
-    fn source(self, name: &str, source: S) -> StreamBuilder<M> {
+    fn source(self, name: &str, source: S) -> StreamBuilder<(M::Key, M::Value, M::Timestamp)> {
         source.into_stream(name, self)
     }
 }

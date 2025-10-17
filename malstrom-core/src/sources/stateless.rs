@@ -118,7 +118,11 @@ where
     M::Timestamp: Timestamp,
     S: StatelessSourceImpl<M>,
 {
-    fn into_stream(self, name: &str, builder: InitialStreamBuilder) -> StreamBuilder<M> {
+    fn into_stream(
+        self,
+        name: &str,
+        builder: InitialStreamBuilder,
+    ) -> StreamBuilder<(M::Key, M::Value, M::Timestamp)> {
         builder.source(name, StatefulSource::new(self.0))
     }
 }

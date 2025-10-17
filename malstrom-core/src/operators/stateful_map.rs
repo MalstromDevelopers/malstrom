@@ -1,15 +1,18 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::Output,
+    operators::State,
     stream::StreamBuilder,
-    types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
+    types::{
+        Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp,
+    },
 };
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
 /// Apply a stateful function to every message in the stream
-pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
+pub trait StatefulMap<In: Kvt, T: Data>: Sealed {
     /// Transforms data utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.
@@ -57,11 +60,11 @@ pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_map<S: Default + Serialize + DeserializeOwned + 'static>(
         self,
         name: &str,
-        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> StreamBuilder<K, VO, T>;
+        mapper: impl FnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
 struct MapperOp<F> {
@@ -73,19 +76,19 @@ impl<F> MapperOp<F> {
     }
 }
 
-impl<F, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for MapperOp<F>
+impl<F, In, OutVal, S> StatefulLogic<In, OutVal, S> for MapperOp<F>
 where
-    K: MaybeKey,
-    VO: MaybeData,
-    T: MaybeTime,
-    F: FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
+    In: Kvt,
+    In::Key: State + Key,
+    OutVal: Data,
+    F: FnMut(&In::Key, In::Value, S) -> (OutVal, Option<S>) + 'static,
     S: Serialize + DeserializeOwned,
 {
     fn on_data(
         &mut self,
-        msg: DataMessage<K, VI, T>,
+        msg: DataMessage<In>,
         key_state: S,
-        output: &mut Output<K, VO, T>,
+        output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) -> Option<S> {
         let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state);
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
@@ -94,17 +97,17 @@ where
     }
 }
 
-impl<K, VI, T> StatefulMap<K, VI, T> for StreamBuilder<K, VI, T>
+impl<In, T> StatefulMap<In, T> for StreamBuilder<In>
 where
-    K: Key + Serialize + DeserializeOwned,
-    VI: Data + Serialize + DeserializeOwned,
-    T: Timestamp,
+    In: Kvt,
+    In::Key: State + Key,
+    T: Data,
 {
-    fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_map<S: Default + Serialize + DeserializeOwned + 'static>(
         self,
         name: &str,
-        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> StreamBuilder<K, VO, T> {
+        mapper: impl FnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
         self.stateful_op(name, MapperOp::new(mapper))
     }
 }
@@ -119,7 +122,7 @@ mod test {
 
     use crate::sinks::StatelessSink;
     use crate::sources::{SingleIteratorSource, StatelessSource};
-    use crate::testing::{get_test_rt, VecSink};
+    use crate::testing::{VecSink, get_test_rt};
 
     use super::StatefulMap;
 

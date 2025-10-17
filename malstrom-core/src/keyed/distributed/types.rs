@@ -34,11 +34,17 @@ pub(super) enum NetworkMessage<M: Kvt> {
         deserialize = "M::Key: Deserialize<'de>, M::Value: Deserialize<'de>, M::Timestamp: Deserialize<'de>"
     ))]
     Data(NetworkDataMessage<M>),
-    #[serde(bound(serialize = "M::Timestamp: Serialize", deserialize = "M::Timestamp: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "M::Timestamp: Serialize",
+        deserialize = "M::Timestamp: Deserialize<'de>"
+    ))]
     Epoch(<M as Kvt>::Timestamp),
     BarrierMarker,
     SuspendMarker,
-    #[serde(bound(serialize = "M::Key: Serialize", deserialize = "M::Key: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "M::Key: Serialize",
+        deserialize = "M::Key: Deserialize<'de>"
+    ))]
     Acquire(NetworkAcquire<<M as Kvt>::Key>),
     Upgrade(Version),
     AckUpgrade(Version),

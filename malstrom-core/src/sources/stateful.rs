@@ -9,19 +9,23 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
+        Distribute,
         distributed::{Acquire, Collect, Interrogate},
         partitioners::rendezvous_select,
-        Distribute,
     },
     operators::StreamSource,
     runtime::{
-        communication::{broadcast, Distributable},
         BiCommunicationClient,
+        communication::{Distributable, broadcast},
     },
     snapshot::Barrier,
-    stream::{BuildContext, InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator, OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder},
+    stream::{
+        BuildContext, InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator,
+        OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder,
+    },
     types::{
-        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker, Timestamp, WorkerId
+        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage,
+        SuspendMarker, Timestamp, WorkerId,
     },
 };
 
@@ -52,12 +56,15 @@ pub trait StatefulSourceImpl<Out: Kvt<Key = Self::Part>>: 'static {
 }
 
 /// A source which provides records for processing and holds some persistent state.
-pub struct StatefulSource<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>>(SrcImpl, PhantomData<Out>);
+pub struct StatefulSource<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>>(
+    SrcImpl,
+    PhantomData<Out>,
+);
 
 impl<Out, SrcImpl> StatefulSource<Out, SrcImpl>
 where
     Out: Kvt<Key = SrcImpl::Part>,
-    SrcImpl: StatefulSourceImpl<Out>
+    SrcImpl: StatefulSourceImpl<Out>,
 {
     /// Create a new stateful source from the given source implementation.
     pub fn new(source: SrcImpl) -> Self {
@@ -100,26 +107,36 @@ where
         self,
         name: &str,
         builder: InitialStreamBuilder,
-    ) -> StreamBuilder<Out> {
+    ) -> StreamBuilder<(Out::Key, Out::Value, Out::Timestamp)> {
         let parts = self.0.list_parts();
         let all_partitions: IndexMap<SrcImpl::Part, bool> =
             parts.iter().map(|x| (x.clone(), false)).collect();
 
-        let part_lister = Operator::built_by(format!("{name}-list-parts"), PartListerBuilder{parts});
+        let part_lister =
+            Operator::built_by(format!("{name}-list-parts"), PartListerBuilder { parts });
 
         builder
             .then(part_lister)
             .distribute(&format!("{name}-distribute-partitions"), rendezvous_select)
             .then(Operator::built_by(
                 format!("{name}-partition"),
-                StatefulSourcePartitionOpBuilder{src_impl: self.0, all_partitions, _out_type: PhantomData::<Out>}
+                StatefulSourcePartitionOpBuilder {
+                    src_impl: self.0,
+                    all_partitions,
+                    _out_type: PhantomData::<Out>,
+                },
             ))
     }
 }
 
-struct PartListerBuilder<Part>{parts: Vec<Part>}
+struct PartListerBuilder<Part> {
+    parts: Vec<Part>,
+}
 
-impl<Part> LogicBuilder<(), (Part, NoData, NoTime)> for PartListerBuilder<Part> where Part: Key {
+impl<Part> LogicBuilder<(), (Part, NoData, NoTime)> for PartListerBuilder<Part>
+where
+    Part: Key,
+{
     type Logic = PartLister<Part>;
 
     async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
@@ -129,13 +146,18 @@ impl<Part> LogicBuilder<(), (Part, NoData, NoTime)> for PartListerBuilder<Part> 
             // do not emit on non-0 worker
             Box::new(std::iter::empty::<Part>()) as Box<dyn Iterator<Item = Part>>
         };
-        PartLister{parts}
+        PartLister { parts }
     }
 }
 
-struct PartLister<Part>{parts: Box<dyn Iterator<Item =Part>>}
+struct PartLister<Part> {
+    parts: Box<dyn Iterator<Item = Part>>,
+}
 
-impl<Part> Logic<(), (Part, NoData, NoTime)> for PartLister<Part> where Part: Key {
+impl<Part> Logic<(), (Part, NoData, NoTime)> for PartLister<Part>
+where
+    Part: Key,
+{
     async fn apply(
         &mut self,
         input: &mut Input<()>,
@@ -168,12 +190,16 @@ impl<Part> Logic<(), (Part, NoData, NoTime)> for PartLister<Part> where Part: Ke
 struct PartitionFinished<Part>(Part);
 
 /// Java-esque name, maybe we should name it Factory instead of Builder?
-struct StatefulSourcePartitionOpBuilder<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>>{
+struct StatefulSourcePartitionOpBuilder<
+    Out: Kvt<Key = SrcImpl::Part>,
+    SrcImpl: StatefulSourceImpl<Out>,
+> {
     src_impl: SrcImpl,
     all_partitions: IndexMap<SrcImpl::Part, bool>,
-    _out_type: PhantomData<Out>
+    _out_type: PhantomData<Out>,
 }
-impl<In, Out, SrcImpl> LogicBuilder<In, Out> for StatefulSourcePartitionOpBuilder<Out, SrcImpl>
+impl<In, Out, SrcImpl> LogicBuilder<In, (Out::Key, Out::Value, Out::Timestamp)>
+    for StatefulSourcePartitionOpBuilder<Out, SrcImpl>
 where
     SrcImpl: StatefulSourceImpl<Out>,
     In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = NoTime>,
@@ -181,14 +207,12 @@ where
     Out::Value: Data,
     Out::Timestamp: Timestamp,
 {
-    type Logic = SafeLogicWrapper<StatefulSourcePartitionOp<Out, SrcImpl>>;
+    type Logic = StatefulSourcePartitionOp<Out, SrcImpl>;
 
     async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
-        let op = StatefulSourcePartitionOp::new(ctx, self.src_impl, self.all_partitions).await;
-        SafeLogic::<In, Out>::into_logic(op)
+        StatefulSourcePartitionOp::new(ctx, self.src_impl, self.all_partitions).await
     }
 }
-
 
 struct StatefulSourcePartitionOp<Out: Kvt<Key = SrcImpl::Part>, SrcImpl: StatefulSourceImpl<Out>> {
     partitions: IndexMap<SrcImpl::Part, SrcImpl::SourcePartition>,
@@ -225,7 +249,10 @@ where
             _phantom: PhantomData,
         };
 
-        if let Some(state) = ctx.load_state::<IndexMap<SrcImpl::Part, SrcImpl::PartitionState>>().await {
+        if let Some(state) = ctx
+            .load_state::<IndexMap<SrcImpl::Part, SrcImpl::PartitionState>>()
+            .await
+        {
             for (k, v) in state.into_iter() {
                 this.add_partition(k, Some(v));
             }
@@ -239,7 +266,7 @@ where
     }
 }
 
-impl<In, Out, SrcImpl> SafeLogic<In, Out>
+impl<In, Out, SrcImpl> Logic<In, (Out::Key, Out::Value, Out::Timestamp)>
     for StatefulSourcePartitionOp<Out, SrcImpl>
 where
     SrcImpl: StatefulSourceImpl<Out>,
@@ -248,10 +275,11 @@ where
     Out::Value: Data,
     Out::Timestamp: Timestamp,
 {
-    fn on_schedule(
+    async fn apply(
         &mut self,
-        output: &mut Output<Out>,
-        _ctx: &mut OperatorContext,
+        input: &mut Input<In>,
+        output: &mut Output<(Out::Key, Out::Value, Out::Timestamp)>,
+        ctx: &mut OperatorContext<'_>,
     ) {
         // TODO: All these iterations may be kinda inefficient
         for (part, partition) in self.partitions.iter_mut() {
@@ -281,101 +309,63 @@ where
         {
             output.send(Message::Epoch(t));
         }
-    }
 
-    fn on_data(
-        &mut self,
-        data_message: DataMessage<In>,
-        _output: &mut Output<Out>,
-        _ctx: &mut OperatorContext,
-    ) {
-        let part = data_message.key;
-        if !self.partitions.contains_key(&part) {
-            let partition = self.part_builder.build_part(&part, None);
-            self.partitions.insert(part, partition);
-        }
-    }
-
-    fn on_epoch(
-        &mut self,
-        _epoch: NoTime,
-        _output: &mut Output<Out>,
-        _ctx: &mut OperatorContext,
-    ) {
-    }
-
-    fn on_barrier(
-        &mut self,
-        barrier: &mut Barrier,
-        _output: &mut Output<Out>,
-        ctx: &mut OperatorContext,
-    ) {
-        let state: IndexMap<SrcImpl::Part, SrcImpl::PartitionState> = self
-            .partitions
-            .iter()
-            .map(|(k, v)| (k.clone(), v.snapshot()))
-            .collect();
-        barrier.persist(&state, &ctx.operator_id);
-    }
-
-    fn on_rescale(
-        &mut self,
-        rescale_message: &mut RescaleMessage,
-        _output: &mut Output<Out>,
-        ctx: &mut OperatorContext,
-    ) {
-        let new_workers = rescale_message.get_new_workers();
-        self.comm_clients.retain(|wid, _| new_workers.contains(wid));
-        for wid in new_workers.iter() {
-            if !self.comm_clients.contains_key(wid) && !wid == ctx.worker_id {
-                let client = ctx.create_communication_client(*wid);
-                self.comm_clients.insert(*wid, client);
+        if let Some(msg) = input.recv() {
+            match msg {
+                Message::Data(data_message) => {
+                    let part = data_message.key;
+                    if !self.partitions.contains_key(&part) {
+                        let partition = self.part_builder.build_part(&part, None);
+                        self.partitions.insert(part, partition);
+                    }
+                }
+                Message::Epoch(_) => {}
+                Message::AbsBarrier(mut barrier) => {
+                    let state: IndexMap<SrcImpl::Part, SrcImpl::PartitionState> = self
+                        .partitions
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.snapshot()))
+                        .collect();
+                    barrier.persist(&state, &ctx.operator_id);
+                    output.send(Message::AbsBarrier(barrier));
+                }
+                Message::Rescale(rescale_message) => {
+                    let new_workers = rescale_message.get_new_workers();
+                    self.comm_clients.retain(|wid, _| new_workers.contains(wid));
+                    for wid in new_workers.iter() {
+                        if !self.comm_clients.contains_key(wid) && !wid == ctx.worker_id {
+                            let client = ctx.create_communication_client(*wid);
+                            self.comm_clients.insert(*wid, client);
+                        }
+                    }
+                    output.send(Message::Rescale(rescale_message));
+                }
+                Message::SuspendMarker(suspend_marker) => {
+                    for partition in self.partitions.values_mut() {
+                        partition.suspend();
+                    }
+                    output.send(Message::SuspendMarker(suspend_marker));
+                }
+                Message::Interrogate(mut interrogate) => {
+                    let keys = self.partitions.keys();
+                    interrogate.add_keys(keys);
+                    output.send(Message::Interrogate(interrogate));
+                }
+                Message::Collect(mut collect) => {
+                    let key_state = self.partitions.swap_remove(&collect.key);
+                    if let Some(partition) = key_state {
+                        collect.add_state(ctx.operator_id, partition.collect());
+                    }
+                    output.send(Message::Collect(collect));
+                }
+                Message::Acquire(acquire) => {
+                    let partition_state = acquire.take_state(&ctx.operator_id);
+                    if let Some((part, part_state)) = partition_state {
+                        self.add_partition(part, Some(part_state));
+                    }
+                    output.send(Message::Acquire(acquire));
+                }
             }
-        }
-    }
-
-    fn on_suspend(
-        &mut self,
-        _suspend_marker: &mut SuspendMarker,
-        _output: &mut Output<Out>,
-        _ctx: &mut OperatorContext,
-    ) {
-        for partition in self.partitions.values_mut() {
-            partition.suspend();
-        }
-    }
-
-    fn on_interrogate(
-        &mut self,
-        interrogate: &mut Interrogate<SrcImpl::Part>,
-        _output: &mut Output<Out>,
-        _ctx: &mut OperatorContext,
-    ) {
-        let keys = self.partitions.keys();
-        interrogate.add_keys(keys);
-    }
-
-    fn on_collect(
-        &mut self,
-        collect: &mut Collect<SrcImpl::Part>,
-        _output: &mut Output<Out>,
-        ctx: &mut OperatorContext,
-    ) {
-        let key_state = self.partitions.swap_remove(&collect.key);
-        if let Some(partition) = key_state {
-            collect.add_state(ctx.operator_id, partition.collect());
-        }
-    }
-
-    fn on_acquire(
-        &mut self,
-        acquire: &mut Acquire<SrcImpl::Part>,
-        _output: &mut Output<Out>,
-        ctx: &mut OperatorContext,
-    ) {
-        let partition_state = acquire.take_state(&ctx.operator_id);
-        if let Some((part, part_state)) = partition_state {
-            self.add_partition(part, Some(part_state));
         }
     }
 }

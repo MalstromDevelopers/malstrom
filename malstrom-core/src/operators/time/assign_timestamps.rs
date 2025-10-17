@@ -1,7 +1,8 @@
+use std::marker::PhantomData;
+
 use crate::{
-    operators::sealed::Sealed,
-    stream::{Operator, StreamBuilder},
-    types::{Data, DataMessage, MaybeKey, Message, Timestamp},
+    stream::{Logic, Malstrom as _, Operator, SafeLogic, StreamBuilder},
+    types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp},
 };
 
 use super::NeedsEpochs;
@@ -14,52 +15,77 @@ pub(super) enum OnTimeLate<V> {
 }
 
 /// Assign timestamps to stream messages
-pub trait AssignTimestamps<K, V, T>: Sealed {
+pub trait AssignTimestamps<Msg: Kvt>: Sealed {
     /// Assigns a new timestamp to every message.
     /// NOTE: Any Epochs arriving at this operator are dropped with the exception
     /// of the `MAX` epoch. See [Timestamp::MAX]
     fn assign_timestamps<TO: Timestamp>(
         self,
-        name: &str,
-        assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
-    ) -> NeedsEpochs<K, V, TO>;
+        name: impl Into<String>,
+        assigner: impl FnMut(&DataMessage<Msg>) -> TO + 'static,
+    ) -> NeedsEpochs<(Msg::Key, Msg::Value, TO)>;
 }
 
-impl<K, V, T> AssignTimestamps<K, V, T> for StreamBuilder<K, V, T>
+impl<Msg> AssignTimestamps<Msg> for StreamBuilder<Msg>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
+    Msg: Kvt,
+    Msg::Value: Data,
+    Msg::Timestamp: Timestamp,
 {
     fn assign_timestamps<TO: Timestamp>(
         self,
-        name: &str,
-        mut assigner: impl FnMut(&DataMessage<K, V, T>) -> TO + 'static,
-    ) -> NeedsEpochs<K, V, TO> {
-        let operator = Operator::direct(name, move |input, output, _| {
-            if let Some(msg) = input.recv() {
-                match msg {
-                    Message::Data(d) => {
-                        let timestamp = assigner(&d);
-                        let new = DataMessage::new(d.key, d.value, timestamp);
-                        output.send(Message::Data(new))
-                    }
-                    Message::Epoch(e) => {
-                        if e == T::MAX {
-                            output.send(Message::Epoch(TO::MAX))
-                        }
-                    }
-                    Message::Interrogate(x) => output.send(Message::Interrogate(x)),
-                    Message::Collect(c) => output.send(Message::Collect(c)),
-                    Message::Acquire(a) => output.send(Message::Acquire(a)),
-                    Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
-                    // Message::Load(l) => output.send(Message::Load(l)),
-                    Message::Rescale(x) => output.send(Message::Rescale(x)),
-                    Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
-                }
-            }
-        });
+        name: impl Into<String>,
+        mut assigner: impl FnMut(&DataMessage<Msg>) -> TO + 'static,
+    ) -> NeedsEpochs<(Msg::Key, Msg::Value, TO)> {
+        let operator = Operator::direct(
+            name.into(),
+            AssignTimestampsOp {
+                assigner,
+                _timestamp_type: PhantomData::<TO>,
+            },
+        );
         NeedsEpochs(self.then(operator))
+    }
+}
+
+struct AssignTimestampsOp<F, T> {
+    assigner: F,
+    _timestamp_type: PhantomData<T>,
+}
+impl<In, Out, F, T> Logic<In, Out> for AssignTimestampsOp<F, T>
+where
+    In: Kvt,
+    In::Timestamp: Timestamp,
+    Out: Kvt<Key = In::Key, Value = In::Value, Timestamp = T>,
+    T: Timestamp,
+    F: FnMut(&DataMessage<In>) -> T + 'static,
+{
+    async fn apply(
+        &mut self,
+        input: &mut crate::channels::operator_io::Input<In>,
+        output: &mut crate::channels::operator_io::Output<Out>,
+        ctx: &mut crate::stream::OperatorContext<'_>,
+    ) {
+        if let Some(msg) = input.recv() {
+            match msg {
+                Message::Data(d) => {
+                    let timestamp = (self.assigner)(&d);
+                    let new = DataMessage::new(d.key, d.value, timestamp);
+                    output.send(Message::Data(new))
+                }
+                Message::Epoch(e) => {
+                    if e == In::Timestamp::MAX {
+                        output.send(Message::Epoch(T::MAX))
+                    }
+                }
+                Message::Interrogate(x) => output.send(Message::Interrogate(x)),
+                Message::Collect(c) => output.send(Message::Collect(c)),
+                Message::Acquire(a) => output.send(Message::Acquire(a)),
+                Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
+                Message::Rescale(x) => output.send(Message::Rescale(x)),
+                Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
+            }
+        }
     }
 }
 
@@ -70,25 +96,22 @@ mod tests {
         operators::{GenerateEpochs, Sink, Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        stream::Operator,
-        testing::get_test_rt,
-        testing::VecSink,
+        stream::{DirectLogic, Operator},
+        testing::{VecSink, get_test_rt},
         types::{MaybeData, MaybeTime, Message, NoKey},
     };
     use itertools::Itertools;
 
     use super::*;
 
-    fn epoch_collector<K, V, T>(
+    fn epoch_collector<Msg: Kvt>(
         name: &str,
-        collector: VecSink<T>,
-    ) -> Operator<K, V, T, K, V, T>
+        collector: VecSink<Msg::Timestamp>,
+    ) -> Operator<Msg, _, Msg>
     where
-        K: MaybeKey,
-        V: MaybeData,
-        T: MaybeTime + Clone,
+        Msg::Timestamp: MaybeTime + Clone,
     {
-        Operator::direct(name, move |input: &mut Input<K, V, T>, output, _| {
+        Operator::direct(name, move |input: &mut Input<Msg>, output, _| {
             if let Some(msg) = input.recv() {
                 match msg {
                     Message::Epoch(e) => {

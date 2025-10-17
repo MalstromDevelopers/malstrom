@@ -26,7 +26,7 @@ impl RunnableOperator {
     pub fn step(
         &mut self,
         communication: &mut dyn OperatorOperatorComm,
-        rt: &tokio::runtime::Runtime,
+        rt: &tokio::runtime::LocalRuntime,
     ) {
         let mut context = OperatorContext {
             worker_id: self.worker_id,

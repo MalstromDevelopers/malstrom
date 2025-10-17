@@ -4,8 +4,8 @@ use std::{iter, marker::PhantomData, rc::Rc, sync::Mutex};
 
 use super::{GetInput, GetOutput};
 use crate::{
-    channels::operator_io::{link, Input, Output},
-    stream::{operator::IntoBuildable, BuildableOperator},
+    channels::operator_io::{Input, Output, link},
+    stream::{BuildableOperator, operator::IntoBuildable},
     types::{Data, Kvt, MaybeKey, MaybeTime, Sealed},
     worker::InnerRuntimeBuilder,
 };
@@ -14,9 +14,9 @@ use crate::{
 /// `.filter` on it. The StreamBuilder needs to be finished by dropping it, which will automatically
 /// add it to the worker's execution schedule.
 pub struct StreamBuilder<M: Kvt> {
-    tail: Input<M>,
+    pub(crate) tail: Input<M>,
     // the runtime this stream is registered to
-    runtime: Rc<Mutex<InnerRuntimeBuilder>>,
+    pub(crate) runtime: Rc<Mutex<InnerRuntimeBuilder>>,
 }
 
 impl<M> StreamBuilder<M>
@@ -30,7 +30,10 @@ where
 }
 
 pub trait Malstrom<M: Kvt>: Sealed {
-    fn then<N: Kvt, T: GetInput<M> + IntoBuildable + GetOutput<N>>(self, operator: T) -> StreamBuilder<N>;
+    fn then<N: Kvt, T: GetInput<M> + IntoBuildable + GetOutput<N>>(
+        self,
+        operator: T,
+    ) -> StreamBuilder<N>;
 }
 
 pub struct InitialStreamBuilder {
@@ -40,16 +43,25 @@ pub struct InitialStreamBuilder {
 }
 impl InitialStreamBuilder {
     pub(crate) fn new(input: Input<()>, runtime: Rc<Mutex<InnerRuntimeBuilder>>) -> Self {
-        Self { tail: input, runtime }
+        Self {
+            tail: input,
+            runtime,
+        }
     }
 }
 
 impl Malstrom<()> for InitialStreamBuilder {
-    fn then<N: Kvt, T: GetInput<()> + IntoBuildable + GetOutput<N>>(mut self, mut operator: T) -> StreamBuilder<N> {
+    fn then<N: Kvt, T: GetInput<()> + IntoBuildable + GetOutput<N>>(
+        mut self,
+        mut operator: T,
+    ) -> StreamBuilder<N> {
         std::mem::swap(&mut self.tail, operator.get_input_mut());
         let mut new_tail = Input::new_unlinked();
         link(operator.get_output_mut(), &mut new_tail);
-        self.runtime.lock().unwrap().add_operator(Box::new(operator.into_buildable()));
+        self.runtime
+            .lock()
+            .unwrap()
+            .add_operator(Box::new(operator.into_buildable()));
         StreamBuilder {
             tail: new_tail,
             runtime: self.runtime,
@@ -80,11 +92,17 @@ where
 {
     /// add an operator to the end of this stream
     /// and return a new stream where the new operator is last_op
-    fn then<N: Kvt, T: GetInput<M> + IntoBuildable + GetOutput<N>>(mut self, mut operator: T) -> StreamBuilder<N>{
+    fn then<N: Kvt, T: GetInput<M> + IntoBuildable + GetOutput<N>>(
+        mut self,
+        mut operator: T,
+    ) -> StreamBuilder<N> {
         std::mem::swap(&mut self.tail, operator.get_input_mut());
         let mut new_tail = Input::new_unlinked();
         link(operator.get_output_mut(), &mut new_tail);
-        self.runtime.lock().unwrap().add_operator(Box::new(operator.into_buildable()));
+        self.runtime
+            .lock()
+            .unwrap()
+            .add_operator(Box::new(operator.into_buildable()));
         StreamBuilder {
             tail: new_tail,
             runtime: self.runtime,

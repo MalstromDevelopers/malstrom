@@ -1,10 +1,12 @@
+use tracing::Value;
+
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
 use crate::stream::StreamBuilder;
-use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Flatten a stream of iterables by emitting each element of every iterable as a distinct message.
-pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
+pub trait Flatten<In: Kvt>: Sealed {
     /// Flatten a datastream. Given a stream of some iterables, this function consumes
     /// each iterable and emits each of its elements downstream.
     ///
@@ -43,32 +45,36 @@ pub trait Flatten<K, VI, T, VO, I>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T>;
+    fn flatten(
+        self,
+        name: &str,
+    ) -> StreamBuilder<(In::Key, <In::Value as IntoIterator>::Item, In::Timestamp)>
+    where
+        In::Value: IntoIterator,
+        <In::Value as IntoIterator>::Item: Data;
 }
 
-impl<K, VI, T, VO, I> Flatten<K, VI, T, VO, I> for StreamBuilder<K, VI, T>
+impl<In> Flatten<In> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    I: Iterator<Item = VO>,
-    VI: IntoIterator<Item = VO, IntoIter = I> + Data,
-    VO: Data,
-    T: Timestamp,
+    In: Kvt,
+    In::Value: IntoIterator,
+    <In::Value as IntoIterator>::Item: Data,
 {
-    fn flatten(self, name: &str) -> StreamBuilder<K, VO, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
-                let key = item.key;
-                let timestamp = item.timestamp;
-                for x in item.value {
-                    out.send(Message::Data(DataMessage::new(
-                        key.clone(),
-                        x,
-                        timestamp.clone(),
-                    )))
-                }
-            },
-        )
+    fn flatten(
+        self,
+        name: &str,
+    ) -> StreamBuilder<(In::Key, <In::Value as IntoIterator>::Item, In::Timestamp)> {
+        self.stateless_op(name, move |item: DataMessage<In>, out: &mut Output<_>| {
+            let key = item.key;
+            let timestamp = item.timestamp;
+            for x in item.value {
+                out.send(Message::Data(DataMessage::new(
+                    key.clone(),
+                    x,
+                    timestamp.clone(),
+                )))
+            }
+        })
     }
 }
 
@@ -80,7 +86,7 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]

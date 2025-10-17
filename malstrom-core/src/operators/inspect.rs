@@ -1,10 +1,13 @@
+use std::marker::PhantomData;
+
 use crate::{
-    stream::{Operator, OperatorContext, StreamBuilder},
-    types::{Data, DataMessage, MaybeKey, Message, Timestamp},
+    channels::operator_io::{Input, Output},
+    stream::{Malstrom as _, Operator, OperatorContext, SafeLogic, StreamBuilder},
+    types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp},
 };
 
 /// Inspect messages in a stream without modifying them
-pub trait Inspect<K, V, T>: super::sealed::Sealed {
+pub trait Inspect<In: Kvt>: Sealed {
     /// Observe values in a stream without modifying them.
     /// This is often done for debugging purposes or to record metrics.
     ///
@@ -44,34 +47,50 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
     /// ```
     fn inspect(
         self,
-        name: &str,
-
-        inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T>;
+        name: impl Into<String>,
+        inspector: impl FnMut(&DataMessage<In>, &OperatorContext) + 'static,
+    ) -> StreamBuilder<In>;
 }
 
-impl<K, V, T> Inspect<K, V, T> for StreamBuilder<K, V, T>
+impl<In> Inspect<In> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
+    In: Kvt,
 {
     fn inspect(
         self,
-        name: &str,
-
-        mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T> {
-        let operator =
-            Operator::direct(name, move |input, output, ctx| match input.recv() {
-                Some(Message::Data(d)) => {
-                    inspector(&d, ctx);
-                    output.send(Message::Data(d));
-                }
-                Some(x) => output.send(x),
-                None => (),
-            });
+        name: impl Into<String>,
+        mut inspector: impl FnMut(&DataMessage<In>, &OperatorContext) + 'static,
+    ) -> StreamBuilder<In> {
+        let operator = Operator::direct(
+            name.into(),
+            InspectOp {
+                func: inspector,
+                _msg: PhantomData::<In>,
+            }
+            .into_logic(),
+        );
         self.then(operator)
+    }
+}
+
+struct InspectOp<Msg: Kvt, F> {
+    func: F,
+    _msg: PhantomData<Msg>,
+}
+
+impl<Msg, F> SafeLogic<Msg, Msg> for InspectOp<Msg, F>
+where
+    Msg: Kvt,
+    F: FnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
+{
+    fn on_data(
+        &mut self,
+        data_message: DataMessage<Msg>,
+        output: &mut Output<Msg>,
+        ctx: &mut OperatorContext,
+    ) {
+        (self.func)(&data_message, ctx);
+        output.send(Message::Data(data_message));
     }
 }
 
@@ -83,7 +102,7 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]

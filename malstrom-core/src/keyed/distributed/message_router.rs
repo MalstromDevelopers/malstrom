@@ -2,7 +2,7 @@ use collect::CollectRouter;
 use finished::FinishedRouter;
 use indexmap::IndexSet;
 use interrogate::InterrogateRouter;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Remotes, types::*};
 use crate::{channels::operator_io::Output, types::*};

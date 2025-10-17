@@ -1,5 +1,5 @@
 [build]
 rustflags = [
-    "-A", "warnings",
+    "-Awarnings",
     "--cfg", "tokio_unstable"
 ]

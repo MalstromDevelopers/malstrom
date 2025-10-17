@@ -9,9 +9,7 @@ use crate::{
     channels::operator_io::{Input, Output, full_broadcast},
     stream::{
         GetInput, GetOutput, Logic, OperatorContext,
-        operator::{
-            BuildableOperator, RunnableOperator, traits::RunOperator,
-        },
+        operator::{BuildableOperator, RunnableOperator, traits::RunOperator},
     },
     types::{Data, Kvt, MaybeKey, MaybeTime, Message},
 };
@@ -20,10 +18,10 @@ use super::BuildContext;
 
 /// A builder type to build generic operators
 pub struct Operator<M: Kvt, B, N: Kvt> {
-    input: Input<M>,
+    pub(crate) input: Input<M>,
     // TODO: get rid of the dynamic dispatch here
     logic_builder: B,
-    output: Output<N>,
+    pub(crate) output: Output<N>,
     operator_id: u64,
     name: String, // human readable name for debugging
 }
@@ -84,7 +82,7 @@ where
     L: Logic<M, N>,
     N: Kvt,
 {
-    fn schedule(&mut self, ctx: &mut OperatorContext, rt: &tokio::runtime::Runtime) {
+    fn schedule(&mut self, ctx: &mut OperatorContext, rt: &tokio::runtime::LocalRuntime) {
         rt.block_on(self.logic.apply(&mut self.input, &mut self.output, ctx))
     }
 
@@ -131,15 +129,16 @@ pub struct DirectLogic<L> {
     logic: L,
 }
 
-impl<M, N, L> LogicBuilder<M, N> for DirectLogic<L> where
-   M: Kvt,
+impl<M, N, L> LogicBuilder<M, N> for DirectLogic<L>
+where
+    M: Kvt,
     N: Kvt,
-    L: Logic<M, N> + 'static {
+    L: Logic<M, N> + 'static,
+{
     type Logic = L;
     async fn build(self, _ctx: &mut BuildContext<'_>) -> Self::Logic {
         self.logic
     }
-    
 }
 
 impl<M, N, F, Fut> LogicBuilder<M, N> for F
@@ -148,20 +147,19 @@ where
     Fut: Future,
     Fut::Output: Logic<M, N>,
     M: Kvt,
-    N: Kvt
+    N: Kvt,
 {
     type Logic = <Fut as Future>::Output;
     async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
         (self)(ctx).await
     }
-    
 }
 
 impl<M, L, N> Operator<M, DirectLogic<L>, N>
 where
     M: Kvt,
     N: Kvt,
-    L: Logic<M, N>
+    L: Logic<M, N>,
 {
     /// Create a new stream operator directly by supplying a name and a function which will
     /// repeatedly be called (scheduled) by the worker

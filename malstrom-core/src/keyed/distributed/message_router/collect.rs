@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 use indexmap::IndexSet;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::Output,
@@ -164,8 +164,7 @@ mod test {
         *s.get_index(i % s.len()).unwrap()
     }
 
-    fn get_input_output<M: Kvt>()
-    -> (Output<M>, Input<M>) {
+    fn get_input_output<M: Kvt>() -> (Output<M>, Input<M>) {
         let mut sender = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);

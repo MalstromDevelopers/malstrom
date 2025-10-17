@@ -33,7 +33,7 @@ pub trait RunOperator {
     /// progress. There is absolutely no assumption on what "progress" means,
     /// but it is implied, that the operator reads its input and writes
     /// to its output
-    fn schedule(&mut self, context: &mut OperatorContext, rt: &tokio::runtime::Runtime);
+    fn schedule(&mut self, context: &mut OperatorContext, rt: &tokio::runtime::LocalRuntime);
 
     /// still not happy with this function name
     fn has_queued_work(&self) -> bool;

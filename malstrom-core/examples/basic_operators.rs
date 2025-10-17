@@ -14,7 +14,7 @@ fn main() {
 }
 
 fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
-    provider
+    let stream = provider
         .new_stream()
         .source(
             // this is an operator

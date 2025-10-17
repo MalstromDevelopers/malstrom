@@ -1,12 +1,13 @@
-use crate::channels::operator_io::Input;
-use crate::stream::Operator;
-use crate::stream::StreamBuilder;
+use std::marker::PhantomData;
 
-use crate::stream::OperatorContext;
-use crate::types::{MaybeData, MaybeKey, Message, Timestamp};
+use crate::{
+    channels::operator_io::{Input, Output},
+    stream::{Malstrom as _, Operator, OperatorContext, SafeLogic, StreamBuilder},
+    types::{Kvt, MaybeData, MaybeKey, Message, Sealed, Timestamp},
+};
 
 /// Inspect the time frontier on a stream
-pub trait InspectFrontier<K, V, T> {
+pub trait InspectFrontier<In: Kvt>: Sealed {
     /// Observe the frontier (i.e. the current epoch) in a stream without modifying
     /// either values or time.
     ///
@@ -14,35 +15,55 @@ pub trait InspectFrontier<K, V, T> {
     /// * `inspector` - A function which gets called with a reference to the timestamp of any Epoch encountered
     fn inspect_frontier(
         self,
-        name: &str,
-        inspector: impl FnMut(&T, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T>;
+        name: impl Into<String>,
+        inspector: impl FnMut(&In::Timestamp, &OperatorContext) + 'static,
+    ) -> StreamBuilder<In>;
 }
 
-impl<K, V, T> InspectFrontier<K, V, T> for StreamBuilder<K, V, T>
+impl<Msg> InspectFrontier<Msg> for StreamBuilder<Msg>
 where
-    K: MaybeKey,
-    V: MaybeData,
-    T: Timestamp,
+    Msg: Kvt,
 {
     fn inspect_frontier(
         self,
-        name: &str,
-        mut inspector: impl FnMut(&T, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T> {
+        name: impl Into<String>,
+        mut inspector: impl FnMut(&Msg::Timestamp, &OperatorContext) + 'static,
+    ) -> StreamBuilder<Msg> {
         self.then(Operator::direct(
-            name,
-            move |input: &mut Input<K, V, T>, output, ctx| {
-                if let Some(msg) = input.recv() {
-                    match msg {
-                        Message::Epoch(e) => {
-                            inspector(&e, ctx);
-                            output.send(Message::Epoch(e))
-                        }
-                        x => output.send(x),
-                    }
-                };
-            },
+            name.into(),
+            InspectFrontierOp {
+                inspector,
+                _msg_type: PhantomData::<Msg>,
+            }
+            .into_logic(),
         ))
+    }
+}
+
+struct InspectFrontierOp<Msg: Kvt, F> {
+    inspector: F,
+    _msg_type: PhantomData<Msg>,
+}
+impl<Msg, F> SafeLogic<Msg, Msg> for InspectFrontierOp<Msg, F>
+where
+    Msg: Kvt,
+    F: FnMut(&Msg::Timestamp, &OperatorContext) + 'static,
+{
+    fn on_data(
+        &mut self,
+        data_message: crate::types::DataMessage<Msg>,
+        output: &mut Output<Msg>,
+        ctx: &mut OperatorContext,
+    ) {
+        output.send(Message::Data(data_message));
+    }
+
+    fn on_epoch(
+        &mut self,
+        epoch: &<Msg as Kvt>::Timestamp,
+        output: &mut Output<Msg>,
+        ctx: &mut OperatorContext,
+    ) {
+        (self.inspector)(epoch, ctx)
     }
 }

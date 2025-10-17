@@ -5,19 +5,21 @@ use malstrom::runtime::SingleThreadRuntime;
 use malstrom::sinks::{StatelessSink, StdOutSink};
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
+use malstrom::types::Kvt;
+
 use malstrom::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
 use malstrom::worker::StreamProvider;
 
 // #region custom_impl
 struct CustomFlatten;
 // #region impl_head
-impl<K, V, T> StatelessLogic<K, Vec<V>, T, V> for CustomFlatten
+impl<In, T> StatelessLogic<In, T> for CustomFlatten
 where
-    K: MaybeKey,
-    T: Timestamp,
-    V: Data, // #endregion impl_head
+    In: Kvt,
+    T: Data,
+    <In as Kvt>::Value: IntoIterator<Item = T>,
 {
-    fn on_data(&mut self, msg: DataMessage<K, Vec<V>, T>, output: &mut Output<K, V, T>) {
+    fn on_data(&mut self, msg: DataMessage<In>, output: &mut Output<(In::Key, T, In::Timestamp)>) {
         for x in msg.value {
             output.send(Message::Data(DataMessage::new(
                 msg.key.clone(),
