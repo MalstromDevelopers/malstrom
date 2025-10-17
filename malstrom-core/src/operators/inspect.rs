@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Inspect messages in a stream without modifying them
-pub trait Inspect<In: Kvt>: Sealed {
+pub trait Inspect<Msg: Kvt, Inspector>: Sealed {
     /// Observe values in a stream without modifying them.
     /// This is often done for debugging purposes or to record metrics.
     ///
@@ -35,7 +35,7 @@ pub trait Inspect<In: Kvt>: Sealed {
     ///         provider.new_stream()
     ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
     ///         .
-    /// inspect("inspect", move |msg, _ctx| sink_insepct.give(msg.clone()))
+    /// inspect("inspect", async move |msg, _ctx| sink_insepct.give(msg.clone()))
     ///         .sink("sink", StatelessSink::new(sink_output));
     ///     })
     ///     .execute()
@@ -45,27 +45,21 @@ pub trait Inspect<In: Kvt>: Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn inspect(
-        self,
-        name: impl Into<String>,
-        inspector: impl FnMut(&DataMessage<In>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<In>;
+    fn inspect(self, name: impl Into<String>, inspector: Inspector) -> StreamBuilder<Msg>;
 }
 
-impl<In> Inspect<In> for StreamBuilder<In>
+impl<Msg, Inspector, Fut> Inspect<Msg, Inspector> for StreamBuilder<Msg>
 where
-    In: Kvt,
+    Msg: Kvt,
+    Inspector: (FnMut(&DataMessage<Msg>, &OperatorContext) -> Fut) + 'static,
+    Fut: Future<Output = ()>,
 {
-    fn inspect(
-        self,
-        name: impl Into<String>,
-        mut inspector: impl FnMut(&DataMessage<In>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<In> {
+    fn inspect(self, name: impl Into<String>, mut inspector: Inspector) -> StreamBuilder<Msg> {
         let operator = Operator::direct(
             name.into(),
             InspectOp {
                 func: inspector,
-                _msg: PhantomData::<In>,
+                _msg: PhantomData::<Msg>,
             }
             .into_logic(),
         );
@@ -73,23 +67,24 @@ where
     }
 }
 
-struct InspectOp<Msg: Kvt, F> {
-    func: F,
+struct InspectOp<Msg: Kvt, Inspector> {
+    func: Inspector,
     _msg: PhantomData<Msg>,
 }
 
-impl<Msg, F> SafeLogic<Msg, Msg> for InspectOp<Msg, F>
+impl<Msg, Inspector, Fut> SafeLogic<Msg, Msg> for InspectOp<Msg, Inspector>
 where
     Msg: Kvt,
-    F: FnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
+    Inspector: (FnMut(&DataMessage<Msg>, &OperatorContext) -> Fut) + 'static,
+    Fut: Future<Output = ()>,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         data_message: DataMessage<Msg>,
         output: &mut Output<Msg>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
-        (self.func)(&data_message, ctx);
+        (self.func)(&data_message, ctx).await;
         output.send(Message::Data(data_message));
     }
 }

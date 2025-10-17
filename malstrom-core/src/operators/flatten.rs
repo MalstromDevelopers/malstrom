@@ -2,6 +2,7 @@ use tracing::Value;
 
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
+use crate::operators::StatelessLogic;
 use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
@@ -64,17 +65,36 @@ where
         self,
         name: &str,
     ) -> StreamBuilder<(In::Key, <In::Value as IntoIterator>::Item, In::Timestamp)> {
-        self.stateless_op(name, move |item: DataMessage<In>, out: &mut Output<_>| {
-            let key = item.key;
-            let timestamp = item.timestamp;
-            for x in item.value {
-                out.send(Message::Data(DataMessage::new(
-                    key.clone(),
-                    x,
-                    timestamp.clone(),
-                )))
-            }
-        })
+        self.stateless_op(name, FlattenOp)
+    }
+}
+
+struct FlattenOp;
+
+impl<In> StatelessLogic<In, <In::Value as IntoIterator>::Item> for FlattenOp
+where
+    In: Kvt,
+    In::Value: IntoIterator,
+    <In::Value as IntoIterator>::Item: Data,
+{
+    async fn on_data(
+        &mut self,
+        msg: DataMessage<In>,
+        output: &mut Output<(
+            <In as Kvt>::Key,
+            <In::Value as IntoIterator>::Item,
+            <In as Kvt>::Timestamp,
+        )>,
+    ) {
+        let key = msg.key;
+        let timestamp = msg.timestamp;
+        for x in msg.value {
+            output.send(Message::Data(DataMessage::new(
+                key.clone(),
+                x,
+                timestamp.clone(),
+            )))
+        }
     }
 }
 

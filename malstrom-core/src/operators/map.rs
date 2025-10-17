@@ -5,7 +5,7 @@ use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Apply a function to every message in a stream
-pub trait Map<In: Kvt, T: Data, Fut>: Sealed {
+pub trait Map<In: Kvt, T: Data, Mapper>: Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
     ///
@@ -38,21 +38,22 @@ pub trait Map<In: Kvt, T: Data, Fut>: Sealed {
     /// ```
     fn map(
         self,
-        name: &str,
-        mapper: impl (FnMut(In::Value) -> Fut) + 'static,
+        name: impl Into<String>,
+        mapper: Mapper,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<In, T, Fut> Map<In, T, Fut> for StreamBuilder<In>
+impl<In, T, Mapper, Fut> Map<In, T, Mapper> for StreamBuilder<In>
 where
     In: Kvt,
     T: Data,
+    Mapper: (FnMut(In::Value) -> Fut) + 'static,
     Fut: Future<Output = T>,
 {
     fn map(
         self,
-        name: &str,
-        mapper: impl (FnMut(In::Value) -> Fut) + 'static,
+        name: impl Into<String>,
+        mapper: Mapper,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
         self.stateless_op(name, MapOp { mapper })
     }
