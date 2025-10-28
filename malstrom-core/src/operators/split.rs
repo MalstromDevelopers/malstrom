@@ -73,7 +73,6 @@ where
     ) -> Vec<StreamBuilder<Msg>> {
         let rt = self.get_runtime();
         let mut input = self.tail;
-        let output = Output::new_unlinked(partitioner);
 
         let mut downstream_receivers: Vec<Input<Msg>> =
             (0..outputs).map(|_| Input::new_unlinked()).collect();
@@ -83,6 +82,9 @@ where
         // we perform a swap so our new operator will get the messages
         // which come out of the input stream
         std::mem::swap(&mut partition_op.input, &mut input);
+        // insert the partitioned output
+        let mut output = Output::new_unlinked(partitioner);
+        std::mem::swap(&mut partition_op.output, &mut output);
 
         // link all downstream receivers to our partition op
         for dr in downstream_receivers.iter_mut() {
