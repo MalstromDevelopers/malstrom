@@ -182,7 +182,7 @@ where
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext<'_>,
     ) {
-        self.logic.on_schedule(&mut self.state, output);
+        self.logic.on_schedule(&mut self.state, output).await;
     }
 
     async fn on_data(
@@ -205,7 +205,7 @@ where
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext<'_>,
     ) {
-        self.logic.on_epoch(epoch, &mut self.state, output);
+        self.logic.on_epoch(epoch, &mut self.state, output).await;
     }
 
     async fn on_barrier(

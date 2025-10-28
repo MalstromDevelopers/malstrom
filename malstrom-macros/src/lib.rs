@@ -7,7 +7,6 @@ pub fn ttl_state_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
-    // Extract the `T` type from the attribute
     let timestamp_type = match input
         .attrs
         .iter()
@@ -47,6 +46,16 @@ pub fn ttl_state_derive(input: TokenStream) -> TokenStream {
     let default_fields = fields.iter().map(|field| {
         let name = &field.ident;
         quote! {#name: None}
+    });
+    
+    let expire_stmts = fields.iter().map(|field| {
+        let name = &field.ident;
+        quote! {self.#name.take_if(|(_, expiry)| *expiry <= *epoch);}
+    });
+    
+    let is_empty_stmts = fields.iter().map(|field| {
+        let name = &field.ident;
+        quote! {self.#name.is_none()}
     });
 
     // Generate getters and setters for each field
@@ -98,8 +107,12 @@ pub fn ttl_state_derive(input: TokenStream) -> TokenStream {
         impl ::malstrom::operators::TTLState for #structname {
             type Timestamp = #timestamp_type;
 
-            fn expire(&mut self, epoch: &Self::Timestamp) {todo!()}
-            fn is_empty(&self) -> bool {todo!()}
+            fn expire(&mut self, epoch: &Self::Timestamp) {
+                #(#expire_stmts)*
+            }
+            fn is_empty(&self) -> bool {
+                #(#is_empty_stmts) & *
+            }
         }
     };
 

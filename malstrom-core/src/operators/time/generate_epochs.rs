@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use serde::{Serialize, de::DeserializeOwned};
+use tracing::warn;
 
 use crate::{
     msg,
@@ -144,6 +145,7 @@ where
                                     Some(x)
                                 }
                             } else {
+                                warn!("Ignoring issued epoch as it is <= previous epoch");
                                 Some(y)
                             }
                         }

@@ -22,6 +22,7 @@ fn main() {
 #[timestamp_type(usize)]
 struct MyState {
     total: i32,
+    other: String,
 }
 
 /// Running total with TTL
@@ -30,21 +31,24 @@ fn build_running_total_dataflow(provider: &mut dyn StreamProvider) {
         .new_stream()
         .source(
             "source",
-            StatelessSource::new(SingleIteratorSource::new(0..100)),
+            StatelessSource::new(SingleIteratorSource::new(1..=25)),
         )
-        .key_local("key-local", |x| (x.value & 1) == 1) // Group by odd/even
+        .key_local("key-local", |x| ()) // only one key
         .assign_timestamps("assigner", |msg| msg.timestamp)
-        .generate_epochs("generate", |_, t| t.to_owned());
+        .generate_epochs("generate", |msg, _| Some(msg.timestamp));
 
     ontime
+        // sums up the numbers in blocks of 5
         .ttl_map(
             "running-total",
             async |_key, value, ts, mut state: TTLMyState| {
-                match state.get_total() {
-                    Some(total) => state.set_total(total + value, ts + 15),
-                    None => state.set_total(value, ts + 15),
+                match state.total.as_mut() {
+                    // only update total keep same expiry
+                    Some((total, _expiry)) => *total += value,
+                    // let state expire in 5
+                    None => state.set_total(value, ts + 5),
                 }
-                (value, Some(state))
+                ((state.get_total().cloned(), value), Some(state))
             },
         )
         .sink("sink", StatelessSink::new(StdOutSink));
