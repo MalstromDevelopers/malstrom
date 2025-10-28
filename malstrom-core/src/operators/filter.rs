@@ -1,10 +1,12 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
-use crate::stream::{Malstrom, Operator, SafeLogic, StreamBuilder};
+use crate::msg;
+use crate::operators::StatelessLogic;
+use crate::stream::StreamBuilder;
 use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Filter messages in a stream
-pub trait Filter<In: Kvt>: Sealed {
+pub trait Filter<In: Kvt, FilterFunc>: Sealed {
     /// Filters the datastream based on a given predicate.
     ///
     /// The given function receives an immutable reference to the value
@@ -44,39 +46,42 @@ pub trait Filter<In: Kvt>: Sealed {
     fn filter(
         self,
         name: impl Into<String>,
-        filter: impl FnMut(&In::Value) -> bool + 'static,
-    ) -> StreamBuilder<In>;
+        filter: FilterFunc,
+    ) -> StreamBuilder<(In::Key, In::Value, In::Timestamp)>;
 }
 
-impl<In> Filter<In> for StreamBuilder<In>
+impl<In, FilterFunc, Fut> Filter<In, FilterFunc> for StreamBuilder<In>
 where
     In: Kvt,
+    FilterFunc: FnMut(&In::Value) -> Fut + 'static,
+    Fut: Future<Output = bool>,
 {
     fn filter(
         self,
         name: impl Into<String>,
-        filter: impl FnMut(&In::Value) -> bool + 'static,
-    ) -> StreamBuilder<In> {
-        let op = SafeLogic::<In, In>::into_logic(FilterOp(filter));
-        self.then(Operator::direct(name.into(), op))
+        filter: FilterFunc,
+    ) -> StreamBuilder<(In::Key, In::Value, In::Timestamp)> {
+        self.stateless_op(name.into(), FilterOp(filter))
     }
 }
 
-struct FilterOp<F>(F);
+struct FilterOp<FilterFunc>(FilterFunc);
 
-impl<In, F> SafeLogic<In, In> for FilterOp<F>
+impl<In, FilterFunc, Fut> StatelessLogic<In, In::Value> for FilterOp<FilterFunc>
 where
     In: Kvt,
-    F: FnMut(&In::Value) -> bool + 'static,
+    FilterFunc: FnMut(&In::Value) -> Fut + 'static,
+    Fut: Future<Output = bool>,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
-        data_message: DataMessage<In>,
-        output: &mut Output<In>,
-        ctx: &mut crate::stream::OperatorContext,
+        msg: DataMessage<In>,
+        output: &mut Output<(In::Key, In::Value, In::Timestamp)>,
     ) {
-        if (self.0)(&data_message.value) {
-            output.send(Message::Data(data_message))
+        if (self.0)(&msg.value).await {
+            // this is needed to get the output type right
+            let out_msg = DataMessage::new(msg.key, msg.value, msg.timestamp);
+            output.send(Message::Data(out_msg))
         }
     }
 }

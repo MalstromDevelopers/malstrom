@@ -188,11 +188,11 @@ where
     M: Kvt,
     Builder: StatefulSinkImpl<M>,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         data_message: DataMessage<(Builder::Part, (M::Key, M::Value), M::Timestamp)>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        _ctx: &mut OperatorContext,
+        _ctx: &mut OperatorContext<'_>,
     ) {
         let partition = self
             .partitions
@@ -206,11 +206,11 @@ where
         partition.sink(msg);
     }
 
-    fn on_barrier(
+    async fn on_barrier(
         &mut self,
         barrier: &mut Barrier,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         let state: Vec<_> = self
             .partitions
@@ -220,21 +220,21 @@ where
         barrier.persist(&state, &ctx.operator_id);
     }
 
-    fn on_interrogate(
+    async fn on_interrogate(
         &mut self,
         interrogate: &mut Interrogate<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        _ctx: &mut OperatorContext,
+        _ctx: &mut OperatorContext<'_>,
     ) {
         let keys = self.partitions.keys();
         interrogate.add_keys(keys);
     }
 
-    fn on_collect(
+    async fn on_collect(
         &mut self,
         collect: &mut Collect<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         let key_state = self.partitions.swap_remove(&collect.key);
         if let Some(partition) = key_state {
@@ -242,11 +242,11 @@ where
         }
     }
 
-    fn on_acquire(
+    async fn on_acquire(
         &mut self,
         acquire: &mut Acquire<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext,
+        ctx: &mut OperatorContext<'_>,
     ) {
         let partition_state = acquire.take_state(&ctx.operator_id);
         if let Some((part, part_state)) = partition_state {

@@ -30,7 +30,7 @@ pub use stateful_map::StatefulMap;
 pub use stateful_op::{State, StatefulLogic, StatefulOp};
 pub use stateless_op::{StatelessLogic, StatelessOp};
 pub use time::*;
-pub use ttl_map::{TtlMap, expiremap};
+pub use ttl_map::{TTLState, TtlMap};
 
 // These are only to be used internally in malstrom
 pub(crate) mod stateless_op;

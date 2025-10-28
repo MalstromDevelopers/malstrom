@@ -18,6 +18,12 @@ fn main() {
         .unwrap();
 }
 
+#[derive(TTLState)] // this generates the type TTLMyState
+#[timestamp_type(usize)]
+struct MyState {
+    total: i32,
+}
+
 /// Running total with TTL
 fn build_running_total_dataflow(provider: &mut dyn StreamProvider) {
     let (ontime, _late) = provider
@@ -33,17 +39,12 @@ fn build_running_total_dataflow(provider: &mut dyn StreamProvider) {
     ontime
         .ttl_map(
             "running-total",
-            |_key, inp, ts, mut state: ExpireMap<String, i32, usize>| {
-                let g = state.get(&"total".to_owned());
-                let val = if let Some(val) = g {
-                    let v = inp + *val;
-                    state.insert("total".to_owned(), v, ts + 15);
-                    v
-                } else {
-                    state.insert("total".to_owned(), inp, ts + 15);
-                    inp
-                };
-                (val, Some(state))
+            async |_key, value, ts, mut state: TTLMyState| {
+                match state.get_total() {
+                    Some(total) => state.set_total(total + value, ts + 15),
+                    None => state.set_total(value, ts + 15),
+                }
+                (value, Some(state))
             },
         )
         .sink("sink", StatelessSink::new(StdOutSink));

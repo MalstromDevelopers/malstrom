@@ -9,6 +9,7 @@ members = [
     "malstrom-k8s/operator/crds",
     "malstrom-k8s/runtime",
     "malstrom-kafka",
+    "malstrom-macros",
 ]
 
 [workspace.lints.rust]

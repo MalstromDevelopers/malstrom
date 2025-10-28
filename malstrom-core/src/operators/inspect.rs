@@ -45,16 +45,23 @@ pub trait Inspect<Msg: Kvt, Inspector>: Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn inspect(self, name: impl Into<String>, inspector: Inspector) -> StreamBuilder<Msg>;
+    fn inspect(
+        self,
+        name: impl Into<String>,
+        inspector: Inspector,
+    ) -> StreamBuilder<(Msg::Key, Msg::Value, Msg::Timestamp)>;
 }
 
-impl<Msg, Inspector, Fut> Inspect<Msg, Inspector> for StreamBuilder<Msg>
+impl<Msg, Inspector> Inspect<Msg, Inspector> for StreamBuilder<Msg>
 where
     Msg: Kvt,
-    Inspector: (FnMut(&DataMessage<Msg>, &OperatorContext) -> Fut) + 'static,
-    Fut: Future<Output = ()>,
+    Inspector: AsyncFnMut(&DataMessage<Msg>,&OperatorContext) + 'static,
 {
-    fn inspect(self, name: impl Into<String>, mut inspector: Inspector) -> StreamBuilder<Msg> {
+    fn inspect(
+        self,
+        name: impl Into<String>,
+        mut inspector: Inspector,
+    ) -> StreamBuilder<(Msg::Key, Msg::Value, Msg::Timestamp)> {
         let operator = Operator::direct(
             name.into(),
             InspectOp {
@@ -72,20 +79,22 @@ struct InspectOp<Msg: Kvt, Inspector> {
     _msg: PhantomData<Msg>,
 }
 
-impl<Msg, Inspector, Fut> SafeLogic<Msg, Msg> for InspectOp<Msg, Inspector>
+impl<Msg, Inspector> SafeLogic<Msg, (Msg::Key, Msg::Value, Msg::Timestamp)>
+    for InspectOp<Msg, Inspector>
 where
     Msg: Kvt,
-    Inspector: (FnMut(&DataMessage<Msg>, &OperatorContext) -> Fut) + 'static,
-    Fut: Future<Output = ()>,
+    Inspector: AsyncFnMut(&DataMessage<Msg>,&OperatorContext) + 'static,
 {
     async fn on_data(
         &mut self,
-        data_message: DataMessage<Msg>,
-        output: &mut Output<Msg>,
+        msg: DataMessage<Msg>,
+        output: &mut Output<(Msg::Key, Msg::Value, Msg::Timestamp)>,
         ctx: &mut OperatorContext<'_>,
     ) {
-        (self.func)(&data_message, ctx).await;
-        output.send(Message::Data(data_message));
+        (self.func)(&msg, ctx).await;
+        // needed for type conversion
+        let out_msg = DataMessage::new(msg.key, msg.value, msg.timestamp);
+        output.send(Message::Data(out_msg));
     }
 }
 

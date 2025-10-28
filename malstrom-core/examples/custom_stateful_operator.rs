@@ -17,7 +17,7 @@ where
     Msg: Kvt,
     Msg::Timestamp: Timestamp,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
         msg: DataMessage<Msg>,
         mut key_state: Vec<Msg::Value>,
@@ -38,7 +38,7 @@ where
     // #endregion custom_impl
 
     // #region on_epoch
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
         epoch: &Msg::Timestamp,
         state: &mut IndexMap<Msg::Key, Vec<Msg::Value>>,

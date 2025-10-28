@@ -21,6 +21,6 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             "iter-source",
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
-        .map("double", |x| x * 2)
-        .inspect("print", |x, _| println!("{}", x.value)); // <-- and this too
+        .map("double", async |x| x * 2)
+        .inspect("print", async |x, _| println!("{}", x.value)); // <-- and this too
 }

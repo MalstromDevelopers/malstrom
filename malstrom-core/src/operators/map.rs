@@ -73,7 +73,7 @@ where
     async fn on_data(
         &mut self,
         mut msg: DataMessage<In>,
-        output: &mut Output<(<In as Kvt>::Key, T, <In as Kvt>::Timestamp)>,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
     ) {
         let new_value = (self.mapper)(msg.value).await;
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);

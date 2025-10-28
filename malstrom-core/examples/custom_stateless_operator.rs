@@ -19,7 +19,11 @@ where
     T: Data,
     <In as Kvt>::Value: IntoIterator<Item = T>,
 {
-    fn on_data(&mut self, msg: DataMessage<In>, output: &mut Output<(In::Key, T, In::Timestamp)>) {
+    async fn on_data(
+        &mut self,
+        msg: DataMessage<In>,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
+    ) {
         for x in msg.value {
             output.send(Message::Data(DataMessage::new(
                 msg.key.clone(),

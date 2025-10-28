@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{hash::Hash, marker::PhantomData};
 
 pub use expiremap;
 use expiremap::ExpireMap;
@@ -12,9 +12,10 @@ use crate::{
 };
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
+pub use malstrom_macros::TTLState;
 
 /// Map with automatic state clean up based on ttl.
-pub trait TtlMap<In: Kvt, OutVal: Data, Mapper, StateKey, StateVal>: Sealed {
+pub trait TtlMap<In: Kvt, OutVal: Data, Mapper, TtlState>: Sealed {
     /// Transforms data utilizing managed state where every value has a finite Time to Live (TTL).
     /// When an Epoch reaches this operator, all state values with a whos expiry time is less than
     /// or equal to the value of the Epoch will be removed from state.
@@ -30,39 +31,42 @@ pub trait TtlMap<In: Kvt, OutVal: Data, Mapper, StateKey, StateVal>: Sealed {
     -> StreamBuilder<(In::Key, OutVal, In::Timestamp)>;
 }
 
-struct TtlOp<F> {
+struct TtlOp<F, OpState> {
     mapper: F,
+    op_state: PhantomData<OpState>,
 }
-impl<F> TtlOp<F> {
+impl<F, OpState> TtlOp<F, OpState> {
     fn new(mapper: F) -> Self {
-        Self { mapper }
+        Self {
+            mapper,
+            op_state: PhantomData,
+        }
     }
 }
 
-impl<In, OutVal, Mapper, StateKey, StateVal, Fut>
-    StatefulLogic<In, OutVal, ExpireMap<StateKey, StateVal, In::Timestamp>> for TtlOp<Mapper>
+pub trait TTLState: State {
+    type Timestamp: Timestamp;
+    fn expire(&mut self, epoch: &Self::Timestamp);
+
+    fn is_empty(&self) -> bool;
+}
+
+impl<In, OutVal, Mapper, OpState> StatefulLogic<In, OutVal, OpState> for TtlOp<Mapper, OpState>
 where
     In: Kvt,
     In::Key: State + Key,
     In::Timestamp: Ord,
     OutVal: Data,
-    StateKey: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-    StateVal: Serialize + DeserializeOwned,
-    Mapper: FnMut(
-            &In::Key,
-            In::Value,
-            &In::Timestamp,
-            ExpireMap<StateKey, StateVal, In::Timestamp>,
-        ) -> Fut
+    OpState: TTLState<Timestamp = In::Timestamp> + 'static,
+    Mapper: AsyncFnMut(&In::Key, In::Value, &In::Timestamp, OpState) -> (OutVal, Option<OpState>)
         + 'static,
-    Fut: Future<Output = (OutVal, Option<ExpireMap<StateKey, StateVal, In::Timestamp>>)>,
 {
     async fn on_data(
         &mut self,
         msg: DataMessage<In>,
-        key_state: ExpireMap<StateKey, StateVal, In::Timestamp>,
+        key_state: OpState,
         output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
-    ) -> Option<ExpireMap<StateKey, StateVal, In::Timestamp>> {
+    ) -> Option<OpState> {
         let (value, state) = (self.mapper)(&msg.key, msg.value, &msg.timestamp, key_state).await;
         output.send(Message::Data(DataMessage::new(
             msg.key,
@@ -75,7 +79,7 @@ where
     async fn on_epoch(
         &mut self,
         epoch: &In::Timestamp,
-        state: &mut indexmap::IndexMap<In::Key, ExpireMap<StateKey, StateVal, In::Timestamp>>,
+        state: &mut indexmap::IndexMap<In::Key, OpState>,
         _output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) {
         state.retain(|_, v| {
@@ -85,30 +89,22 @@ where
     }
 }
 
-impl<In, OutVal, Mapper, StateKey, StateVal, Fut> TtlMap<In, OutVal, Mapper, StateKey, StateVal>
-    for StreamBuilder<In>
+impl<In, OutVal, Mapper, OpState> TtlMap<In, OutVal, Mapper, OpState> for StreamBuilder<In>
 where
     In: Kvt,
     In::Key: State + Key,
     In::Timestamp: Ord + State,
     OutVal: Data,
-    StateKey: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-    StateVal: Serialize + DeserializeOwned + 'static,
-    Mapper: FnMut(
-            &In::Key,
-            In::Value,
-            &In::Timestamp,
-            ExpireMap<StateKey, StateVal, In::Timestamp>,
-        ) -> Fut
+    OpState: TTLState<Timestamp = In::Timestamp> + 'static,
+    Mapper: AsyncFnMut(&In::Key, In::Value, &In::Timestamp, OpState) -> (OutVal, Option<OpState>)
         + 'static,
-    Fut: Future<Output = (OutVal, Option<ExpireMap<StateKey, StateVal, In::Timestamp>>)>,
 {
     fn ttl_map(
         self,
         name: &str,
         mapper: Mapper,
     ) -> StreamBuilder<(In::Key, OutVal, In::Timestamp)> {
-        self.stateful_op(name, TtlOp::new(mapper))
+        self.stateful_op(name, TtlOp::<Mapper, OpState>::new(mapper))
     }
 }
 
