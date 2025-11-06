@@ -6,7 +6,7 @@ use malstrom::{
     sinks::{StatelessSink, StatelessSinkImpl},
     snapshot::NoPersistence,
     sources::{SingleIteratorSource, StatelessSource},
-    types::DataMessage,
+    types::{DataMessage, MaybeTime},
     worker::StreamProvider,
 };
 use std::{fs::OpenOptions, io::Write};
@@ -22,8 +22,11 @@ impl FileSink {
     }
 }
 
-impl<T> StatelessSinkImpl<String, String, T> for FileSink {
-    fn sink(&mut self, msg: DataMessage<String, String, T>) {
+impl<T> StatelessSinkImpl<(String, String, T)> for FileSink
+where
+    T: MaybeTime,
+{
+    fn sink(&mut self, msg: DataMessage<(String, String, T)>) {
         let file_path = format!("{}/{}.txt", self.directory, msg.key);
         // open file in append-mode, creating it if it does not exist
         let mut file = OpenOptions::new()
@@ -51,7 +54,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
             |msg| msg.value.to_string(),
             rendezvous_select,
         )
-        .map("int-to-string", |value| value.to_string())
+        .map("int-to-string", async |value| value.to_string())
         .sink(
             "file-sink",
             StatelessSink::new(FileSink::new("/tmp/file-sink".to_string())),

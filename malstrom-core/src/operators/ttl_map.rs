@@ -44,13 +44,6 @@ impl<F, OpState> TtlOp<F, OpState> {
     }
 }
 
-pub trait TTLState: State {
-    type Timestamp: Timestamp;
-    fn expire(&mut self, epoch: &Self::Timestamp);
-
-    fn is_empty(&self) -> bool;
-}
-
 impl<In, OutVal, Mapper, OpState> StatefulLogic<In, OutVal, OpState> for TtlOp<Mapper, OpState>
 where
     In: Kvt,
@@ -108,6 +101,30 @@ where
     }
 }
 
+pub trait TTLState: State {
+    type Timestamp: Timestamp;
+    fn expire(&mut self, epoch: &Self::Timestamp);
+
+    fn is_empty(&self) -> bool;
+}
+
+impl<K, V, T> TTLState for ExpireMap<K, V, T>
+where
+    K: Clone + Hash + Eq + 'static + Serialize + DeserializeOwned,
+    V: 'static + Serialize + DeserializeOwned,
+    T: Timestamp + Serialize + DeserializeOwned,
+{
+    type Timestamp = T;
+
+    fn expire(&mut self, epoch: &Self::Timestamp) {
+        self.expire(epoch);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod test {
 
@@ -121,11 +138,18 @@ mod test {
     use crate::sources::{SingleIteratorSource, StatelessSource};
     use crate::testing::{VecSink, get_test_rt};
 
-    use super::TtlMap;
+    use super::{TTLState, TtlMap};
+    use crate as malstrom;
 
     /// Simple test to check we are keeping state
     #[test]
     fn keeps_state() {
+        #[derive(TTLState)]
+        #[timestamp_type(usize)]
+        struct Foo {
+            x: i32,
+        }
+
         let collector = VecSink::new();
 
         let rt = get_test_rt(|provider| {
@@ -141,26 +165,28 @@ mod test {
             // calculate a running total split by odd and even numbers
             on_time
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .ttl_map(
-                    "add",
-                    |_key, inp, ts, mut state: ExpireMap<String, i32, usize>| {
-                        let g = state.get(&"key".to_owned());
-                        let val = if let Some(val) = g {
-                            let v = inp + *val;
-                            state.insert("key".to_owned(), v, ts + 15);
-                            v
-                        } else {
-                            state.insert("key".to_owned(), inp, ts + 15);
+                .ttl_map("add", async |_key, inp, ts, mut state: TTLFoo| {
+                    let val: i32 = match state.x.as_mut() {
+                        Some(x) => {
+                            let val = inp + x.0;
+                            *x = (val, ts + 15);
+                            val
+                        }
+                        None => {
+                            state.set_x(inp, ts + 15);
                             inp
-                        };
-                        (val, Some(state))
-                    },
-                )
+                        }
+                    };
+                    (val, Some(state))
+                })
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().expect("Executing runtime failed");
 
-        let result = collector.into_iter().map(|x| x.value).collect_vec();
+        let result = collector
+            .into_iter()
+            .map(|x| x.value.to_owned())
+            .collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
             *s += i;
             Some(*s)
@@ -194,13 +220,13 @@ mod test {
                 .key_local("key-local", |_| 0)
                 .ttl_map(
                     "concat",
-                    |_key, inp, ts, mut state: ExpireMap<usize, String, usize>| {
+                    async |_key, inp, ts, mut state: ExpireMap<usize, String, usize>| {
                         state.insert(*ts, inp, ts + 2);
                         let res = (0..=*ts).filter_map(|i| state.get(&i)).join("|");
                         (res, Some(state))
                     },
                 )
-                .filter("remove-empty", |x| !x.is_empty())
+                .filter("remove-empty", async |x| !x.is_empty())
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
 

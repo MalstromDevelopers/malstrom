@@ -6,7 +6,7 @@ use malstrom::{
     sinks::{StatefulSink, StatefulSinkImpl, StatefulSinkPartition},
     snapshot::NoPersistence,
     sources::{SingleIteratorSource, StatelessSource},
-    types::DataMessage,
+    types::{DataMessage, MaybeTime, Timestamp},
     worker::StreamProvider,
 };
 use std::{fs::OpenOptions, io::Write};
@@ -22,12 +22,15 @@ impl FileSink {
     }
 }
 
-impl<T> StatefulSinkImpl<String, String, T> for FileSink {
+impl<T> StatefulSinkImpl<(String, String, T)> for FileSink
+where
+    T: MaybeTime,
+{
     type Part = String;
     type PartitionState = usize;
     type SinkPartition = FileSinkPartition;
 
-    fn assign_part(&self, msg: &DataMessage<String, String, T>) -> Self::Part {
+    fn assign_part(&self, msg: &DataMessage<(String, String, T)>) -> Self::Part {
         format!("{}/{}.txt", self.directory, msg.key)
     }
 
@@ -61,10 +64,13 @@ impl FileSinkPartition {
     }
 }
 
-impl<T> StatefulSinkPartition<String, String, T> for FileSinkPartition {
+impl<T> StatefulSinkPartition<(String, String, T)> for FileSinkPartition
+where
+    T: MaybeTime,
+{
     type PartitionState = usize;
 
-    fn sink(&mut self, msg: DataMessage<String, String, T>) {
+    fn sink(&mut self, msg: DataMessage<(String, String, T)>) {
         self.file
             .write(format!("{} ", self.next_line_no).as_bytes())
             .unwrap();
@@ -96,7 +102,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
             |msg| (msg.value % 5).to_string(),
             rendezvous_select,
         )
-        .map("int-to-string", |value| value.to_string())
+        .map("int-to-string", async |value| value.to_string())
         .sink(
             "file-sink",
             StatefulSink::new(FileSink::new("/tmp/file-sink".to_string())),

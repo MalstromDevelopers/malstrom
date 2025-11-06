@@ -1,5 +1,4 @@
 use crate::channels::operator_io::{Input, Output, link};
-use crate::stream::IntoBuildable;
 use crate::stream::{Operator, SafeLogic, StreamBuilder};
 use crate::types::{DataMessage, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed};
 use std::marker::PhantomData;
@@ -91,9 +90,7 @@ where
             link(&mut partition_op.output, dr);
         }
         #[allow(clippy::unwrap_used)]
-        rt.lock()
-            .unwrap()
-            .add_operator(Box::new(partition_op.into_buildable()));
+        rt.lock().unwrap().add_operator(partition_op);
 
         downstream_receivers
             .into_iter()
@@ -114,7 +111,7 @@ where
         &mut self,
         data_message: DataMessage<Msg>,
         output: &mut Output<Msg>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
         output.send(Message::Data(data_message));
     }

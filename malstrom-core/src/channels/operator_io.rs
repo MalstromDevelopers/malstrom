@@ -2,16 +2,20 @@
 //! **on the same worker** communicate with each other.
 //! Essentially these are the edges in the stream graph.
 use super::spsc;
-use crate::types::{Kvt, MaybeTime, Message, OperatorPartitioner};
+use crate::{
+    snapshot::Barrier,
+    types::{Kvt, MaybeTime, Message, OperatorPartitioner, SuspendMarker, Timestamp},
+};
+use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
 use itertools::Itertools;
-use std::rc::Rc;
+use std::{rc::Rc, usize};
 
 /// Operator Output
 pub struct Output<M: Kvt> {
     // Each sender in this Vec is essentially one outgoing
     // edge from the operator
     senders: Vec<spsc::Sender<Message<M>>>,
-    partitioner: Rc<dyn OperatorPartitioner<M>>,
+    partitioner: Box<dyn OperatorPartitioner<M>>,
     frontier: Option<<M as Kvt>::Timestamp>,
     suspended: bool,
 }
@@ -22,7 +26,7 @@ impl<M: Kvt> Output<M> {
     pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<M>) -> Self {
         Self {
             senders: Vec::new(),
-            partitioner: Rc::new(partitioner),
+            partitioner: Box::new(partitioner),
             frontier: None,
             suspended: false,
         }
@@ -32,7 +36,7 @@ impl<M: Kvt> Output<M> {
     /// Data messages are distributed as per the partioning function.
     ///
     /// System messages are always broadcasted.
-    pub fn send(&mut self, msg: Message<M>)
+    pub async fn send(&mut self, msg: Message<M>)
     where
         M: Clone,
     {
@@ -55,7 +59,7 @@ impl<M: Kvt> Output<M> {
                         // the sum of all `true` vals
                         #[allow(clippy::unwrap_used)]
                         let msg = messages.next().unwrap();
-                        sender.send(msg);
+                        sender.send(msg).await;
                     }
                 }
             }
@@ -70,7 +74,7 @@ impl<M: Kvt> Output<M> {
                     .iter_mut()
                     .zip(itertools::repeat_n(x, recipient_len));
                 for (sender, elem) in messages {
-                    sender.send(elem);
+                    sender.send(elem).await;
                 }
             }
         };
@@ -90,18 +94,37 @@ impl<M: Kvt> Output<M> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct RootOutput {
+    senders: Vec<spsc::Sender<Message<()>>>,
+}
+
+impl RootOutput {
+    // send a system message, this method is not async to allow sending
+    // from a different or no runtime
+    pub(crate) fn send_system(&mut self, msg: Message<()>) {
+        for s in self.senders.iter() {
+            s.force_send(msg.clone())
+        }
+    }
+}
+
 /// State of the upstream sender providing us messages
+#[derive(Default)]
 struct UpstreamState<M: Kvt> {
     /// Most recent epoch the sender sent
-    epoch: Option<<M as Kvt>::Timestamp>,
-    /// Receiver linked to Sender
-    receiver: spsc::Receiver<Message<M>>,
+    epoch: Option<M::Timestamp>,
+    /// Barrier currently waiting for alignment
+    barred: bool,
+    /// Susepend currently waiting for alignment
+    suspended: bool,
 }
 impl<M: Kvt> UpstreamState<M> {
-    fn new(receiver: spsc::Receiver<Message<M>>) -> Self {
+    fn new() -> Self {
         Self {
             epoch: None,
-            receiver,
+            barred: false,
+            suspended: false,
         }
     }
 }
@@ -110,33 +133,28 @@ impl<M: Kvt> UpstreamState<M> {
 pub struct Input<M: Kvt> {
     /// Each receiver in this Vec is an inbound edge to the
     /// operator
-    receivers: Vec<UpstreamState<M>>,
-    // largest observed Epoch
-    frontier: Option<<M as Kvt>::Timestamp>,
+    states: Vec<UpstreamState<M>>,
+    receivers: Vec<spsc::Receiver<Message<M>>>,
 }
 
 impl<M: Kvt> Input<M> {
     /// Create a new input which is not (yet) linked to any output
-    pub(crate) fn new_unlinked() -> Self {
+    pub(crate) fn new_unlinked() -> Input<M> {
         Self {
+            states: Vec::new(),
             receivers: Vec::new(),
-            frontier: None,
         }
     }
+}
 
-    /// Return true if this input is currently capable of receiving messages and progressing
-    /// its inputs.
-    /// Being capable does not necessarily mean there are any messages.
-    pub(crate) fn can_progress(&self) -> bool {
-        self.receivers
-            .iter()
-            .any(|x| x.receiver.can_recv_unaligned())
-    }
-
-    /// Get the frontier of this Input, i.e. the largest Epoch it has seen so far
+impl<M: Kvt> Input<M>
+where
+    M::Timestamp: MaybeTime,
+{
+    /// Get the frontier of this Input, i.e. the smallest Epoch currently merged
     #[inline]
-    pub(crate) fn get_frontier(&self) -> &Option<<M as Kvt>::Timestamp> {
-        &self.frontier
+    pub(crate) fn get_frontier(&self) -> Option<M::Timestamp> {
+        merge_timestamps(self.states.iter().map(|x| &x.epoch))
     }
 }
 
@@ -144,95 +162,77 @@ impl<M: Kvt> Input<M>
 where
     <M as Kvt>::Timestamp: MaybeTime,
 {
-    /// Receive a value. None if no value to receive or all Senders dropped.
+    /// Receive a value
     ///
     /// This method synchronizes barriers, i.e. if a channel is barred, it will
     /// not receive any messages from that channel until all channels are barred.
     /// Once all channels are barred, a single barrier will be emitted
-    pub fn recv(&mut self) -> Option<Message<M>> {
-        // TODO: This is left biased
-        let next = self
+    pub async fn recv(&mut self) -> Message<M> {
+        // get all non-barred non-suspended links
+        let ready_receivers = self.states.iter().map(|x| !x.barred && !x.suspended);
+        let receivers = self
             .receivers
             .iter()
-            .enumerate()
-            .find_map(|(i, x)| x.receiver.recv_unaligned().map(|msg| (msg, i)));
-        match next {
-            Some((msg, sender_idx)) => match msg {
-                Message::Epoch(e) => {
-                    // PANIC: We can unwrap because we got the idx from the iterator above
-                    self.receivers
-                        .get_mut(sender_idx)
-                        .expect("Expected valid index")
-                        .epoch = Some(e);
-                    let merged = merge_timestamps(self.receivers.iter().map(|x| &x.epoch));
-                    if let Some(m) = merged.as_ref() {
-                        if self.frontier.as_ref().is_none_or(|frontier| frontier < m) {
-                            self.frontier = Some(m.clone());
-                        }
-                    }
-                    merged.map(|x| Message::Epoch(x.clone()))
-                }
-                x => Some(x),
-            },
-            None => {
-                // there are multiple possibilities on why we did not get a next msg
-                // 1. all messages are barriers, suspend markers or none
-                // 2. self.receivers is empty
-                // 3. all channels have barrier upcoming
-                // 4. all channels have a suspend upcoming
+            .zip_eq(ready_receivers)
+            .filter_map(|(recv, mask)| mask.then_some(recv))
+            .enumerate();
 
-                // 1 is most common so we check it first
-                if self.receivers.iter().any(|x| x.receiver.is_empty()) {
-                    return None;
+        let mut unaligned_receivers: FuturesUnordered<_> = receivers
+            .map(async |(i, receiver)| {
+                let msg = receiver.recv().await;
+                (i, msg)
+            })
+            .collect();
+
+        // TODO: Ensure the Input is linked via the typesystem
+        while let (i, msg) = unaligned_receivers
+            .next()
+            .await
+            .expect("At least one receiver")
+        {
+            // get the first messag we can emit
+            // PANIC: We can unwrap because we got the idx from the iterator above
+            let state = self.states.get_mut(i).unwrap();
+            match msg {
+                Message::Epoch(e) => {
+                    state.epoch = Some(e);
+                    let merged = merge_timestamps(self.states.iter().map(|x| &x.epoch));
+                    if let Some(m) = merged {
+                        return Message::Epoch(m);
+                    }
                 }
-                // 2
-                if self.receivers.is_empty() {
-                    return None;
+                Message::AbsBarrier(barrier) => {
+                    state.barred = true;
+                    if self.states.iter().all(|x| x.barred) {
+                        for st in self.states.iter_mut() {
+                            st.barred = false;
+                        }
+                        return Message::AbsBarrier(barrier);
+                    }
                 }
-                // 3. all channels have barrier upcoming
-                if self.receivers.iter().all(|x| {
-                    x.receiver
-                        .peek_apply(|y| matches!(y, Message::AbsBarrier(_)))
-                        .unwrap_or(false)
-                }) {
-                    // take .last() to clear the barriers from all receivers
-                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
+                Message::SuspendMarker(suspend) => {
+                    state.suspended = true;
+                    if self.states.iter().all(|x| x.suspended) {
+                        for st in self.states.iter_mut() {
+                            st.suspended = false;
+                        }
+                        return Message::SuspendMarker(suspend);
+                    }
                 }
-                // 4. all channels have a suspend upcoming
-                if self.receivers.iter().all(|x| {
-                    x.receiver
-                        .peek_apply(|y| matches!(y, Message::SuspendMarker(_)))
-                        .unwrap_or(false)
-                }) {
-                    // take .last() to clear the marker from all receivers
-                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
-                }
-                // This could only be reached if there where mixed messages requiring alignement
-                // like some receivers had a barrier and others a suspend marker which should
-                // never happen
-                unreachable!()
+                x => return x,
             }
         }
-    }
-}
-
-trait RecvUnaligned<M: Kvt> {
-    /// Peek only those message types which do not
-    /// require alignement, i.e. no barriers and suspend markers
-    fn can_recv_unaligned(&self) -> bool;
-    /// Receive only those message types which do not
-    /// require alignement, i.e. no barriers and suspend markers
-    fn recv_unaligned(&self) -> Option<Message<M>>;
-}
-
-impl<M: Kvt> RecvUnaligned<M> for spsc::Receiver<Message<M>> {
-    fn recv_unaligned(&self) -> Option<Message<M>> {
-        self.can_recv_unaligned().then(|| self.recv()).flatten()
-    }
-
-    fn can_recv_unaligned(&self) -> bool {
-        self.peek_apply(|next| !matches!(next, Message::AbsBarrier(_) | Message::SuspendMarker(_)))
-            .unwrap_or(false)
+        // if we reached heard it can be because:
+        // 1. we got an epoch, but we can not issue it because the other inputs
+        //    are behind
+        // 2. We got a barrier, but we are still waiting for the barrier on other
+        //    inputs
+        // 3. We got a suspend marker but are still waiting for the marker on other
+        //    inputs
+        //
+        // In all these cases just receiving again will solve the issue
+        drop(unaligned_receivers);
+        self.recv().await
     }
 }
 
@@ -246,7 +246,16 @@ pub(crate) fn full_broadcast<T>(_: &T, outputs: &mut [bool]) {
 pub(crate) fn link<M: Kvt>(sender: &mut Output<M>, receiver: &mut Input<M>) {
     let (tx, rx) = spsc::unbounded();
     sender.senders.push(tx);
-    receiver.receivers.push(UpstreamState::new(rx));
+    receiver.receivers.push(rx);
+    receiver.states.push(UpstreamState::new());
+}
+
+/// Link a Sender and receiver together
+pub(crate) fn link_root(sender: &mut RootOutput, receiver: &mut Input<()>) {
+    let (tx, rx) = spsc::unbounded();
+    sender.senders.push(tx);
+    receiver.receivers.push(rx);
+    receiver.states.push(UpstreamState::new());
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
@@ -262,17 +271,6 @@ fn merge_timestamps<'a, T: MaybeTime>(
         }
     }
     merged
-}
-
-/// Merge multiple inputs into a single input. The new Input will be linked to all the original
-/// upstream Outputs.
-pub(crate) fn merge_inputs<M: Kvt>(groups: Vec<Input<M>>) -> Input<M> {
-    let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
-    let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
-    Input {
-        receivers,
-        frontier,
-    }
 }
 
 #[cfg(test)]

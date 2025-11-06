@@ -102,7 +102,7 @@ where
     async fn on_schedule(
         &mut self,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
     }
 
@@ -110,7 +110,7 @@ where
         &mut self,
         data_message: DataMessage<In>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
         (self.logic).on_data(data_message, output).await;
     }
@@ -119,7 +119,7 @@ where
         &mut self,
         epoch: &<In as Kvt>::Timestamp,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
         (self.logic).on_epoch(&epoch, output).await;
     }

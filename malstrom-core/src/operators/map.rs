@@ -77,7 +77,7 @@ where
     ) {
         let new_value = (self.mapper)(msg.value).await;
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
-        output.send(Message::Data(out_msg));
+        output.send(Message::Data(out_msg)).await
     }
 }
 
@@ -105,7 +105,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(input)),
                 )
-                .map("get-len", |x| x.len())
+                .map("get-len", async |x| x.len())
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();

@@ -1,5 +1,5 @@
 //! Traits for implementing inter-worker and worker-coordinator communication in different runtimes
-use std::marker::PhantomData;
+use std::{marker::PhantomData, rc::Rc};
 
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
@@ -104,7 +104,7 @@ where
     pub(crate) fn new(
         to_worker: WorkerId,
         operator: OperatorId,
-        backend: &dyn OperatorOperatorComm,
+        backend: Rc<dyn OperatorOperatorComm>,
     ) -> Result<Self, CommunicationBackendError> {
         debug!(
             message = "Creating operator-operator communication client",
@@ -165,10 +165,10 @@ where
 {
     /// Try receiving a message in a non-blocking manner. This function returns immediatly either
     /// with a message if one is available or with `None` if no message is available.
-    pub fn recv(&self) -> Option<TRecv> {
-        let encoded = self.transport.recv().malstrom_fatal()?;
-        Some(Self::decode(&encoded))
-    }
+    // pub fn recv(&self) -> Option<TRecv> {
+    //     let encoded = self.transport.recv().malstrom_fatal()?;
+    //     Some(Self::decode(&encoded))
+    // }
 
     /// Asycnhronously receive a message on this client. The returned future completes,
     /// once a message is available

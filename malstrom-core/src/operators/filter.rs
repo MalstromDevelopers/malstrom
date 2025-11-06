@@ -50,11 +50,10 @@ pub trait Filter<In: Kvt, FilterFunc>: Sealed {
     ) -> StreamBuilder<(In::Key, In::Value, In::Timestamp)>;
 }
 
-impl<In, FilterFunc, Fut> Filter<In, FilterFunc> for StreamBuilder<In>
+impl<In, FilterFunc> Filter<In, FilterFunc> for StreamBuilder<In>
 where
     In: Kvt,
-    FilterFunc: FnMut(&In::Value) -> Fut + 'static,
-    Fut: Future<Output = bool>,
+    FilterFunc: AsyncFnMut(&In::Value) -> bool + 'static,
 {
     fn filter(
         self,
@@ -67,11 +66,10 @@ where
 
 struct FilterOp<FilterFunc>(FilterFunc);
 
-impl<In, FilterFunc, Fut> StatelessLogic<In, In::Value> for FilterOp<FilterFunc>
+impl<In, FilterFunc> StatelessLogic<In, In::Value> for FilterOp<FilterFunc>
 where
     In: Kvt,
-    FilterFunc: FnMut(&In::Value) -> Fut + 'static,
-    Fut: Future<Output = bool>,
+    FilterFunc: AsyncFnMut(&In::Value) -> bool + 'static,
 {
     async fn on_data(
         &mut self,
@@ -81,7 +79,7 @@ where
         if (self.0)(&msg.value).await {
             // this is needed to get the output type right
             let out_msg = DataMessage::new(msg.key, msg.value, msg.timestamp);
-            output.send(Message::Data(out_msg))
+            output.send(Message::Data(out_msg)).await
         }
     }
 }
@@ -105,7 +103,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(0..100)),
                 )
-                .filter("less-than-42", |x| *x < 42)
+                .filter("less-than-42", async |x| *x < 42)
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();

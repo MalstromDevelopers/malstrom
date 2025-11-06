@@ -47,12 +47,12 @@ pub fn ttl_state_derive(input: TokenStream) -> TokenStream {
         let name = &field.ident;
         quote! {#name: None}
     });
-    
+
     let expire_stmts = fields.iter().map(|field| {
         let name = &field.ident;
         quote! {self.#name.take_if(|(_, expiry)| *expiry <= *epoch);}
     });
-    
+
     let is_empty_stmts = fields.iter().map(|field| {
         let name = &field.ident;
         quote! {self.#name.is_none()}
@@ -104,7 +104,7 @@ pub fn ttl_state_derive(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl ::malstrom::operators::TTLState for #structname {
+        impl malstrom::operators::TTLState for #structname {
             type Timestamp = #timestamp_type;
 
             fn expire(&mut self, epoch: &Self::Timestamp) {

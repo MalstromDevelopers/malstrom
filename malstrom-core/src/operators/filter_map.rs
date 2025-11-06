@@ -73,7 +73,9 @@ where
         output: &mut Output<(<In as Kvt>::Key, T, <In as Kvt>::Timestamp)>,
     ) {
         if let Some(x) = (self.mapper)(msg.value).await {
-            output.send(Message::Data(DataMessage::new(msg.key, x, msg.timestamp)))
+            output
+                .send(Message::Data(DataMessage::new(msg.key, x, msg.timestamp)))
+                .await
         }
     }
 }
@@ -98,7 +100,10 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(0..100)),
                 )
-                .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
+                .filter_map(
+                    "less-than-42",
+                    async |x| if x < 42 { Some(x * 2) } else { None },
+                )
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();

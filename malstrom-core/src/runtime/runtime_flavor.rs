@@ -4,7 +4,7 @@ use super::communication::{OperatorOperatorComm, WorkerCoordinatorComm};
 /// executed, for example the [MultiThreadRuntime](super::threaded::MultiThreadRuntime)
 pub trait RuntimeFlavor {
     /// The type of backend this runtime uses for inter-worker communication
-    type Communication: OperatorOperatorComm + WorkerCoordinatorComm;
+    type Communication: OperatorOperatorComm + WorkerCoordinatorComm + 'static;
 
     /// Establish communication between multiple JetStream workers,
     /// possibly on different machines

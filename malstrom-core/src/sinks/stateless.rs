@@ -52,9 +52,9 @@ where
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<()>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
-        if let Some(Message::Data(d)) = input.recv() {
+        if let Message::Data(d) = input.recv().await {
             self.sink_impl.sink(d);
         }
     }

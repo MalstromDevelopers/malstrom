@@ -64,27 +64,25 @@ where
         &mut self,
         input: &mut crate::channels::operator_io::Input<In>,
         output: &mut crate::channels::operator_io::Output<Out>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
-        if let Some(msg) = input.recv() {
-            match msg {
-                Message::Data(d) => {
-                    let timestamp = (self.assigner)(&d);
-                    let new = DataMessage::new(d.key, d.value, timestamp);
-                    output.send(Message::Data(new))
-                }
-                Message::Epoch(e) => {
-                    if e == In::Timestamp::MAX {
-                        output.send(Message::Epoch(T::MAX))
-                    }
-                }
-                Message::Interrogate(x) => output.send(Message::Interrogate(x)),
-                Message::Collect(c) => output.send(Message::Collect(c)),
-                Message::Acquire(a) => output.send(Message::Acquire(a)),
-                Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)),
-                Message::Rescale(x) => output.send(Message::Rescale(x)),
-                Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
+        match input.recv().await {
+            Message::Data(d) => {
+                let timestamp = (self.assigner)(&d);
+                let new = DataMessage::new(d.key, d.value, timestamp);
+                output.send(Message::Data(new)).await
             }
+            Message::Epoch(e) => {
+                if e == In::Timestamp::MAX {
+                    output.send(Message::Epoch(T::MAX)).await
+                }
+            }
+            Message::Interrogate(x) => output.send(Message::Interrogate(x)).await,
+            Message::Collect(c) => output.send(Message::Collect(c)).await,
+            Message::Acquire(a) => output.send(Message::Acquire(a)).await,
+            Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)).await,
+            Message::Rescale(x) => output.send(Message::Rescale(x)).await,
+            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
         }
     }
 }
@@ -92,11 +90,11 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        channels::operator_io::Input,
+        channels::operator_io::{Input, Output},
         operators::{GenerateEpochs, Sink, Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        stream::{DirectLogic, Operator},
+        stream::{DirectLogic, Operator, OperatorContext, SafeLogicWrapper},
         testing::{VecSink, get_test_rt},
         types::{MaybeData, MaybeTime, Message, NoKey},
     };
@@ -104,24 +102,39 @@ mod tests {
 
     use super::*;
 
+    struct EpochCollector<Msg: Kvt>(VecSink<Msg::Timestamp>);
+
+    impl<Msg> SafeLogic<Msg, Msg> for EpochCollector<Msg>
+    where
+        Msg: Kvt,
+    {
+        async fn on_data(
+            &mut self,
+            data_message: DataMessage<Msg>,
+            output: &mut crate::channels::operator_io::Output<Msg>,
+            ctx: &mut crate::stream::OperatorContext<'_>,
+        ) {
+            output.send(Message::Data(data_message));
+        }
+
+        async fn on_epoch(
+            &mut self,
+            epoch: &<Msg as Kvt>::Timestamp,
+            output: &mut crate::channels::operator_io::Output<Msg>,
+            ctx: &mut crate::stream::OperatorContext<'_>,
+        ) {
+            self.0.give(epoch.clone());
+        }
+    }
+
     fn epoch_collector<Msg: Kvt>(
         name: &str,
         collector: VecSink<Msg::Timestamp>,
-    ) -> Operator<Msg, _, Msg>
+    ) -> Operator<Msg, DirectLogic<SafeLogicWrapper<EpochCollector<Msg>>>, Msg>
     where
-        Msg::Timestamp: MaybeTime + Clone,
+        Msg::Timestamp: Clone,
     {
-        Operator::direct(name, move |input: &mut Input<Msg>, output, _| {
-            if let Some(msg) = input.recv() {
-                match msg {
-                    Message::Epoch(e) => {
-                        collector.give(e.clone());
-                        output.send(Message::Epoch(e));
-                    }
-                    x => output.send(x),
-                }
-            };
-        })
+        Operator::direct(name.into(), EpochCollector(collector).into_logic())
     }
 
     /// Check that the assigner assigns a timestamp to every record
@@ -228,8 +241,10 @@ mod tests {
                 .generate_epochs("monotonic", |msg, _epoch| Some(msg.timestamp));
 
             ontime.then(Operator::direct(
-                "collect-msgs",
-                move |input: &mut Input<NoKey, i32, i32>, out, _| {
+                "collect-msgs".into(),
+                async move |input: &mut Input<(NoKey, i32, i32)>,
+                            out: &mut Output<(NoKey, i32, i32)>,
+                            _: &mut OperatorContext| {
                     match input.recv() {
                         // encode epoch to -T
                         Some(Message::Data(d)) => {

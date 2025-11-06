@@ -80,23 +80,6 @@ pub trait StatefulLogic<In: Kvt, T: Data, S>: 'static {
     ) {
     }
 }
-// impl<In, T, S, X, Fut> StatefulLogic<In, T, S> for X
-// where
-//     In: Kvt,
-//     T: Data,
-//     Fut: Future<Output = Option<S>
-//     for<'a> X: FnMut(DataMessage<In>, S, &'a mut Output<(In::Key, T, In::Timestamp)>) -> Option<S>
-//         + 'static,
-// {
-//     async fn on_data(
-//         &mut self,
-//         msg: DataMessage<In>,
-//         key_state: S,
-//         output: &mut Output<(In::Key, T, In::Timestamp)>,
-//     ) -> Option<S> {
-//         self(msg, key_state, output).await
-//     }
-// }
 
 /// Append a stateful operator to the stream
 pub trait StatefulOp<In: Kvt, T: Data>: Sealed {
@@ -119,14 +102,7 @@ where
         name: impl Into<String>,
         logic: L,
     ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
-        let op = Operator::built_by(
-            name.into(),
-            StatefulLogicBuilder {
-                _io_types: PhantomData::<(In, T)>,
-                _state_type: PhantomData::<S>,
-                logic,
-            },
-        );
+        let op = Operator::built_by(name.into(), StatefulLogicBuilder::new(logic));
         self.then(op)
     }
 }
@@ -136,6 +112,16 @@ struct StatefulLogicBuilder<In, T, S, L> {
     _io_types: PhantomData<(In, T)>,
     _state_type: PhantomData<S>,
     logic: L,
+}
+
+impl<In, T, S, L> StatefulLogicBuilder<In, T, S, L> {
+    fn new(logic: L) -> Self {
+        StatefulLogicBuilder {
+            _io_types: PhantomData::<(In, T)>,
+            _state_type: PhantomData::<S>,
+            logic,
+        }
+    }
 }
 
 impl<In, T, S, L> LogicBuilder<In, (In::Key, T, In::Timestamp)>
@@ -149,7 +135,7 @@ where
 {
     type Logic = SafeLogicWrapper<StatefulLogicWrapper<In, T, S, L>>;
 
-    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
         let state: IndexMap<<In as Kvt>::Key, S> = ctx.load_state().await.unwrap_or_default();
         StatefulLogicWrapper {
             state,
@@ -180,7 +166,7 @@ where
     async fn on_schedule(
         &mut self,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         self.logic.on_schedule(&mut self.state, output).await;
     }
@@ -189,7 +175,7 @@ where
         &mut self,
         msg: DataMessage<In>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         let key = msg.key.to_owned();
         let key_state = self.state.swap_remove(&key).unwrap_or_default();
@@ -203,7 +189,7 @@ where
         &mut self,
         epoch: &<In as Kvt>::Timestamp,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         self.logic.on_epoch(epoch, &mut self.state, output).await;
     }
@@ -212,7 +198,7 @@ where
         &mut self,
         barrier: &mut crate::snapshot::Barrier,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         barrier.persist(&self.state, &ctx.operator_id);
     }
@@ -221,7 +207,7 @@ where
         &mut self,
         interrogate: &mut crate::keyed::distributed::Interrogate<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         interrogate.add_keys(&(self.state.keys().map(|k| k.to_owned()).collect_vec()));
     }
@@ -230,7 +216,7 @@ where
         &mut self,
         collect: &mut crate::keyed::distributed::Collect<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         if let Some(x) = self.state.swap_remove(&collect.key) {
             collect.add_state(ctx.operator_id, x);
@@ -241,7 +227,7 @@ where
         &mut self,
         acquire: &mut crate::keyed::distributed::Acquire<<In as Kvt>::Key>,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         if let Some(st) = acquire.take_state(&ctx.operator_id) {
             self.state.insert(st.0, st.1);
@@ -265,15 +251,38 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_interrogate() {
-        // logic which always just sets the last value as state
-        let logic = |msg: DataMessage<(i32, String, NoTime)>,
-                     _state: String,
-                     _output: &mut Output<(i32, (), NoTime)>| Some(msg.value);
+    impl<F, In, Val, St> StatefulLogic<In, Val, St> for F
+    where
+        In: Kvt,
+        Val: Data,
+        F: AsyncFnMut(
+                DataMessage<In>,
+                St,
+                &mut Output<(In::Key, Val, In::Timestamp)>,
+            ) -> Option<St>
+            + 'static,
+    {
+        async fn on_data(
+            &mut self,
+            msg: DataMessage<In>,
+            key_state: St,
+            output: &mut Output<(<In as Kvt>::Key, Val, <In as Kvt>::Timestamp)>,
+        ) -> Option<St> {
+            self(msg, key_state, output).await
+        }
+    }
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 0, 0..1);
+    #[tokio::test]
+    async fn test_interrogate() {
+        // logic which always just sets the last value as state
+        let logic =
+            async |msg: DataMessage<(i32, String, NoTime)>,
+                   _state: String,
+                   _output: &mut Output<(i32, (), NoTime)>| { Some(msg.value) };
+
+        let logic_builder = StatefulLogicBuilder::new(logic);
+        let mut tester: OperatorTester<(i32, String, NoTime), (i32, (), NoTime), _, ()> =
+            OperatorTester::built_by(logic_builder, 0, 0, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(
             1,
@@ -301,12 +310,12 @@ mod tests {
     }
 
     /// Check we do not add discarded keys
-    #[test]
-    fn test_interrogate_discarded() {
+    #[tokio::test]
+    async fn test_interrogate_discarded() {
         // logic which only returns state if the String len is <= 3
-        let logic = |msg: DataMessage<i32, String, NoTime>,
-                     _state: String,
-                     _output: &mut Output<i32, (), NoTime>| {
+        let logic = async |msg: DataMessage<(i32, String, NoTime)>,
+                           _state: String,
+                           _output: &mut Output<(i32, (), NoTime)>| {
             if msg.value.len() > 3 {
                 None
             } else {
@@ -314,8 +323,8 @@ mod tests {
             }
         };
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 0, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 0, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(
             1,
@@ -342,15 +351,16 @@ mod tests {
     }
 
     /// Check key state is collected
-    #[test]
-    fn test_collect() {
+    #[tokio::test]
+    async fn test_collect() {
         // logic which always just sets the last value as state
-        let logic = |msg: DataMessage<(i32, String, NoTime)>,
-                     _state: String,
-                     _output: &mut Output<(i32, (), NoTime)>| Some(msg.value);
+        let logic =
+            async |msg: DataMessage<(i32, String, NoTime)>,
+                   _state: String,
+                   _output: &mut Output<(i32, (), NoTime)>| Some(msg.value);
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(
             1,
@@ -379,12 +389,12 @@ mod tests {
     }
 
     /// check we do not collect discarded state
-    #[test]
-    fn test_collect_discarded() {
+    #[tokio::test]
+    async fn test_collect_discarded() {
         // logic which only returns state if the String len is <= 3
-        let logic = |msg: DataMessage<(i32, String, NoTime)>,
-                     _state: String,
-                     _output: &mut Output<(i32, (), NoTime)>| {
+        let logic = async |msg: DataMessage<(i32, String, NoTime)>,
+                           _state: String,
+                           _output: &mut Output<(i32, (), NoTime)>| {
             if msg.value.len() > 3 {
                 None
             } else {
@@ -392,8 +402,8 @@ mod tests {
             }
         };
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(
             1,
@@ -420,20 +430,20 @@ mod tests {
     }
 
     // check we acquire state when instructed
-    #[test]
-    fn test_acquire_state() {
+    #[tokio::test]
+    async fn test_acquire_state() {
         // logic which always returns the state as a message and
         // sets the message value as state
-        let logic = |mut msg: DataMessage<(i32, String, NoTime)>,
-                     mut state: String,
-                     output: &mut Output<(i32, String, NoTime)>| {
+        let logic = async |mut msg: DataMessage<(i32, String, NoTime)>,
+                           mut state: String,
+                           output: &mut Output<(i32, String, NoTime)>| {
             std::mem::swap(&mut state, &mut msg.value);
             output.send(Message::Data(msg));
             Some(state)
         };
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, String, NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         let state = IndexMap::from([(42, BiCommunicationClient::encode("HelloWorld".to_owned()))]);
 
@@ -453,12 +463,12 @@ mod tests {
     }
 
     // check we drop key state when instructed
-    #[test]
-    fn test_drop_key_state() {
+    #[tokio::test]
+    async fn test_drop_key_state() {
         // logic which keeps a total per key and emits it
-        let logic = |msg: DataMessage<(bool, i32, NoTime)>,
-                     state: i32,
-                     output: &mut Output<(bool, i32, NoTime)>| {
+        let logic = async |msg: DataMessage<(bool, i32, NoTime)>,
+                           state: i32,
+                           output: &mut Output<(bool, i32, NoTime)>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -468,8 +478,8 @@ mod tests {
             Some(new_value)
         };
         // keep a total per key
-        let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
@@ -495,12 +505,12 @@ mod tests {
     }
 
     // check we snapshot state
-    #[test]
-    fn test_snapshot_state() {
+    #[tokio::test]
+    async fn test_snapshot_state() {
         // logic which keeps a total per key and emits it
-        let logic = |msg: DataMessage<(bool, i32, NoTime)>,
-                     state: i32,
-                     output: &mut Output<(bool, i32, NoTime)>| {
+        let logic = async |msg: DataMessage<(bool, i32, NoTime)>,
+                           state: i32,
+                           output: &mut Output<(bool, i32, NoTime)>| {
             let new_value = state + msg.value;
             output.send(Message::Data(DataMessage::new(
                 msg.key,
@@ -510,8 +520,8 @@ mod tests {
             Some(new_value)
         };
         // keep a total per key
-        let mut tester: OperatorTester<bool, i32, NoTime, bool, i32, NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         tester.send_local(Message::Data(DataMessage::new(false, 1, NoTime)));
         tester.step();
@@ -524,15 +534,15 @@ mod tests {
         assert_eq!(*state.get(&false).unwrap(), 1);
     }
 
-    #[test]
-    fn test_forward_system_messages() {
+    #[tokio::test]
+    async fn test_forward_system_messages() {
         // logic which does nothing
-        let logic = |_msg: DataMessage<(i32, String, NoTime)>,
-                     _state: String,
-                     _output: &mut Output<(i32, (), NoTime)>| None;
+        let logic = async |_msg: DataMessage<(i32, String, usize)>,
+                           _state: String,
+                           _output: &mut Output<(i32, (), usize)>| None;
 
-        let mut tester: OperatorTester<i32, String, NoTime, i32, (), NoTime, ()> =
-            OperatorTester::built_by(move |ctx| build_stateful_logic(ctx, logic), 0, 42, 0..1);
+        let mut tester: OperatorTester<_, _, _, ()> =
+            OperatorTester::built_by(StatefulLogicBuilder::new(logic), 0, 42, 0..1).await;
 
         crate::testing::test_forward_system_messages(&mut tester);
     }

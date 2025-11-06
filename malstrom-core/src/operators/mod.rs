@@ -13,6 +13,7 @@ mod stateful_map;
 mod stateful_op;
 mod time;
 mod ttl_map;
+mod union;
 
 // Public Api operators reexported for convenience
 pub use crate::keyed::KeyDistribute;
@@ -31,6 +32,7 @@ pub use stateful_op::{State, StatefulLogic, StatefulOp};
 pub use stateless_op::{StatelessLogic, StatelessOp};
 pub use time::*;
 pub use ttl_map::{TTLState, TtlMap};
+pub use union::Union;
 
 // These are only to be used internally in malstrom
 pub(crate) mod stateless_op;

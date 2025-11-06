@@ -15,21 +15,19 @@ use crate::types::{OperatorId, WorkerId};
 /// This is a type injected to logic function at runtime
 /// and cotains context, whicht the logic generally can not change
 /// but utilize
-pub struct OperatorContext<'a> {
+pub struct OperatorContext {
     /// ID of this worker
     pub worker_id: WorkerId,
     /// ID of this operator
     pub operator_id: OperatorId,
-    pub(super) communication: &'a mut dyn OperatorOperatorComm,
+    pub(super) communication: Rc<dyn OperatorOperatorComm>,
 }
 
-#[allow(clippy::needless_lifetimes)] // elision does not work as clippy suggests here
-impl<'a> OperatorContext<'a> {
-    #[cfg(test)]
+impl OperatorContext {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
-        communication: &'a mut dyn OperatorOperatorComm,
+        communication: Rc<dyn OperatorOperatorComm>,
     ) -> Self {
         Self {
             worker_id,
@@ -47,14 +45,59 @@ impl<'a> OperatorContext<'a> {
     ) -> BiCommunicationClient<T> {
         // Assert is kinda ugly here, but this situation is a programming error
         assert!(other_worker != self.worker_id);
-        BiCommunicationClient::new(other_worker, self.operator_id, self.communication)
-            .malstrom_fatal()
+        BiCommunicationClient::new(
+            other_worker,
+            self.operator_id,
+            Rc::clone(&self.communication),
+        )
+        .malstrom_fatal()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WorkerBuildContext {
+    worker_id: WorkerId,
+    persistence_backend: Rc<dyn PersistenceClient>,
+    communication: Rc<dyn OperatorOperatorComm>,
+    worker_ids: IndexSet<WorkerId>,
+}
+
+impl WorkerBuildContext {
+    pub(crate) fn new(
+        worker_id: WorkerId,
+        persistence_backend: Rc<dyn PersistenceClient>,
+        communication: Rc<dyn OperatorOperatorComm>,
+        worker_ids: IndexSet<WorkerId>,
+    ) -> Self {
+        Self {
+            worker_id,
+            persistence_backend,
+            communication,
+            worker_ids,
+        }
+    }
+}
+
+impl WorkerBuildContext {
+    pub(crate) fn to_build_context(
+        self,
+        operator_id: OperatorId,
+        operator_name: String,
+    ) -> BuildContext {
+        BuildContext {
+            operator_id,
+            operator_name,
+            worker_id: self.worker_id,
+            persistence_backend: self.persistence_backend,
+            communication: self.communication,
+            worker_ids: self.worker_ids,
+        }
     }
 }
 
 /// Build context which is injected into the builder function of an operator at computation graph
 /// build time. This happens shortly before execution.
-pub struct BuildContext<'a> {
+pub struct BuildContext {
     /// ID of this worker
     pub worker_id: WorkerId,
     /// ID of this operator
@@ -63,16 +106,16 @@ pub struct BuildContext<'a> {
     pub operator_name: String,
     persistence_backend: Rc<dyn PersistenceClient>,
     // HACK: We need this in the ica tests
-    pub(crate) communication: &'a mut dyn OperatorOperatorComm,
+    pub(crate) communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
 }
-impl<'a> BuildContext<'a> {
+impl BuildContext {
     pub(crate) fn new(
         worker_id: WorkerId,
         operator_id: OperatorId,
         name: String,
         persistence_backend: Rc<dyn PersistenceClient>,
-        communication: &'a mut dyn OperatorOperatorComm,
+        communication: Rc<dyn OperatorOperatorComm>,
         worker_ids: IndexSet<WorkerId>,
     ) -> Self {
         Self {
@@ -106,8 +149,12 @@ impl<'a> BuildContext<'a> {
         &mut self,
         other_worker: WorkerId,
     ) -> BiCommunicationClient<T> {
-        CommunicationClient::new(other_worker, self.operator_id, self.communication)
-            .malstrom_fatal()
+        CommunicationClient::new(
+            other_worker,
+            self.operator_id,
+            Rc::clone(&self.communication),
+        )
+        .malstrom_fatal()
     }
 
     /// Create clients for all workers active at build_time

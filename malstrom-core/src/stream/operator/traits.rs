@@ -29,19 +29,20 @@ pub(crate) trait BuildableOperator: 'static {
 
 // /// Each runnable operator contains an object of this trait which is the actual logic that will get executed
 pub trait RunOperator {
-    /// Calling step instructs the operator, that it should attempt to make
-    /// progress. There is absolutely no assumption on what "progress" means,
-    /// but it is implied, that the operator reads its input and writes
-    /// to its output
-    fn schedule(&mut self, context: &mut OperatorContext, rt: &tokio::runtime::LocalRuntime);
+    async fn run(self, ctx: OperatorContext) -> ();
+    // /// Calling step instructs the operator, that it should attempt to make
+    // /// progress. There is absolutely no assumption on what "progress" means,
+    // /// but it is implied, that the operator reads its input and writes
+    // /// to its output
+    // fn schedule(&mut self, context: &mut OperatorContext, rt: &tokio::runtime::LocalRuntime);
 
-    /// still not happy with this function name
-    fn has_queued_work(&self) -> bool;
+    // /// still not happy with this function name
+    // fn has_queued_work(&self) -> bool;
 
-    /// Indicate to the worker this operator need not run again
-    /// The worker will stop execution once all operators are finished
-    fn is_finalized(&self) -> bool;
+    // /// Indicate to the worker this operator need not run again
+    // /// The worker will stop execution once all operators are finished
+    // fn is_finalized(&self) -> bool;
 
-    /// Return true if the operator is suspended and must not be scheduled again before a restart
-    fn is_suspended(&self) -> bool;
+    // /// Return true if the operator is suspended and must not be scheduled again before a restart
+    // fn is_suspended(&self) -> bool;
 }

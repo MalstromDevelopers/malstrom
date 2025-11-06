@@ -4,10 +4,10 @@ mod builder;
 mod operator;
 
 pub use builder::{InitialStreamBuilder, Malstrom, StreamBuilder};
+pub(crate) use operator::WorkerBuildContext;
 pub use operator::{BuildContext, DirectLogic, LogicBuilder, Operator, OperatorContext};
-pub(crate) use operator::{IntoBuildable, Logic, SafeLogic, SafeLogicWrapper};
+pub(crate) use operator::{Logic, SafeLogic, SafeLogicWrapper};
 // pub(super) use operator::{AppendableOperator, BuildableOperator, RunnableOperator};
-pub(super) use operator::{BuildableOperator, RunnableOperator};
 
 use crate::{
     channels::operator_io::{Input, Output},

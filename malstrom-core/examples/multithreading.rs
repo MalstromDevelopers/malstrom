@@ -23,8 +23,8 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
         .key_distribute("key-by-value", |x| x.value, rendezvous_select)
-        .map("double", |x| x * 2)
-        .inspect("print", |x, ctx| {
+        .map("double", async |x| x * 2)
+        .inspect("print", async |x, ctx| {
             println!("{x:?} @ Worker {}", ctx.worker_id)
         });
 }

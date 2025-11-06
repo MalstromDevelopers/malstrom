@@ -12,11 +12,10 @@ use super::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
 
 /// A source which provides records for processing and does not hold any state
 /// (or only ephemeral state)
-pub struct StatelessSource<M: Kvt, S: StatelessSourceImpl<M>>(SourceWrapper<M, S>);
-impl<M, S> StatelessSource<M, S>
+pub struct StatelessSource<V, T, S: StatelessSourceImpl<V, T>>(SourceWrapper<V, T, S>);
+impl<V, T, S> StatelessSource<V, T, S>
 where
-    M: Kvt,
-    S: StatelessSourceImpl<M>,
+    S: StatelessSourceImpl<V, T>,
 {
     /// Create a new stateless source from the given source implementation.
     pub fn new(source: S) -> Self {
@@ -25,7 +24,7 @@ where
 }
 
 /// Implementation of a stateless stream source
-pub trait StatelessSourceImpl<M: Kvt>: 'static {
+pub trait StatelessSourceImpl<V, T>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
@@ -34,7 +33,7 @@ pub trait StatelessSourceImpl<M: Kvt>: 'static {
     /// Partitions may be moved to different workers, when the jobs worker set changes. Usually
     /// partitions will directly relate to some partitioning used by the external system providing
     /// the data.
-    type SourcePartition: StatelessSourcePartition<M>;
+    type SourcePartition: StatelessSourcePartition<V, T>;
 
     /// List all initial partitions for this source
     fn list_parts(&self) -> Vec<Self::Part>;
@@ -45,27 +44,27 @@ pub trait StatelessSourceImpl<M: Kvt>: 'static {
 
 /// A single partition of a stateless source. A partition is the smallest unit of a source and may
 /// be moved to a different worker when the job's worker set changes.
-pub trait StatelessSourcePartition<M: Kvt> {
-    /// Poll this partition, return anywhere from 0 to N new records
-    fn poll(&mut self) -> Option<(<M as Kvt>::Value, <M as Kvt>::Timestamp)>;
+pub trait StatelessSourcePartition<V, T> {
+    /// Poll this partition, return None if no further records
+    /// will be returned by this partition
+    async fn poll(&mut self) -> Option<(V, T)>;
 
     /// Suspend this partition.
     /// Suspend means the execution will be halted, but could continue later.
     /// Use this method to clean up any recources like external connections or
     /// file handles
     fn suspend(&mut self) {}
-
-    /// Return true if this parition is finished and can be removed
-    fn is_finished(&mut self) -> bool;
 }
 
 /// NewType on which we can implement StatefulSourceImpl
-struct SourceWrapper<M: Kvt, S: StatelessSourceImpl<M>>(S, PhantomData<M>);
+struct SourceWrapper<V, T, S: StatelessSourceImpl<V, T>>(S, PhantomData<(V, T)>);
 
-impl<Out, S> StatefulSourceImpl<Out> for SourceWrapper<Out, S>
+impl<V, T, S> StatefulSourceImpl<V, T> for SourceWrapper<V, T, S>
 where
-    Out: Kvt<Key = S::Part>,
-    S: StatelessSourceImpl<Out>,
+    V: Data,
+    T: Timestamp,
+    S: StatelessSourceImpl<V, T>,
+    S::Part: Key,
 {
     type Part = S::Part;
     type PartitionState = ();
@@ -86,15 +85,16 @@ where
 
 struct PartitionWrapper<S>(S);
 
-impl<S, M> StatefulSourcePartition<M> for PartitionWrapper<S>
+impl<V, T, S> StatefulSourcePartition<V, T> for PartitionWrapper<S>
 where
-    M: Kvt,
-    S: StatelessSourcePartition<M>,
+    V: Data,
+    T: Timestamp,
+    S: StatelessSourcePartition<V, T>,
 {
     type PartitionState = ();
 
-    fn poll(&mut self) -> Option<(<M as Kvt>::Value, <M as Kvt>::Timestamp)> {
-        self.0.poll()
+    async fn poll(&mut self) -> Option<(V, T)> {
+        self.0.poll().await
     }
 
     fn snapshot(&self) -> Self::PartitionState {}
@@ -107,22 +107,23 @@ where
         self.0.suspend();
     }
 
-    fn is_finished(&mut self) -> bool {
-        self.0.is_finished()
-    }
+    // fn is_finished(&mut self) -> bool {
+    //     self.0.is_finished()
+    // }
 }
 
-impl<S, M> StreamSource<M> for StatelessSource<M, S>
+impl<V, T, S> StreamSource<(S::Part, V, T)> for StatelessSource<V, T, S>
 where
-    M: Kvt<Key = S::Part>,
-    M::Timestamp: Timestamp,
-    S: StatelessSourceImpl<M>,
+    V: Data,
+    T: Timestamp,
+    S: StatelessSourceImpl<V, T>,
+    S::Part: Key,
 {
     fn into_stream(
         self,
         name: &str,
         builder: InitialStreamBuilder,
-    ) -> StreamBuilder<(M::Key, M::Value, M::Timestamp)> {
-        builder.source(name, StatefulSource::new(self.0))
+    ) -> StreamBuilder<(S::Part, V, T)> {
+        builder.source(name, StatefulSource::<(S::Part, V, T), _>::new(self.0))
     }
 }

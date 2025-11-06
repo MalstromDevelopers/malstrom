@@ -2,9 +2,11 @@
 //! JetStream communicates in between Operators exlusively via messages, which may contain
 //! data or be control messages
 
+use futures::FutureExt;
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
-use std::{fmt::Debug, rc::Rc};
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
+use tokio::sync::mpsc;
 
 use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
@@ -203,21 +205,25 @@ where
 
 /// Indicates a reconfiguration in the amount of workers
 /// participating in the computation
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct RescaleMessage {
     /// Set of workers in the computation AFTER the rescale
     /// will have concluded
     workers: IndexSet<WorkerId>,
     version: u64,
-    rc: Rc<()>,
+    callback: Rc<RefCell<mpsc::Sender<()>>>,
 }
 
 impl RescaleMessage {
-    pub(crate) fn new(workers: IndexSet<WorkerId>, version: u64) -> Self {
+    pub(crate) fn new(
+        workers: IndexSet<WorkerId>,
+        version: u64,
+        callback: mpsc::Sender<()>,
+    ) -> Self {
         Self {
             workers,
             version,
-            rc: Rc::new(()),
+            callback: Rc::new(RefCell::new(callback)),
         }
     }
 
@@ -236,7 +242,7 @@ impl RescaleMessage {
     /// Note that this includes the instance you are calling
     /// this method on.
     pub(crate) fn strong_count(&self) -> usize {
-        Rc::strong_count(&self.rc)
+        Rc::strong_count(&self.callback)
     }
 }
 
@@ -263,15 +269,22 @@ where
 /// when the worker is planning to shut down.
 /// Operators wishing to delay shut down, must hold onto this marker as long
 /// as necessary
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SuspendMarker {
-    rc: Rc<()>,
+    callback: Rc<RefCell<mpsc::Sender<()>>>,
 }
 impl SuspendMarker {
-    /// Get the count of strong reference to the inner Rc
-    /// Note that this includes the instance you are calling
-    /// this method on.
-    pub(crate) fn strong_count(&self) -> usize {
-        Rc::strong_count(&self.rc)
+    pub(crate) fn new(callback: mpsc::Sender<()>) -> Self {
+        SuspendMarker {
+            callback: Rc::new(RefCell::new(callback)),
+        }
+    }
+}
+
+impl Drop for SuspendMarker {
+    fn drop(&mut self) {
+        if Rc::strong_count(&self.callback) == 1 {
+            self.callback.borrow_mut().send(()).now_or_never().unwrap();
+        }
     }
 }

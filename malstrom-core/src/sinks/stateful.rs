@@ -120,29 +120,31 @@ where
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<(S::Part, (M::Key, M::Value), M::Timestamp)>,
-        _ctx: &mut OperatorContext<'_>,
+        _ctx: &mut OperatorContext,
     ) {
-        if let Some(msg) = input.recv() {
-            match msg {
-                Message::Data(d) => {
-                    let part = self.assigner.borrow().assign_part(&d);
-                    output.send(Message::Data(DataMessage::new(
+        match input.recv().await {
+            Message::Data(d) => {
+                let part = self.assigner.borrow().assign_part(&d);
+                output
+                    .send(Message::Data(DataMessage::new(
                         part,
                         (d.key, d.value),
                         d.timestamp,
                     )))
-                }
-                Message::Epoch(e) => output.send(Message::Epoch(e)),
-                Message::AbsBarrier(barrier) => output.send(Message::AbsBarrier(barrier)),
-                Message::Rescale(rescale_message) => output.send(Message::Rescale(rescale_message)),
-                Message::SuspendMarker(suspend_marker) => {
-                    output.send(Message::SuspendMarker(suspend_marker))
-                }
-                // these don't matter since we have a key_distribute next anyway
-                Message::Interrogate(_) => (),
-                Message::Collect(_) => (),
-                Message::Acquire(_) => (),
+                    .await
             }
+            Message::Epoch(e) => output.send(Message::Epoch(e)).await,
+            Message::AbsBarrier(barrier) => output.send(Message::AbsBarrier(barrier)).await,
+            Message::Rescale(rescale_message) => {
+                output.send(Message::Rescale(rescale_message)).await
+            }
+            Message::SuspendMarker(suspend_marker) => {
+                output.send(Message::SuspendMarker(suspend_marker)).await
+            }
+            // these don't matter since we have a key_distribute next anyway
+            Message::Interrogate(_) => (),
+            Message::Collect(_) => (),
+            Message::Acquire(_) => (),
         }
     }
 }
@@ -192,7 +194,7 @@ where
         &mut self,
         data_message: DataMessage<(Builder::Part, (M::Key, M::Value), M::Timestamp)>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        _ctx: &mut OperatorContext<'_>,
+        _ctx: &mut OperatorContext,
     ) {
         let partition = self
             .partitions
@@ -210,7 +212,7 @@ where
         &mut self,
         barrier: &mut Barrier,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         let state: Vec<_> = self
             .partitions
@@ -224,7 +226,7 @@ where
         &mut self,
         interrogate: &mut Interrogate<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        _ctx: &mut OperatorContext<'_>,
+        _ctx: &mut OperatorContext,
     ) {
         let keys = self.partitions.keys();
         interrogate.add_keys(keys);
@@ -234,7 +236,7 @@ where
         &mut self,
         collect: &mut Collect<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         let key_state = self.partitions.swap_remove(&collect.key);
         if let Some(partition) = key_state {
@@ -246,7 +248,7 @@ where
         &mut self,
         acquire: &mut Acquire<Builder::Part>,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         let partition_state = acquire.take_state(&ctx.operator_id);
         if let Some((part, part_state)) = partition_state {

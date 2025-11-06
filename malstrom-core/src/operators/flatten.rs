@@ -89,11 +89,13 @@ where
         let key = msg.key;
         let timestamp = msg.timestamp;
         for x in msg.value {
-            output.send(Message::Data(DataMessage::new(
-                key.clone(),
-                x,
-                timestamp.clone(),
-            )))
+            output
+                .send(Message::Data(DataMessage::new(
+                    key.clone(),
+                    x,
+                    timestamp.clone(),
+                )))
+                .await
         }
     }
 }

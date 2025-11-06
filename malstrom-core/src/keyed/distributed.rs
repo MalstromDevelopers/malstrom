@@ -1,3 +1,4 @@
+use futures::{StreamExt, stream::FuturesUnordered};
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -28,12 +29,12 @@ type Remotes<M: Kvt> = IndexMap<
     ),
 >;
 
-pub(super) struct Distributor<M: Kvt> {
+pub(crate) struct Distributor<M: Kvt> {
     router: Container<MessageRouter<M>>,
     remotes: Remotes<M>,
     partitioner: WorkerPartitioner<<M as Kvt>::Key>,
     local_barrier: Option<Barrier>,
-    local_shutdown: Option<SuspendMarker>,
+    local_suspend: Option<SuspendMarker>,
     local_frontier: Option<<M as Kvt>::Timestamp>,
 }
 
@@ -48,76 +49,82 @@ where
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<M>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
-        // HACK we collect messages into the vec because
-        // we can't hold onto a &self when invoking the handlers
-        let remote_message: Vec<(WorkerId, NetworkMessage<M>)> = self
+        let locally_blocked = self.local_barrier.is_some() || self.local_suspend.is_some();
+        let mut remote_msgs: FuturesUnordered<_> = self
             .remotes
             .iter()
             .filter(|(_wid, (_client, state))| !state.is_barred && !state.sent_suspend)
-            .filter_map(|(wid, (client, _state))| client.recv().map(|msg| (*wid, msg)))
+            .map(|(wid, (client, _state))| async { (*wid, client.recv_async().await) })
             .collect();
-        for (wid, msg) in remote_message.into_iter() {
-            // PANIC: We just got the keys from the iter over `remotes` hence we can allow
-            // the unwraps
-            #[allow(clippy::unwrap_used)]
-            match msg {
-                NetworkMessage::Data(data_message) => {
-                    self.handle_remote_data_message(data_message, &wid, output, ctx)
-                }
-                NetworkMessage::Epoch(epoch) => {
-                    self.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
-                    self.handle_epoch(output)
-                }
-                NetworkMessage::BarrierMarker => {
-                    self.remotes.get_mut(&wid).unwrap().1.is_barred = true
-                }
-                NetworkMessage::SuspendMarker => {
-                    self.remotes.get_mut(&wid).unwrap().1.sent_suspend = true
-                }
-                NetworkMessage::Acquire(network_acquire) => {
-                    output.send(Message::Acquire(network_acquire.into()))
-                }
-                NetworkMessage::Upgrade(version) => {
-                    let remote = self.remotes.get_mut(&wid).unwrap();
-                    remote.1.last_version = Some(version);
-                    remote.0.send(NetworkMessage::AckUpgrade(version));
-                }
-                NetworkMessage::AckUpgrade(version) => {
-                    self.remotes.get_mut(&wid).unwrap().1.last_ack_version = Some(version);
-                }
+
+        let mut handle_remote = async |wid, msg, dist: &mut Self| match msg {
+            NetworkMessage::Data(data_message) => {
+                dist.handle_remote_data_message(data_message, &wid, output, ctx)
+                    .await
             }
-        }
+            NetworkMessage::Epoch(epoch) => {
+                dist.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
+                dist.handle_epoch(output)
+            }
+            NetworkMessage::BarrierMarker => dist.remotes.get_mut(&wid).unwrap().1.is_barred = true,
+            NetworkMessage::SuspendMarker => {
+                dist.remotes.get_mut(&wid).unwrap().1.sent_suspend = true
+            }
+            NetworkMessage::Acquire(network_acquire) => {
+                output.send(Message::Acquire(network_acquire.into())).await
+            }
+            NetworkMessage::Upgrade(version) => {
+                let remote = dist.remotes.get_mut(&wid).unwrap();
+                remote.1.last_version = Some(version);
+                remote.0.send(NetworkMessage::AckUpgrade(version));
+            }
+            NetworkMessage::AckUpgrade(version) => {
+                dist.remotes.get_mut(&wid).unwrap().1.last_ack_version = Some(version);
+            }
+        };
 
-        // not allowed to receive local if barrier is not resolved
-        if self.local_barrier.is_none() {
-            if let Some(msg) = input.recv() {
-                match msg {
-                    Message::Data(msg) => self.handle_local_data_message(msg, output, ctx),
-                    Message::Epoch(epoch) => {
-                        // TODO must not allow epochs to overtake messages while rescaling
-                        broadcast(
-                            self.remotes.values().map(|x| &x.0),
-                            NetworkMessage::Epoch(epoch.clone()),
-                        );
-                        self.local_frontier = Some(epoch);
-                        self.handle_epoch(output)
+        // need to drop remote_msgs to allow &mut access to self
+        if locally_blocked {
+            let remote_msg = remote_msgs.next().await;
+            drop(remote_msgs);
+            if let Some((wid, msg)) = remote_msg {
+                handle_remote(wid, msg, self).await
+            }
+        } else {
+            tokio::select! {
+                Some((wid, msg)) = remote_msgs.next() => {
+                    drop(remote_msgs);
+                    handle_remote(wid, msg, self).await
+                },
+                msg = input.recv() => {
+                    drop(remote_msgs);
+                    match msg {
+                        Message::Data(msg) => self.handle_local_data_message(msg, output, ctx).await,
+                        Message::Epoch(epoch) => {
+                            // TODO must not allow epochs to overtake messages while rescaling
+                            broadcast(
+                                self.remotes.values().map(|x| &x.0),
+                                NetworkMessage::Epoch(epoch.clone()),
+                            );
+                            self.local_frontier = Some(epoch);
+                            self.handle_epoch(output)
+                        }
+                        Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
+                        Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
+                        Message::SuspendMarker(shutdown_marker) => {
+                            self.local_suspend = Some(shutdown_marker);
+                            broadcast(
+                                self.remotes.values().map(|x| &x.0),
+                                NetworkMessage::SuspendMarker,
+                            );
+                        }
+                        // these ones we can just ignore
+                        Message::Interrogate(_) => (),
+                        Message::Collect(_) => (),
+                        Message::Acquire(_) => (),
                     }
-                    Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
-                    Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
-                    Message::SuspendMarker(shutdown_marker) => {
-                        self.local_shutdown = Some(shutdown_marker);
-                        broadcast(
-                            self.remotes.values().map(|x| &x.0),
-                            NetworkMessage::SuspendMarker,
-                        );
-                    }
-
-                    // these ones we can just ignore
-                    Message::Interrogate(_) => (),
-                    Message::Collect(_) => (),
-                    Message::Acquire(_) => (),
                 }
             }
         }
@@ -127,8 +134,10 @@ where
         // where we only call these functions if we get shutdown or barrier
         // messages, but that does not handle the case where the removal
         // of another worker allows them to be emitted
-        self.try_emit_barrier(output);
-        self.try_emit_shutdown(output);
+        // Maybe in the future we will solve this smarter, but for now
+        // I am leaving this here
+        self.try_clear_barrier(output).await;
+        self.try_clear_suspend(output).await;
         self.router
             .apply(|x| x.lifecycle(self.partitioner, output, &mut self.remotes));
     }
@@ -144,7 +153,7 @@ where
 {
     pub(super) async fn new(
         paritioner: WorkerPartitioner<<M as Kvt>::Key>,
-        ctx: &mut BuildContext<'_>,
+        ctx: &mut BuildContext,
     ) -> Self {
         let snapshot: Option<DistributorState<<M as Kvt>::Timestamp>> = ctx.load_state().await;
         let other_workers = ctx
@@ -179,13 +188,13 @@ where
             remotes,
             partitioner: paritioner,
             local_barrier: None,
-            local_shutdown: None,
+            local_suspend: None,
             local_frontier: frontier,
         }
     }
 
     /// Handle a data message we received from our local upstream
-    fn handle_local_data_message(
+    async fn handle_local_data_message(
         &mut self,
         message: DataMessage<M>,
         output: &mut Output<M>,
@@ -202,11 +211,11 @@ where
             )
         };
         if let Some((msg, target)) = routing {
-            self.send_data_message(msg, target, output, ctx);
+            self.send_data_message(msg, target, output, ctx).await;
         }
     }
 
-    fn handle_remote_data_message(
+    async fn handle_remote_data_message(
         &mut self,
         message: NetworkDataMessage<M>,
         sent_by: &WorkerId,
@@ -224,11 +233,11 @@ where
             )
         };
         if let Some((msg, target)) = routing {
-            self.send_data_message(msg, target, output, ctx);
+            self.send_data_message(msg, target, output, ctx).await;
         }
     }
 
-    fn send_data_message(
+    async fn send_data_message(
         &self,
         message: DataMessage<M>,
         target: WorkerId,
@@ -236,7 +245,7 @@ where
         ctx: &OperatorContext,
     ) {
         match target == ctx.worker_id {
-            true => output.send(Message::Data(message)),
+            true => output.send(Message::Data(message)).await,
             false => {
                 let client = &self
                     .remotes
@@ -297,7 +306,7 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_barrier(&mut self, output: &mut Output<M>) {
+    async fn try_clear_barrier(&mut self, output: &mut Output<M>) {
         if self.local_barrier.is_some()
             && self
                 .remotes
@@ -306,7 +315,7 @@ where
         {
             #[allow(clippy::unwrap_used)] // Safe because we just checked is_some
             let msg = Message::AbsBarrier(self.local_barrier.take().unwrap());
-            output.send(msg);
+            output.send(msg).await;
 
             for (_, remote_state) in self.remotes.iter_mut().map(|x| x.1) {
                 remote_state.is_barred = false;
@@ -318,12 +327,12 @@ where
     /// - we have one from our local upstream
     /// - we have one from every connected client
     #[inline]
-    fn try_emit_shutdown(&mut self, output: &mut Output<M>) {
-        if self.local_shutdown.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
+    async fn try_clear_suspend(&mut self, output: &mut Output<M>) {
+        if self.local_suspend.is_some() && self.remotes.values().all(|x| x.1.sent_suspend) {
             // can unwrap because we just checked is_some
             #[allow(clippy::unwrap_used)]
-            let msg = Message::SuspendMarker(self.local_shutdown.take().unwrap());
-            output.send(msg);
+            let msg = Message::SuspendMarker(self.local_suspend.take().unwrap());
+            output.send(msg).await;
         }
     }
 }
@@ -380,6 +389,8 @@ fn panic_wrong_scale(build_scale: usize, snapshot_scale: usize) {
 #[cfg(test)]
 mod test {
 
+    use crate::keyed::key_distribute::DistributorBuilder;
+    use crate::stream::Logic as _;
     use crate::{
         keyed::partitioners::index_select,
         snapshot::NoPersistence,
@@ -389,25 +400,21 @@ mod test {
     use super::*;
     /// Bug I had, check the remote barrier is actually aligned and
     /// not just passed downstream directly
-    #[test]
-    fn remote_barrier_aligned() {
-        let mut tester = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist: Distributor<u64, (), i32> = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+    #[tokio::test]
+    async fn remote_barrier_aligned() {
+        type Msg = (u64, (), i32);
+        let mut tester =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
 
+        tester.send_local(Message::Epoch(15));
         tester.send_local(Message::Epoch(15));
         // should be none since we have no epoch from remote yet to align
         tester.step();
         assert!(tester.recv_local().is_none());
         tester
             .remote()
-            .send_to_operator(NetworkMessage::<u64, (), i32>::Epoch(42), 1, 0);
+            .send_to_operator(NetworkMessage::<Msg>::Epoch(42), 1, 0);
         tester.step();
 
         // should be 15 since that is the lower alignment of both epochs
@@ -418,18 +425,12 @@ mod test {
     }
 
     /// Epoch should be broadcasted to other workers
-    #[test]
-    fn epoch_is_broadcasted() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..3,
-            );
+    #[tokio::test]
+    async fn epoch_is_broadcasted() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..3)
+                .await;
 
         let in_msg = Message::Epoch(22);
         tester.send_local(in_msg);
@@ -437,102 +438,72 @@ mod test {
 
         let out0 = tester.remote().recv_from_operator().unwrap();
         let out1 = tester.remote().recv_from_operator().unwrap();
-        assert!(
-            matches!(
-                out0,
-                SentMessage {
-                    to_worker: 1,
-                    to_operator: 0,
-                    msg: NetworkMessage::Epoch(22)
-                }
-            ),
-            "{out0:?}"
-        );
-        assert!(
-            matches!(
-                out1,
-                SentMessage {
-                    to_worker: 2,
-                    to_operator: 0,
-                    msg: NetworkMessage::Epoch(22)
-                }
-            ),
-            "{out1:?}"
-        );
+        assert!(matches!(
+            out0,
+            SentMessage {
+                to_worker: 1,
+                to_operator: 0,
+                msg: NetworkMessage::Epoch(22)
+            }
+        ));
+        assert!(matches!(
+            out1,
+            SentMessage {
+                to_worker: 2,
+                to_operator: 0,
+                msg: NetworkMessage::Epoch(22)
+            }
+        ));
     }
 
     /// A shutdown marker coming in from local upstream should be broadcasted and sent downstream
-    #[test]
-    fn broadcast_shutdown() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..3,
-            );
+    #[tokio::test]
+    async fn broadcast_shutdown() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..3)
+                .await;
         tester.send_local(Message::SuspendMarker(SuspendMarker::default()));
         tester.step();
 
         let out0 = tester.remote().recv_from_operator().unwrap();
         let out1 = tester.remote().recv_from_operator().unwrap();
-        assert!(
-            matches!(
-                out0,
-                SentMessage {
-                    to_worker: 1,
-                    to_operator: 0,
-                    msg: NetworkMessage::SuspendMarker
-                }
-            ),
-            "{out0:?}"
-        );
-        assert!(
-            matches!(
-                out1,
-                SentMessage {
-                    to_worker: 2,
-                    to_operator: 0,
-                    msg: NetworkMessage::SuspendMarker
-                }
-            ),
-            "{out1:?}"
-        );
+        assert!(matches!(
+            out0,
+            SentMessage {
+                to_worker: 1,
+                to_operator: 0,
+                msg: NetworkMessage::SuspendMarker
+            }
+        ));
+        assert!(matches!(
+            out1,
+            SentMessage {
+                to_worker: 2,
+                to_operator: 0,
+                msg: NetworkMessage::SuspendMarker
+            }
+        ));
     }
     /// A barrier received from a local upstream should not trigger any output, when there is no state on the remote barrier
-    #[test]
-    fn align_barrier_from_local_none() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
+    #[tokio::test]
+    async fn align_barrier_from_local_none() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester.step();
 
         assert!(tester.recv_local().is_none());
     }
     /// A barrier received from a remote should not trigger any output, when there is no state on the local barrier
-    #[test]
-    fn align_barrier_from_remote_none() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
+    #[tokio::test]
+    async fn align_barrier_from_remote_none() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -541,18 +512,12 @@ mod test {
     }
     /// A barrier received from a local upstream should trigger a barrier output when there is state
     /// for the remote
-    #[test]
-    fn align_barrier_from_local() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
+    #[tokio::test]
+    async fn align_barrier_from_local() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -567,18 +532,12 @@ mod test {
     }
     /// A barrier received from a local upstream should trigger a barrier output when there is state
     /// for the remote but the next barrier should need to be aligned again
-    #[test]
-    fn align_barrier_from_local_twice() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
+    #[tokio::test]
+    async fn align_barrier_from_local_twice() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -596,18 +555,12 @@ mod test {
     }
     /// A barrier received from a remote should trigger a barrier output when there is state
     /// for the local barrier
-    #[test]
-    fn align_barrier_from_remote() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
+    #[tokio::test]
+    async fn align_barrier_from_remote() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
         tester
             .remote()
@@ -621,19 +574,12 @@ mod test {
     }
     /// If we receive a suspend marker from a remote and that remote was previously holding back the
     /// advancement of the barrier, the barrier should advance after the remote has shut down
-    #[test]
-    fn advance_barrier_after_remote_shutdown() {
-        let mut tester: OperatorTester<u64, (), i32, u64, (), i32, NetworkMessage<u64, (), i32>> =
-            OperatorTester::built_by(
-                move |ctx| {
-                    let mut dist = Distributor::new(index_select, ctx);
-                    move |input, output, op_ctx| dist.run(input, output, op_ctx)
-                },
-                0,
-                0,
-                0..2,
-            );
-
+    #[tokio::test]
+    async fn advance_barrier_after_remote_shutdown() {
+        type Msg = (u64, (), i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
 
         tester
@@ -647,25 +593,12 @@ mod test {
     }
 
     /// It must not forward any data before the barriers are aligned
-    #[test]
-    fn no_barrier_overtaking_remote_barrier() {
-        let mut tester: OperatorTester<
-            u64,
-            String,
-            i32,
-            u64,
-            String,
-            i32,
-            NetworkMessage<u64, String, i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
-        );
+    #[tokio::test]
+    async fn no_barrier_overtaking_remote_barrier() {
+        type Msg = (u64, String, i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
         // send a barrier to "block" the operator from forwarding data
         tester
             .remote()
@@ -695,31 +628,24 @@ mod test {
     }
 
     /// It must not forward any data before the barriers are aligned
-    #[test]
-    fn no_barrier_overtaking_local_barrier() {
-        let mut tester: OperatorTester<
-            u64,
-            String,
-            i32,
-            u64,
-            String,
-            i32,
-            NetworkMessage<u64, String, i32>,
-        > = OperatorTester::built_by(
-            move |ctx| {
-                let mut dist = Distributor::new(index_select, ctx);
-                move |input, output, op_ctx| dist.run(input, output, op_ctx)
-            },
-            0,
-            0,
-            0..2,
+    #[tokio::test]
+    async fn no_barrier_overtaking_local_barrier() {
+        type Msg = (u64, String, i32);
+        let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
+            OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
+                .await;
+
+        OperatorTester::send_local(
+            &mut tester,
+            Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))),
+        );
+        OperatorTester::send_local(
+            &mut tester,
+            Message::Data(DataMessage::new(0, "Hi".to_owned(), 10)),
         );
 
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
-        tester.send_local(Message::Data(DataMessage::new(0, "Hi".to_owned(), 10)));
-
-        tester.step();
-        assert!(tester.recv_local().is_none());
+        OperatorTester::step(&mut tester);
+        assert!(OperatorTester::recv_local(&mut tester).is_none());
 
         tester
             .remote()

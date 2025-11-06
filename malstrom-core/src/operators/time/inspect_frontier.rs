@@ -48,7 +48,7 @@ where
         &mut self,
         data_message: DataMessage<Msg>,
         output: &mut Output<Msg>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         output.send(Message::Data(data_message));
     }
@@ -57,7 +57,7 @@ where
         &mut self,
         epoch: &<Msg as Kvt>::Timestamp,
         output: &mut Output<Msg>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         (self.inspector)(epoch, ctx).await;
     }

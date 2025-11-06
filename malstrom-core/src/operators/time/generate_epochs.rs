@@ -101,7 +101,7 @@ where
 {
     type Logic = GenerateEpochsOp<In, F>;
 
-    async fn build(self, ctx: &mut crate::stream::BuildContext<'_>) -> Self::Logic {
+    async fn build(self, ctx: &mut crate::stream::BuildContext) -> Self::Logic {
         let prev_epoch: Option<In::Timestamp> = ctx.load_state().await;
         GenerateEpochsOp {
             generator: self.generator,
@@ -121,53 +121,51 @@ where
         &mut self,
         input: &mut crate::channels::operator_io::Input<In>,
         output: &mut crate::channels::operator_io::Output<Out>,
-        ctx: &mut crate::stream::OperatorContext<'_>,
+        ctx: &mut crate::stream::OperatorContext,
     ) {
-        if let Some(msg) = input.recv() {
-            match msg {
-                Message::Data(d) => {
-                    let new_epoch = (self.generator)(&d, &self.prev_epoch);
-                    // send the message to the late stream if it is later than the previously
-                    // issued epoch
-                    handle_maybe_late_msg(self.prev_epoch.as_ref(), d, output);
+        match input.recv().await {
+            Message::Data(d) => {
+                let new_epoch = (self.generator)(&d, &self.prev_epoch);
+                // send the message to the late stream if it is later than the previously
+                // issued epoch
+                handle_maybe_late_msg(self.prev_epoch.as_ref(), d, output);
 
-                    self.prev_epoch = match (new_epoch, self.prev_epoch.take()) {
-                        (None, None) => None,
-                        (None, Some(x)) => Some(x),
-                        (Some(x), None) => {
-                            output.send(Message::Epoch(x.clone()));
-                            Some(x)
-                        }
-                        (Some(x), Some(y)) => {
-                            if x > y {
-                                {
-                                    output.send(Message::Epoch(x.clone()));
-                                    Some(x)
-                                }
-                            } else {
-                                warn!("Ignoring issued epoch as it is <= previous epoch");
-                                Some(y)
-                            }
-                        }
-                    };
-                }
-                Message::AbsBarrier(mut b) => {
-                    b.persist(&self.prev_epoch, &ctx.operator_id);
-                    output.send(Message::AbsBarrier(b))
-                }
-                Message::Epoch(e) => {
-                    if self.prev_epoch.as_ref().is_none_or(|prev| *prev < e) {
-                        let _ = self.prev_epoch.insert(e.clone());
-                        output.send(Message::Epoch(e))
+                self.prev_epoch = match (new_epoch, self.prev_epoch.take()) {
+                    (None, None) => None,
+                    (None, Some(x)) => Some(x),
+                    (Some(x), None) => {
+                        output.send(Message::Epoch(x.clone())).await;
+                        Some(x)
                     }
-                }
-                Message::Interrogate(x) => output.send(Message::Interrogate(x)),
-                Message::Collect(c) => output.send(Message::Collect(c)),
-                Message::Acquire(a) => output.send(Message::Acquire(a)),
-                // Message::Load(l) => todo!(),
-                Message::Rescale(x) => output.send(Message::Rescale(x)),
-                Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)),
+                    (Some(x), Some(y)) => {
+                        if x > y {
+                            {
+                                output.send(Message::Epoch(x.clone()));
+                                Some(x)
+                            }
+                        } else {
+                            warn!("Ignoring issued epoch as it is <= previous epoch");
+                            Some(y)
+                        }
+                    }
+                };
             }
+            Message::AbsBarrier(mut b) => {
+                b.persist(&self.prev_epoch, &ctx.operator_id);
+                output.send(Message::AbsBarrier(b)).await
+            }
+            Message::Epoch(e) => {
+                if self.prev_epoch.as_ref().is_none_or(|prev| *prev < e) {
+                    let _ = self.prev_epoch.insert(e.clone());
+                    output.send(Message::Epoch(e)).await
+                }
+            }
+            Message::Interrogate(x) => output.send(Message::Interrogate(x)).await,
+            Message::Collect(c) => output.send(Message::Collect(c)).await,
+            Message::Acquire(a) => output.send(Message::Acquire(a)).await,
+            // Message::Load(l) => todo!(),
+            Message::Rescale(x) => output.send(Message::Rescale(x)).await,
+            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
         }
     }
 }

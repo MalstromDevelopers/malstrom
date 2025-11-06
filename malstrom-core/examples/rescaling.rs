@@ -43,11 +43,11 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             StatelessSource::new(SingleIteratorSource::new((0..=100).cycle())),
         )
         .key_distribute("key-odd-even", |x| x.value & 1 == 0, rendezvous_select)
-        .stateful_map("keyed-sum", |_, num, mut sum: i32| {
+        .stateful_map("keyed-sum", async |_, num, mut sum: i32| {
             sum += num;
             (sum, Some(sum))
         })
-        .inspect("print", |x, ctx| {
+        .inspect("print", async |x, ctx| {
             println!("{} @ Worker {}", x.value, ctx.worker_id);
             std::thread::sleep(Duration::from_millis(300)); // slowing things down a bit
         });

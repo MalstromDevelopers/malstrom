@@ -35,18 +35,6 @@ impl RunnableOperator {
         };
         self.operator.schedule(&mut context, rt)
     }
-    pub fn has_queued_work(&self) -> bool {
-        self.operator.has_queued_work()
-    }
-
-    /// check if this operator will ever emit a message again
-    pub fn is_finalized(&self) -> bool {
-        self.operator.is_finalized()
-    }
-
-    pub(crate) fn is_suspended(&self) -> bool {
-        self.operator.is_suspended()
-    }
 
     pub(crate) fn name(&self) -> &str {
         &self.name

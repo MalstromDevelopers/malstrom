@@ -73,14 +73,13 @@ impl<F> MapperOp<F> {
     }
 }
 
-impl<In, OutVal, S, Mapper, Fut> StatefulLogic<In, OutVal, S> for MapperOp<Mapper>
+impl<In, OutVal, S, Mapper> StatefulLogic<In, OutVal, S> for MapperOp<Mapper>
 where
     In: Kvt,
     In::Key: State + Key,
     OutVal: Data,
     S: Serialize + DeserializeOwned,
-    Mapper: FnMut(&In::Key, In::Value, S) -> Fut + 'static,
-    Fut: Future<Output = (OutVal, Option<S>)>,
+    Mapper: AsyncFnMut(&In::Key, In::Value, S) -> (OutVal, Option<S>) + 'static,
 {
     async fn on_data(
         &mut self,
@@ -95,13 +94,12 @@ where
     }
 }
 
-impl<In, T, Mapper, Fut, S> StatefulMap<In, T, Mapper, S> for StreamBuilder<In>
+impl<In, T, Mapper, S> StatefulMap<In, T, Mapper, S> for StreamBuilder<In>
 where
     In: Kvt,
     In::Key: State + Key,
     T: Data,
-    Mapper: FnMut(&In::Key, In::Value, S) -> Fut + 'static,
-    Fut: Future<Output = (T, Option<S>)>,
+    Mapper: AsyncFnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
     S: Default + Serialize + DeserializeOwned + 'static,
 {
     fn stateful_map(
@@ -141,7 +139,7 @@ mod test {
                 )
                 // calculate a running total split by odd and even numbers
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
+                .stateful_map("add", async |_, i, s: i32| (s + i, Some(s + i)))
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();
@@ -174,7 +172,7 @@ mod test {
                 )
                 // concat the words
                 .key_local("key-local", |x| x.value.len())
-                .stateful_map("concat", |_, x, mut s: String| {
+                .stateful_map("concat", async |_, x, mut s: String| {
                     s.push_str(&x);
                     if s.len() >= 6 {
                         (s, None)

@@ -21,19 +21,35 @@ pub(crate) trait Logic<M: Kvt, N: Kvt>: 'static {
     );
 }
 
+impl<M, N, F> Logic<M, N> for F
+where
+    M: Kvt,
+    N: Kvt,
+    F: AsyncFnMut(&mut Input<M>, &mut Output<N>, &mut OperatorContext) + 'static,
+{
+    async fn apply(
+        &mut self,
+        input: &mut Input<M>,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+        self(input, output, ctx).await;
+    }
+}
+
 /// This trait provides a way to implement logic with no risk of breaking internal messaging invariants.
 /// Usually it does not make sense to implement this trait directly. Consider using
 /// [malstrom::operators::StatefulLogic](StatefulLogic) instead.
 pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     /// Called whenever this operator is scheduled by its worker
-    async fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut OperatorContext<'_>) {}
+    async fn on_schedule(&mut self, output: &mut Output<N>, ctx: &mut OperatorContext) {}
 
     /// Called for every data message reaching the operator
     async fn on_data(
         &mut self,
         data_message: DataMessage<M>,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     );
 
     /// Called for every epoch reaching the operator
@@ -41,7 +57,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         epoch: &<M as Kvt>::Timestamp,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -50,7 +66,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         barrier: &mut Barrier,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -59,7 +75,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         rescale_message: &mut RescaleMessage,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -70,7 +86,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         suspend_marker: &mut SuspendMarker,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -81,7 +97,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         interrogate: &mut Interrogate<<M as Kvt>::Key>,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -92,7 +108,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         collect: &mut Collect<<M as Kvt>::Key>,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -103,7 +119,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         &mut self,
         acquire: &mut Acquire<<M as Kvt>::Key>,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
     }
 
@@ -120,7 +136,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
 //         &mut self,
 //         input: &mut Input<In>,
 //         output: &mut Output<Out>,
-//         ctx: &mut OperatorContext<'_>,
+//         ctx: &mut OperatorContext,
 //     ) {
 //         todo!()
 //     }
@@ -140,14 +156,10 @@ where
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<N>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
-        self.implementation.on_schedule(output, ctx);
-        let msg = match input.recv() {
-            Some(x) => x,
-            None => return,
-        };
-        match msg {
+        self.implementation.on_schedule(output, ctx).await;
+        match input.recv().await {
             Message::Data(data_message) => {
                 self.implementation.on_data(data_message, output, ctx).await
             }

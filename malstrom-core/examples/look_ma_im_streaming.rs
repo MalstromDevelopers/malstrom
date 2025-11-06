@@ -27,6 +27,6 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
                 "streaming",
             ])),
         )
-        .map("upper", |x| x.to_uppercase())
+        .map("upper", async |x| x.to_uppercase())
         .sink("stdout", StatelessSink::new(StdOutSink));
 }

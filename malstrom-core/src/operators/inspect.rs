@@ -55,7 +55,7 @@ pub trait Inspect<Msg: Kvt, Inspector>: Sealed {
 impl<Msg, Inspector> Inspect<Msg, Inspector> for StreamBuilder<Msg>
 where
     Msg: Kvt,
-    Inspector: AsyncFnMut(&DataMessage<Msg>,&OperatorContext) + 'static,
+    Inspector: AsyncFnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
 {
     fn inspect(
         self,
@@ -83,18 +83,18 @@ impl<Msg, Inspector> SafeLogic<Msg, (Msg::Key, Msg::Value, Msg::Timestamp)>
     for InspectOp<Msg, Inspector>
 where
     Msg: Kvt,
-    Inspector: AsyncFnMut(&DataMessage<Msg>,&OperatorContext) + 'static,
+    Inspector: AsyncFnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
 {
     async fn on_data(
         &mut self,
         msg: DataMessage<Msg>,
         output: &mut Output<(Msg::Key, Msg::Value, Msg::Timestamp)>,
-        ctx: &mut OperatorContext<'_>,
+        ctx: &mut OperatorContext,
     ) {
         (self.func)(&msg, ctx).await;
         // needed for type conversion
         let out_msg = DataMessage::new(msg.key, msg.value, msg.timestamp);
-        output.send(Message::Data(out_msg));
+        output.send(Message::Data(out_msg)).await;
     }
 }
 
@@ -125,7 +125,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(input.clone())),
                 )
-                .inspect("inspect", move |x, _| {
+                .inspect("inspect", async move |x, _| {
                     inspect_collector.give(x.value.to_owned())
                 })
                 .sink("sink", StatelessSink::new(output_collector.clone()));

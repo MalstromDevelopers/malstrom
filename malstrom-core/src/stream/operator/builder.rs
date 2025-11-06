@@ -7,10 +7,7 @@ use std::{
 
 use crate::{
     channels::operator_io::{Input, Output, full_broadcast},
-    stream::{
-        GetInput, GetOutput, Logic, OperatorContext,
-        operator::{BuildableOperator, RunnableOperator, traits::RunOperator},
-    },
+    stream::{GetInput, GetOutput, Logic, OperatorContext, operator::context::WorkerBuildContext},
     types::{Data, Kvt, MaybeKey, MaybeTime, Message},
 };
 
@@ -26,99 +23,55 @@ pub struct Operator<M: Kvt, B, N: Kvt> {
     name: String, // human readable name for debugging
 }
 
-pub(crate) trait IntoBuildable {
-    fn into_buildable(self) -> impl BuildableOperator;
-}
-
-impl<M, B, N> IntoBuildable for Operator<M, B, N>
+impl<M, B, N> Operator<M, B, N>
 where
     M: Kvt,
     N: Kvt,
     B: LogicBuilder<M, N>,
 {
-    fn into_buildable(self) -> impl BuildableOperator {
-        self
-    }
-}
+    pub(crate) async fn start(mut self, build_ctx: impl Future<Output = WorkerBuildContext>) {
+        let name = self.get_name().to_string();
+        let mut build_ctx = build_ctx
+            .await
+            .to_build_context(self.operator_id, self.name);
+        let mut logic = self.logic_builder.build(&mut build_ctx).await;
+        let mut operator_context = OperatorContext::new(
+            build_ctx.worker_id,
+            self.operator_id,
+            build_ctx.communication,
+        );
 
-impl<M, B, N> BuildableOperator for Operator<M, B, N>
-where
-    M: Kvt,
-    N: Kvt,
-    B: LogicBuilder<M, N>,
-{
-    fn into_runnable(
-        self: Box<Self>,
-        rt: &tokio::runtime::Handle,
-        context: &mut BuildContext,
-    ) -> super::RunnableOperator {
-        let logic = rt.block_on(self.logic_builder.build(context));
-        let operator = BuiltOperator {
-            input: self.input,
-            logic,
-            output: self.output,
+        let is_finalized = || {
+            N::Timestamp::CHECK_FINISHED(self.output.get_frontier())
+                && M::Timestamp::CHECK_FINISHED(&self.input.get_frontier())
         };
-        RunnableOperator::new(operator, context)
+
+        loop {
+            println!("Running {}", &name);
+            logic
+                .apply(&mut self.input, &mut self.output, &mut operator_context)
+                .await;
+            // final Timestamp reached
+            if N::Timestamp::CHECK_FINISHED(self.output.get_frontier())
+                && M::Timestamp::CHECK_FINISHED(&self.input.get_frontier())
+            {
+                println!("Operator {} terminated", &name);
+                return;
+            }
+            if self.output.is_suspended() {
+                return;
+            }
+        }
     }
 
-    fn get_name(&self) -> &str {
+    pub(crate) fn get_name(&self) -> &str {
         &self.name
     }
 
-    fn get_id(&self) -> u64 {
+    pub(crate) fn get_id(&self) -> u64 {
         hash_op_name(&self.name)
     }
 }
-
-struct BuiltOperator<M: Kvt, L, N: Kvt> {
-    input: Input<M>,
-    logic: L,
-    output: Output<N>,
-}
-
-impl<M, L, N> RunOperator for BuiltOperator<M, L, N>
-where
-    M: Kvt,
-    L: Logic<M, N>,
-    N: Kvt,
-{
-    fn schedule(&mut self, ctx: &mut OperatorContext, rt: &tokio::runtime::LocalRuntime) {
-        rt.block_on(self.logic.apply(&mut self.input, &mut self.output, ctx))
-    }
-
-    fn has_queued_work(&self) -> bool {
-        self.input.can_progress()
-    }
-
-    fn is_finalized(&self) -> bool {
-        <N as Kvt>::Timestamp::CHECK_FINISHED(self.output.get_frontier())
-            && <M as Kvt>::Timestamp::CHECK_FINISHED(self.input.get_frontier())
-            && !self.input.can_progress()
-    }
-
-    fn is_suspended(&self) -> bool {
-        self.output.is_suspended()
-    }
-}
-/// A schedulable logic, usually a function, which will repeatedly be called by the worker
-/// to progress the Malstrom job.
-/// Usually it does not make sense to implement this trait directly. Consider using
-/// [malstrom::operators::StatefulLogic](StatefulLogic) instead.
-// pub trait Logic<KI, VI, TI, KO, VO, TO>:
-//     FnMut(&mut Input<KI, VI, TI>, &mut Output<KO, VO, TO>, &mut OperatorContext) + 'static
-// {
-// }
-// impl<
-//         KI,
-//         VI,
-//         KO,
-//         VO,
-//         TI,
-//         TO,
-//         X: FnMut(&mut Input<KI, VI, TI>, &mut Output<KO, VO, TO>, &mut OperatorContext) + 'static,
-//     > Logic<KI, VI, TI, KO, VO, TO> for X
-// {
-// }
 
 pub trait LogicBuilder<M: Kvt, N: Kvt>: 'static {
     type Logic: Logic<M, N>;
@@ -136,21 +89,20 @@ where
     L: Logic<M, N> + 'static,
 {
     type Logic = L;
-    async fn build(self, _ctx: &mut BuildContext<'_>) -> Self::Logic {
+    async fn build(self, _ctx: &mut BuildContext) -> Self::Logic {
         self.logic
     }
 }
 
-impl<M, N, F, Fut> LogicBuilder<M, N> for F
+impl<M, N, F, L> LogicBuilder<M, N> for F
 where
-    F: FnOnce(&mut BuildContext) -> Fut + 'static,
-    Fut: Future,
-    Fut::Output: Logic<M, N>,
+    F: AsyncFnOnce(&mut BuildContext) -> L + 'static,
+    L: Logic<M, N>,
     M: Kvt,
     N: Kvt,
 {
-    type Logic = <Fut as Future>::Output;
-    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+    type Logic = L;
+    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
         (self)(ctx).await
     }
 }
@@ -221,52 +173,6 @@ where
         &mut self.input
     }
 }
-
-// impl<KI, VI, TI, KO, VO, TO> AppendableOperator<KO, VO, TO>
-//     for OperatorBuilder<KI, VI, TI, KO, VO, TO>
-// where
-//     KI: MaybeKey,
-//     VI: Data,
-//     TI: MaybeTime,
-//     KO: MaybeKey,
-//     VO: Data,
-//     TO: MaybeTime,
-// {
-//     fn get_output_mut(&mut self) -> &mut Output<KO, VO, TO> {
-//         &mut self.output
-//     }
-
-//     fn into_buildable(self: Box<Self>) -> Box<dyn BuildableOperator> {
-//         self
-//     }
-// }
-
-// impl<KI, VI, TI, KO, VO, TO> BuildableOperator for OperatorBuilder<KI, VI, TI, KO, VO, TO>
-// where
-//     KI: MaybeKey,
-//     VI: Data,
-//     TI: MaybeTime,
-//     KO: MaybeKey,
-//     VO: Data,
-//     TO: MaybeTime,
-// {
-//     fn into_runnable(self: Box<Self>, context: &mut BuildContext) -> RunnableOperator {
-//         let operator = StandardOperator {
-//             input: self.input,
-//             logic: (self.logic_builder)(context),
-//             output: self.output,
-//         };
-//         RunnableOperator::new(operator, context)
-//     }
-
-//     fn get_name(&self) -> &str {
-//         &self.name
-//     }
-
-//     fn get_id(&self) -> u64 {
-//         self.operator_id
-//     }
-// }
 
 fn hash_op_name(name: &str) -> u64 {
     let mut hasher = seahash::SeaHasher::new();

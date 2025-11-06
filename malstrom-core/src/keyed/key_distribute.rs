@@ -84,10 +84,19 @@ where
     }
 }
 
-struct DistributorBuilder<K, M> {
+pub(crate) struct DistributorBuilder<K, M> {
     partitioner: WorkerPartitioner<K>,
     _message_type: PhantomData<M>,
 }
+impl<K, M> DistributorBuilder<K, M> {
+    pub(crate) fn new(partitioner: WorkerPartitioner<K>) -> Self {
+        Self {
+            partitioner,
+            _message_type: PhantomData,
+        }
+    }
+}
+
 impl<M, K> LogicBuilder<M, M> for DistributorBuilder<K, M>
 where
     M: Kvt<Key = K>,
@@ -97,7 +106,7 @@ where
 {
     type Logic = Distributor<M>;
 
-    async fn build(self, ctx: &mut BuildContext<'_>) -> Self::Logic {
+    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
         Distributor::<M>::new(self.partitioner, ctx).await
     }
 }

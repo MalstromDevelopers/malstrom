@@ -52,28 +52,27 @@ where
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<N>,
-        _ctx: &mut crate::stream::OperatorContext<'_>,
+        _ctx: &mut crate::stream::OperatorContext,
     ) {
-        match input.recv() {
-            Some(Message::Data(d)) => {
+        match input.recv().await {
+            Message::Data(d) => {
                 let new_key = (self.key_func)(&d);
                 let new_msg = DataMessage {
                     timestamp: d.timestamp,
                     key: new_key,
                     value: d.value,
                 };
-                output.send(Message::Data(new_msg))
+                output.send(Message::Data(new_msg)).await
             }
             // key messages may not cross key region boundaries
-            Some(Message::Interrogate(_)) => (),
-            Some(Message::Collect(_)) => (),
-            Some(Message::Acquire(_)) => (),
+            Message::Interrogate(_) => (),
+            Message::Collect(_) => (),
+            Message::Acquire(_) => (),
             // necessary to convince Rust it is a different generic type now
-            Some(Message::AbsBarrier(b)) => output.send(Message::AbsBarrier(b)),
-            Some(Message::Rescale(x)) => output.send(Message::Rescale(x)),
-            Some(Message::SuspendMarker(x)) => output.send(Message::SuspendMarker(x)),
-            Some(Message::Epoch(x)) => output.send(Message::Epoch(x)),
-            None => (),
+            Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)).await,
+            Message::Rescale(x) => output.send(Message::Rescale(x)).await,
+            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
+            Message::Epoch(x) => output.send(Message::Epoch(x)).await,
         }
     }
 }
