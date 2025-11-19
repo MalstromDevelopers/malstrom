@@ -165,43 +165,43 @@ where
             }
             Message::Epoch(epoch) => {
                 self.implementation.on_epoch(&epoch, output, ctx).await;
-                output.send(Message::Epoch(epoch));
+                output.send(Message::Epoch(epoch)).await;
             }
             Message::AbsBarrier(mut barrier) => {
                 self.implementation
                     .on_barrier(&mut barrier, output, ctx)
                     .await;
-                output.send(barrier.into());
+                output.send(barrier.into()).await;
             }
             Message::Rescale(mut rescale_message) => {
                 self.implementation
                     .on_rescale(&mut rescale_message, output, ctx)
                     .await;
-                output.send(rescale_message.into());
+                output.send(rescale_message.into()).await;
             }
             Message::SuspendMarker(mut suspend_marker) => {
                 self.implementation
                     .on_suspend(&mut suspend_marker, output, ctx)
                     .await;
-                output.send(suspend_marker.into());
+                output.send(suspend_marker.into()).await;
             }
             Message::Interrogate(mut interrogate) => {
                 self.implementation
                     .on_interrogate(&mut interrogate, output, ctx)
                     .await;
-                output.send(interrogate.into());
+                output.send(interrogate.into()).await;
             }
             Message::Collect(mut collect) => {
                 self.implementation
                     .on_collect(&mut collect, output, ctx)
                     .await;
-                output.send(collect.into());
+                output.send(collect.into()).await;
             }
             Message::Acquire(mut acquire) => {
                 self.implementation
                     .on_acquire(&mut acquire, output, ctx)
                     .await;
-                output.send(acquire.into());
+                output.send(acquire.into()).await;
             }
         };
     }
