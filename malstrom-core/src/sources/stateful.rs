@@ -25,8 +25,7 @@ use crate::{
         OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder,
     },
     types::{
-        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, RescaleMessage,
-        SuspendMarker, Timestamp, WorkerId,
+        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, OnceTime, RescaleMessage, SuspendMarker, Timestamp, WorkerId
     },
 };
 
@@ -137,7 +136,7 @@ struct PartListerBuilder<Part> {
     parts: Vec<Part>,
 }
 
-impl<Part> LogicBuilder<(), (Part, NoData, NoTime)> for PartListerBuilder<Part>
+impl<Part> LogicBuilder<(), (Part, NoData, OnceTime)> for PartListerBuilder<Part>
 where
     Part: Key,
 {
@@ -150,29 +149,36 @@ where
             // do not emit on non-0 worker
             Box::new(std::iter::empty::<Part>()) as Box<dyn Iterator<Item = Part>>
         };
-        PartLister { parts }
+        PartLister { parts, max_ts: Some(()) }
     }
 }
 
 struct PartLister<Part> {
     parts: Box<dyn Iterator<Item = Part>>,
+    /// take this option to send the MAX timestamp indicating
+    /// the iterator has finished
+    max_ts: Option<()>
 }
 
-impl<Part> Logic<(), (Part, NoData, NoTime)> for PartLister<Part>
+impl<Part> Logic<(), (Part, NoData, OnceTime)> for PartLister<Part>
 where
     Part: Key,
 {
     async fn apply(
         &mut self,
         input: &mut Input<()>,
-        output: &mut Output<(Part, NoData, NoTime)>,
+        output: &mut Output<(Part, NoData, OnceTime)>,
         _ctx: &mut OperatorContext,
     ) {
         for part in self.parts.by_ref() {
             output
-                .send(Message::Data(DataMessage::new(part, NoData, NoTime)))
-                .await
+                .send(Message::Data(DataMessage::new(part, NoData, OnceTime::MIN)))
+                .await;
         }
+        if let Some(_) = self.max_ts.take() {
+            output.send(Message::Epoch(OnceTime::MAX)).await;
+        }
+        
         match input.recv().await {
             Message::Data(_) => (),
             Message::Epoch(_) => (),
@@ -206,7 +212,7 @@ impl<In, Out, SrcImpl> LogicBuilder<In, (Out::Key, Out::Value, Out::Timestamp)>
     for StatefulSourcePartitionOpBuilder<Out, SrcImpl>
 where
     SrcImpl: StatefulSourceImpl<Out::Value, Out::Timestamp, Part = Out::Key>,
-    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = NoTime>,
+    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = OnceTime>,
     Out: Kvt,
     Out::Key: Key + Distributable,
     Out::Value: Data,
@@ -279,7 +285,7 @@ impl<In, Out, SrcImpl> Logic<In, (Out::Key, Out::Value, Out::Timestamp)>
     for StatefulSourcePartitionOp<Out, SrcImpl>
 where
     SrcImpl: StatefulSourceImpl<Out::Value, Out::Timestamp, Part = Out::Key>,
-    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = NoTime>,
+    In: Kvt<Key = SrcImpl::Part, Value = NoData, Timestamp = OnceTime>,
     Out: Kvt,
     Out::Key: Key + Distributable,
     Out::Value: Data,
@@ -292,13 +298,13 @@ where
         ctx: &mut OperatorContext,
     ) {
         // TODO: All these iterations may be kinda inefficient
-
         // try to emit an epoch
         if let Some(t) = self
             .max_t
             .take_if(|_| self.all_partitions.values().all(|x| *x))
         {
             output.send(Message::Epoch(t)).await;
+            return;
         }
         /// new partition assigned
         let new_partition = input.recv();

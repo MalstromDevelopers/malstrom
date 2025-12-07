@@ -31,32 +31,31 @@ where
 {
     pub(crate) async fn start(mut self, build_ctx: impl Future<Output = WorkerBuildContext>) {
         let name = self.get_name().to_string();
-        let mut build_ctx = build_ctx
+        let (mut build_ctx, completion_ref) = build_ctx
             .await
             .to_build_context(self.operator_id, self.name);
         let mut logic = self.logic_builder.build(&mut build_ctx).await;
+        println!("Operator {name} started");
         let mut operator_context = OperatorContext::new(
             build_ctx.worker_id,
             self.operator_id,
             build_ctx.communication,
         );
 
+        let mut completion_ref = Some(completion_ref);
         let is_finalized = || {
+            // TODO: Why are we checking both in and output here?
             N::Timestamp::CHECK_FINISHED(self.output.get_frontier())
                 && M::Timestamp::CHECK_FINISHED(&self.input.get_frontier())
         };
-
+        
         loop {
-            println!("Running {}", &name);
             logic
                 .apply(&mut self.input, &mut self.output, &mut operator_context)
                 .await;
-            // final Timestamp reached
-            if N::Timestamp::CHECK_FINISHED(self.output.get_frontier())
-                && M::Timestamp::CHECK_FINISHED(&self.input.get_frontier())
-            {
-                println!("Operator {} terminated", &name);
-                return;
+            if N::Timestamp::CHECK_FINISHED(self.output.get_frontier()) {
+                // drop completion ref to indicate we won't produce anymore data
+                let _ = completion_ref.take();
             }
             if self.output.is_suspended() {
                 return;

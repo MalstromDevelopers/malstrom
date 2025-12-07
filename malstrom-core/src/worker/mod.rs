@@ -54,7 +54,7 @@ where
 
         let mut root_operator =
             Operator::<(), _, ()>::direct("malstrom::root".to_string(), RootLogic(rx));
-        
+
         let inner = Rc::new(Mutex::new(InnerRuntimeBuilder {
             build_ctx: broadcast::Sender::new(1),
             operator_rt: LocalRuntime::new().unwrap(),
@@ -115,7 +115,7 @@ where
             .into_inner()
             .unwrap();
 
-        inner.add_operator(self.root_operator);
+        let root_op_id = inner.add_operator(self.root_operator);
 
         let mut communication_backend = self.flavor.communication()?;
         let coordinator = CommunicationClient::worker_to_coordinator(&communication_backend)?;
@@ -151,7 +151,8 @@ where
         });
         let _ = inner.build_ctx.send(build_ctx);
         // run all operators
-        let operators: FuturesUnordered<_> = inner.operator_tasks.into_values().collect();
+        let root_operator = inner.operator_tasks.remove(&root_op_id).expect("Root operator must exist");
+        let mut operators: FuturesUnordered<_> = inner.operator_tasks.into_iter().map(async |(k, v)| (k, v.await)).collect();
 
         let persistence = self.persistence;
         let sys_msg_sender = self.sys_msg_sender;
@@ -197,8 +198,13 @@ where
                 }
             }
         });
-
-        inner.operator_rt.block_on(operators.all(async |_| true));
+        
+        println!("Running {} operators exluding root", operators.len());
+        while let Some((id, res)) = inner.operator_rt.block_on(operators.next()) {
+            res.unwrap();
+            println!("{id} finished")
+        }        
+        println!("All operators finished");
         info!("Finished execution");
         Ok(())
     }
@@ -252,7 +258,7 @@ pub(crate) struct InnerRuntimeBuilder {
 }
 
 impl InnerRuntimeBuilder {
-    pub(crate) fn add_operator<In, B, Out>(&mut self, operator: Operator<In, B, Out>)
+    pub(crate) fn add_operator<In, B, Out>(&mut self, operator: Operator<In, B, Out>) -> OperatorId
     where
         In: Kvt,
         B: LogicBuilder<In, Out>,
@@ -261,7 +267,6 @@ impl InnerRuntimeBuilder {
         let mut ctx_receiver = self.build_ctx.subscribe();
         let operator_id = operator.get_id();
         let operator_name = operator.get_name().to_owned();
-
         let task = self.operator_rt.spawn_local(async move {
             let build_ctx = ctx_receiver.recv().map(Result::unwrap);
             operator.start(build_ctx).await;
@@ -269,6 +274,7 @@ impl InnerRuntimeBuilder {
         if let Some(_) = self.operator_tasks.insert(operator_id, task) {
             panic!("Non unique operator name: {operator_name}")
         }
+        operator_id
     }
 }
 
@@ -280,26 +286,25 @@ impl<P: PersistenceClient> Logic<(), ()> for RootLogic<P> {
         output: &mut Output<()>,
         ctx: &mut crate::stream::OperatorContext,
     ) {
-        return ;
-        // while let Some(sys_msg) = self.0.recv().await {
-        //     match sys_msg {
-        //         SysMessage::Snapshot { client, callback } => {
-        //             let barrier = Barrier::new(Box::new(client), callback);
-        //             output.send(Message::AbsBarrier(barrier)).await;
-        //         }
-        //         SysMessage::Reconfigure {
-        //             new_set,
-        //             new_version,
-        //             callback,
-        //         } => {
-        //             let reconfig = RescaleMessage::new(new_set, new_version, callback);
-        //             output.send(Message::Rescale(reconfig)).await;
-        //         }
-        //         SysMessage::Suspend { callback } => {
-        //             let suspend = SuspendMarker::new(callback);
-        //             output.send(Message::SuspendMarker(suspend)).await;
-        //         }
-        //     }
-        // }
+        while let Some(sys_msg) = self.0.recv().await {
+            match sys_msg {
+                SysMessage::Snapshot { client, callback } => {
+                    let barrier = Barrier::new(Box::new(client), callback);
+                    output.send(Message::AbsBarrier(barrier)).await;
+                }
+                SysMessage::Reconfigure {
+                    new_set,
+                    new_version,
+                    callback,
+                } => {
+                    let reconfig = RescaleMessage::new(new_set, new_version, callback);
+                    output.send(Message::Rescale(reconfig)).await;
+                }
+                SysMessage::Suspend { callback } => {
+                    let suspend = SuspendMarker::new(callback);
+                    output.send(Message::SuspendMarker(suspend)).await;
+                }
+            }
+        }
     }
 }

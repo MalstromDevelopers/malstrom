@@ -6,6 +6,7 @@ use itertools::Itertools;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::channels::lastref::LastRefHandle;
 use crate::errorhandling::MalstromFatal;
 use crate::runtime::communication::Distributable;
 use crate::runtime::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
@@ -60,6 +61,8 @@ pub(crate) struct WorkerBuildContext {
     persistence_backend: Rc<dyn PersistenceClient>,
     communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
+    // drop this to indicate a completed task
+    completion_ref: LastRefHandle
 }
 
 impl WorkerBuildContext {
@@ -68,12 +71,14 @@ impl WorkerBuildContext {
         persistence_backend: Rc<dyn PersistenceClient>,
         communication: Rc<dyn OperatorOperatorComm>,
         worker_ids: IndexSet<WorkerId>,
+        completion_ref: LastRefHandle
     ) -> Self {
         Self {
             worker_id,
             persistence_backend,
             communication,
             worker_ids,
+            completion_ref
         }
     }
 }
@@ -83,15 +88,15 @@ impl WorkerBuildContext {
         self,
         operator_id: OperatorId,
         operator_name: String,
-    ) -> BuildContext {
-        BuildContext {
+    ) -> (BuildContext, LastRefHandle) {
+        (BuildContext {
             operator_id,
             operator_name,
             worker_id: self.worker_id,
             persistence_backend: self.persistence_backend,
             communication: self.communication,
             worker_ids: self.worker_ids,
-        }
+        }, self.completion_ref)
     }
 }
 
