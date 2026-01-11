@@ -303,6 +303,7 @@ where
             .max_t
             .take_if(|_| self.all_partitions.values().all(|x| *x))
         {
+            // TODO: Only send once
             output.send(Message::Epoch(t)).await;
             return;
         }
@@ -312,6 +313,10 @@ where
         let mut data_polls: FuturesUnordered<_> = self
             .partitions
             .iter_mut()
+            .filter(|(part, _)| {
+                // TODO: This is hell
+                !*self.all_partitions.get(*part).expect("Expected partition state to exist")
+            })
             .map(async |(part, partition)| (part, partition.poll().await))
             .collect();
         /// information about from remote partition
@@ -320,11 +325,12 @@ where
             .values()
             .map(async |x| x.recv_async().await)
             .collect();
-
+        
         // the Some() is needed because an empty iterator returns immediately with None
         // drop() calls are needed so we can borrwo self mutably again
         tokio::select! {
             Some((part, value)) = data_polls.next() => {
+                
                     match value {
                         Some((dt, ts)) => {
                             let msg = DataMessage::new(part.clone(), dt, ts);

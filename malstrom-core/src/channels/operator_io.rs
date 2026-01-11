@@ -3,12 +3,14 @@
 //! Essentially these are the edges in the stream graph.
 use super::spsc;
 use crate::{
+    channels::signal::{Signal, SignalHandle},
     snapshot::Barrier,
     types::{Kvt, MaybeTime, Message, OperatorPartitioner, SuspendMarker, Timestamp},
 };
 use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
 use itertools::Itertools;
 use std::{rc::Rc, usize};
+use tokio::sync::oneshot;
 
 /// Operator Output
 pub struct Output<M: Kvt> {
@@ -18,18 +20,28 @@ pub struct Output<M: Kvt> {
     partitioner: Box<dyn OperatorPartitioner<M>>,
     frontier: Option<<M as Kvt>::Timestamp>,
     suspended: bool,
+    finalized_signal: Signal,
 }
 
 impl<M: Kvt> Output<M> {
     /// Create a new Sender with **no** associated Receiver
     /// Link a receiver with [link].
     pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<M>) -> Self {
-        Self {
+        let this = Self {
             senders: Vec::new(),
             partitioner: Box::new(partitioner),
             frontier: None,
             suspended: false,
-        }
+            /// signal to listen for finished input (last epoch received or NoTime)
+            finalized_signal: Signal::new(),
+        };
+        /// Allow NoTime type to indicate a final output
+        /// even if send is never called on this output
+        if M::Timestamp::CHECK_FINISHED(&None) {
+            this.finalized_signal.send();
+        };
+
+        this
     }
 
     /// Send a value into this channel.
@@ -78,6 +90,9 @@ impl<M: Kvt> Output<M> {
                 }
             }
         };
+        if M::Timestamp::CHECK_FINISHED(&self.frontier) {
+            self.finalized_signal.send();
+        };
     }
     /// Get the frontier on this Sender, i.e the timestamp of the largest
     /// Epoch sent with this sender or `None` if no Epoch has been sent with
@@ -91,6 +106,10 @@ impl<M: Kvt> Output<M> {
     #[inline]
     pub(crate) fn is_suspended(&self) -> bool {
         self.suspended
+    }
+    
+    pub(crate) fn get_finalized_handle(&self) -> SignalHandle {
+        self.finalized_signal.handle()
     }
 }
 

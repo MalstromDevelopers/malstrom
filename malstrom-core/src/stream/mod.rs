@@ -14,7 +14,7 @@ use crate::{
     types::Kvt,
 };
 
-trait GetOutput<M: Kvt> {
+pub(crate) trait GetOutput<M: Kvt> {
     fn get_output_mut(&mut self) -> &mut Output<M>;
 }
 

@@ -5,11 +5,13 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Mutex;
 
+use crate::channels::lastref::LastRefStanding;
 use crate::channels::operator_io::{Input, Output, RootOutput, full_broadcast, link, link_root};
+use crate::channels::signal::SignalHandle;
 use crate::coordinator::CoordinatorExecutionError;
 use crate::coordinator::types::{CoordinationMessage, WorkerMessage};
 use crate::snapshot::{Barrier, NoPersistence, PersistenceBackend, PersistenceClient};
-use crate::stream::{BuildContext, DirectLogic, Logic, LogicBuilder, Operator, WorkerBuildContext};
+use crate::stream::{BuildContext, DirectLogic, Logic, LogicBuilder, Operator, GetOutput as _, WorkerBuildContext};
 use crate::stream::{InitialStreamBuilder, StreamBuilder};
 use crate::types::{
     Kvt, MaybeData, MaybeKey, Message, NoData, NoKey, OperatorId, RescaleMessage, SuspendMarker,
@@ -135,11 +137,14 @@ where
             }
             None => Rc::new(NoPersistence) as Rc<dyn PersistenceClient>,
         };
+
+        let completion_ref = LastRefStanding::new();
         let build_ctx = WorkerBuildContext::new(
             this_worker,
             Rc::clone(&state_client),
             Rc::new(communication_backend),
             buildinfo.worker_set.clone(),
+            completion_ref.handle(),
         );
         coordinator.send(WorkerMessage::BuildComplete);
 
@@ -151,8 +156,6 @@ where
         });
         let _ = inner.build_ctx.send(build_ctx);
         // run all operators
-        let root_operator = inner.operator_tasks.remove(&root_op_id).expect("Root operator must exist");
-        let mut operators: FuturesUnordered<_> = inner.operator_tasks.into_iter().map(async |(k, v)| (k, v.await)).collect();
 
         let persistence = self.persistence;
         let sys_msg_sender = self.sys_msg_sender;
@@ -198,12 +201,13 @@ where
                 }
             }
         });
-        
-        println!("Running {} operators exluding root", operators.len());
-        while let Some((id, res)) = inner.operator_rt.block_on(operators.next()) {
-            res.unwrap();
-            println!("{id} finished")
-        }        
+
+        println!("Running {} operators exluding root", inner.operator_tasks.len());
+        let (_operators, signals): (Vec<_>, Vec<_>) = inner.operator_tasks.into_values().collect();
+        let mut signals: FuturesUnordered<_> = signals.into_iter().map(SignalHandle::watch).collect();
+        for s in inner.operator_rt.block_on(signals.next()) {
+            println!("Got signal");
+        }
         println!("All operators finished");
         info!("Finished execution");
         Ok(())
@@ -254,24 +258,28 @@ pub(crate) struct InnerRuntimeBuilder {
     // build_ctx will be sent here once available
     build_ctx: broadcast::Sender<WorkerBuildContext>,
     operator_rt: LocalRuntime,
-    operator_tasks: HashMap<OperatorId, tokio::task::JoinHandle<()>>,
+    operator_tasks: HashMap<OperatorId, (tokio::task::JoinHandle<()>, SignalHandle)>,
 }
 
 impl InnerRuntimeBuilder {
-    pub(crate) fn add_operator<In, B, Out>(&mut self, operator: Operator<In, B, Out>) -> OperatorId
+    pub(crate) fn add_operator<In, B, Out>(&mut self, mut operator: Operator<In, B, Out>) -> OperatorId
     where
         In: Kvt,
         B: LogicBuilder<In, Out>,
         Out: Kvt,
-    {
+    {   
+        // signal which indicates the input as finalized
+        let finalized_signal = operator.get_output_mut().get_finalized_handle();
+        
         let mut ctx_receiver = self.build_ctx.subscribe();
         let operator_id = operator.get_id();
         let operator_name = operator.get_name().to_owned();
+        println!("adding {operator_name}");
         let task = self.operator_rt.spawn_local(async move {
             let build_ctx = ctx_receiver.recv().map(Result::unwrap);
             operator.start(build_ctx).await;
         });
-        if let Some(_) = self.operator_tasks.insert(operator_id, task) {
+        if let Some(_) = self.operator_tasks.insert(operator_id, (task, finalized_signal)) {
             panic!("Non unique operator name: {operator_name}")
         }
         operator_id
