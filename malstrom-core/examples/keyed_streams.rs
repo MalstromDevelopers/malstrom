@@ -8,7 +8,7 @@ use malstrom::worker::StreamProvider;
 
 fn main() {
     MultiThreadRuntime::builder()
-        .parrallelism(2)
+        .parrallelism(1)
         .persistence(NoPersistence)
         .build(build_dataflow)
         .execute()

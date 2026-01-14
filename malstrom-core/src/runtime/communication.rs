@@ -6,10 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::{
-    errorhandling::MalstromFatal,
-    types::{OperatorId, WorkerId},
-};
+use crate::types::{OperatorId, WorkerId};
 
 /// A type which can be sent (distributed) between workers
 pub trait Distributable: Serialize + DeserializeOwned {}
@@ -151,11 +148,13 @@ where
     /// Send a message using this client. This does not wait for the other worker
     /// to receive the message, but merely queues the message for delivery.
     pub fn send(&self, msg: TSend) {
-        self.transport.send(Self::encode(msg)).malstrom_fatal()
+        self.transport
+            .send(Self::encode(msg))
+            .expect("Encoding error")
     }
 
     pub(crate) fn encode(msg: TSend) -> Vec<u8> {
-        rmp_serde::encode::to_vec(&msg).malstrom_fatal()
+        rmp_serde::encode::to_vec(&msg).expect("Encoding error")
     }
 }
 
@@ -163,24 +162,21 @@ impl<TSend, TRecv> CommunicationClient<TSend, TRecv>
 where
     TRecv: Distributable,
 {
-    /// Try receiving a message in a non-blocking manner. This function returns immediatly either
-    /// with a message if one is available or with `None` if no message is available.
-    // pub fn recv(&self) -> Option<TRecv> {
-    //     let encoded = self.transport.recv().malstrom_fatal()?;
-    //     Some(Self::decode(&encoded))
-    // }
-
     /// Asycnhronously receive a message on this client. The returned future completes,
     /// once a message is available
     pub async fn recv_async(&self) -> TRecv {
-        let encoded = self.transport.recv_async().await.malstrom_fatal();
+        let encoded = self
+            .transport
+            .recv_async()
+            .await
+            .expect("Communication recv error");
         Self::decode(&encoded)
     }
 
     pub(crate) fn decode(msg: &[u8]) -> TRecv {
         rmp_serde::decode::from_slice(msg)
             .map_err(|e| DecodeError::Serde(e, std::any::type_name::<TRecv>()))
-            .malstrom_fatal()
+            .expect("Decoding error")
     }
 }
 

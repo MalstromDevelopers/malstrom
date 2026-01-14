@@ -66,7 +66,7 @@ where
             }
             NetworkMessage::Epoch(epoch) => {
                 dist.remotes.get_mut(&wid).unwrap().1.frontier = Some(epoch.clone());
-                dist.handle_epoch(output)
+                dist.handle_epoch(output).await
             }
             NetworkMessage::BarrierMarker => dist.remotes.get_mut(&wid).unwrap().1.is_barred = true,
             NetworkMessage::SuspendMarker => {
@@ -109,10 +109,10 @@ where
                                 NetworkMessage::Epoch(epoch.clone()),
                             );
                             self.local_frontier = Some(epoch);
-                            self.handle_epoch(output)
+                            self.handle_epoch(output).await
                         }
                         Message::AbsBarrier(barrier) => self.handle_local_barrier(barrier),
-                        Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx),
+                        Message::Rescale(rescale) => self.handle_rescale_message(rescale, output, ctx).await,
                         Message::SuspendMarker(shutdown_marker) => {
                             self.local_suspend = Some(shutdown_marker);
                             broadcast(
@@ -139,7 +139,11 @@ where
         self.try_clear_barrier(output).await;
         self.try_clear_suspend(output).await;
         self.router
-            .apply(|x| x.lifecycle(self.partitioner, output, &mut self.remotes));
+            .apply(async |x| {
+                x.lifecycle(self.partitioner, output, &mut self.remotes)
+                    .await
+            })
+            .await;
     }
 }
 
@@ -262,7 +266,7 @@ where
     }
 
     /// Handle an epoch we received from our local upstrea
-    fn handle_epoch(&self, output: &mut Output<M>) {
+    async fn handle_epoch(&self, output: &mut Output<M>) {
         let all_timestamps = self
             .remotes
             .values()
@@ -270,7 +274,7 @@ where
             .chain(once(&self.local_frontier));
         let merged = merge_timestamps(all_timestamps);
         if let Some(to_emit) = merged {
-            output.send(Message::Epoch(to_emit));
+            output.send(Message::Epoch(to_emit)).await;
         }
     }
 
@@ -283,7 +287,7 @@ where
         );
     }
 
-    fn handle_rescale_message(
+    async fn handle_rescale_message(
         &mut self,
         message: RescaleMessage,
         output: &mut Output<M>,
@@ -299,7 +303,12 @@ where
             }
         }
         self.router
-            .apply(|router| router.handle_rescale(message, self.partitioner, output))
+            .apply(async |router| {
+                router
+                    .handle_rescale(message, self.partitioner, output)
+                    .await
+            })
+            .await
     }
 
     /// Emits a barrier to the output only and only if

@@ -52,7 +52,7 @@ macro_rules! msg {
     };
 }
 
-/// A message which gets processed in a JetStream
+/// A message which gets processed in Malstrom
 /// Messages always include a timestamp and content.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DataMessage<M: Kvt> {

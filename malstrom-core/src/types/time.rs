@@ -45,7 +45,6 @@ impl Timestamp for OnceTime {
     }
 }
 
-
 /// Time where the timestamp may not yet have been set
 pub trait MaybeTime: std::fmt::Debug + Clone + PartialOrd + 'static {
     /// Try to merge two times, returning Some if the

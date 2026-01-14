@@ -25,11 +25,13 @@ where
         output: &mut Output<(In::Key, T, In::Timestamp)>,
     ) {
         for x in msg.value {
-            output.send(Message::Data(DataMessage::new(
-                msg.key.clone(),
-                x,
-                msg.timestamp.clone(),
-            )))
+            output
+                .send(Message::Data(DataMessage::new(
+                    msg.key.clone(),
+                    x,
+                    msg.timestamp.clone(),
+                )))
+                .await
         }
     }
 }

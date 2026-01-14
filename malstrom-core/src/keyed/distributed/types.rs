@@ -145,8 +145,8 @@ impl<T> Container<T> {
         Self { inner: Some(value) }
     }
 
-    pub(super) fn apply(&mut self, func: impl FnOnce(T) -> T) {
-        let new_value = func(self.inner.take().expect("Always Some"));
+    pub(super) async fn apply(&mut self, func: impl AsyncFnOnce(T) -> T) {
+        let new_value = func(self.inner.take().expect("Always Some")).await;
         self.inner = Some(new_value);
     }
 }

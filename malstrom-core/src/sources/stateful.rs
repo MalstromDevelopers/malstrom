@@ -25,7 +25,8 @@ use crate::{
         OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder,
     },
     types::{
-        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, OnceTime, RescaleMessage, SuspendMarker, Timestamp, WorkerId
+        Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, OnceTime,
+        RescaleMessage, SuspendMarker, Timestamp, WorkerId,
     },
 };
 
@@ -149,7 +150,10 @@ where
             // do not emit on non-0 worker
             Box::new(std::iter::empty::<Part>()) as Box<dyn Iterator<Item = Part>>
         };
-        PartLister { parts, max_ts: Some(()) }
+        PartLister {
+            parts,
+            max_ts: Some(()),
+        }
     }
 }
 
@@ -157,7 +161,7 @@ struct PartLister<Part> {
     parts: Box<dyn Iterator<Item = Part>>,
     /// take this option to send the MAX timestamp indicating
     /// the iterator has finished
-    max_ts: Option<()>
+    max_ts: Option<()>,
 }
 
 impl<Part> Logic<(), (Part, NoData, OnceTime)> for PartLister<Part>
@@ -178,16 +182,16 @@ where
         if let Some(_) = self.max_ts.take() {
             output.send(Message::Epoch(OnceTime::MAX)).await;
         }
-        
+
         match input.recv().await {
             Message::Data(_) => (),
             Message::Epoch(_) => (),
             Message::AbsBarrier(x) => output.send(Message::AbsBarrier(x)).await,
             Message::Rescale(x) => output.send(Message::Rescale(x)).await,
             Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
-            Message::Interrogate(_) => unreachable!(),
-            Message::Collect(_) => unreachable!(),
-            Message::Acquire(_) => unreachable!(),
+            Message::Interrogate(x) => (),
+            Message::Collect(x) => (),
+            Message::Acquire(x) => (),
         }
     }
 }
@@ -315,7 +319,10 @@ where
             .iter_mut()
             .filter(|(part, _)| {
                 // TODO: This is hell
-                !*self.all_partitions.get(*part).expect("Expected partition state to exist")
+                !*self
+                    .all_partitions
+                    .get(*part)
+                    .expect("Expected partition state to exist")
             })
             .map(async |(part, partition)| (part, partition.poll().await))
             .collect();
@@ -325,12 +332,12 @@ where
             .values()
             .map(async |x| x.recv_async().await)
             .collect();
-        
+
         // the Some() is needed because an empty iterator returns immediately with None
         // drop() calls are needed so we can borrwo self mutably again
         tokio::select! {
             Some((part, value)) = data_polls.next() => {
-                
+
                     match value {
                         Some((dt, ts)) => {
                             let msg = DataMessage::new(part.clone(), dt, ts);

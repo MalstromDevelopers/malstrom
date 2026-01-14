@@ -11,6 +11,6 @@ pub use key::{Key, MaybeKey, NoKey};
 pub use message::{DataMessage, Kvt, Message, RescaleMessage, SuspendMarker};
 pub use operator_partitioner::{OperatorId, OperatorPartitioner};
 pub use sealed::sealed::Sealed;
-pub use time::{MaybeTime, NoTime, Timestamp, OnceTime};
+pub use time::{MaybeTime, NoTime, OnceTime, Timestamp};
 /// Uniquely identifies a worker in a JetStream cluster
 pub type WorkerId = u64;

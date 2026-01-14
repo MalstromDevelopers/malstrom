@@ -97,7 +97,7 @@ where
     M::Value: Serialize + DeserializeOwned,
     M::Timestamp: Serialize + DeserializeOwned,
 {
-    pub(crate) fn lifecycle(
+    pub(crate) async fn lifecycle(
         mut self,
         partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         output: &mut Output<M>,
@@ -116,12 +116,12 @@ where
                     let net_msg = NetworkDataMessage::new(buffered_msg, self.version);
                     target_client.send(NetworkMessage::Data(net_msg));
                 }
-                self.set_and_emit_collect(output);
+                self.set_and_emit_collect(output).await;
             }
             Some(Err(collect)) => {
                 self.current_collect = Some(collect);
             }
-            None => self.set_and_emit_collect(output),
+            None => self.set_and_emit_collect(output).await,
         }
 
         if self.current_collect.is_none() && self.whitelist.is_empty() {
@@ -139,11 +139,12 @@ where
         }
     }
 
-    fn set_and_emit_collect(&mut self, output: &mut Output<M>) {
+    async fn set_and_emit_collect(&mut self, output: &mut Output<M>) {
         if self.current_collect.is_none() {
-            self.current_collect = self.whitelist.pop().map(Collect::new).inspect(|collect| {
-                output.send(Message::Collect(collect.clone()));
-            });
+            if let Some(next_collect) = self.whitelist.pop().map(Collect::new) {
+                output.send(Message::Collect(next_collect.clone())).await;
+                self.current_collect = Some(next_collect);
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     channels::operator_io::{Input, Output, full_broadcast},
-    stream::{GetInput, GetOutput, Logic, OperatorContext, operator::context::WorkerBuildContext},
+    stream::{DirectLogic, Logic, LogicBuilder, OperatorContext, WorkerBuildContext},
     types::{Data, Kvt, MaybeKey, MaybeTime, Message},
 };
 
@@ -31,26 +31,18 @@ where
 {
     pub(crate) async fn start(mut self, build_ctx: impl Future<Output = WorkerBuildContext>) {
         let name = self.get_name().to_string();
-        println!("Operator {name} started");
 
-        let (mut build_ctx, completion_ref) = build_ctx
+        let mut build_ctx = build_ctx
             .await
             .to_build_context(self.operator_id, self.name);
         let mut logic = self.logic_builder.build(&mut build_ctx).await;
-        println!("Operator {name} built");
         let mut operator_context = OperatorContext::new(
             build_ctx.worker_id,
             self.operator_id,
             build_ctx.communication,
         );
 
-        let mut completion_ref = Some(completion_ref);
         loop {
-            if N::Timestamp::CHECK_FINISHED(self.output.get_frontier()) {
-                println!("Completing {name}");
-                // drop completion ref to indicate we won't produce anymore data
-                let _ = completion_ref.take();
-            }
             logic
                 .apply(&mut self.input, &mut self.output, &mut operator_context)
                 .await;
@@ -69,40 +61,6 @@ where
     }
 }
 
-pub trait LogicBuilder<M: Kvt, N: Kvt>: 'static {
-    type Logic: Logic<M, N>;
-    async fn build(self, ctx: &mut BuildContext) -> Self::Logic;
-}
-
-pub struct DirectLogic<L> {
-    logic: L,
-}
-
-impl<M, N, L> LogicBuilder<M, N> for DirectLogic<L>
-where
-    M: Kvt,
-    N: Kvt,
-    L: Logic<M, N> + 'static,
-{
-    type Logic = L;
-    async fn build(self, _ctx: &mut BuildContext) -> Self::Logic {
-        self.logic
-    }
-}
-
-impl<M, N, F, L> LogicBuilder<M, N> for F
-where
-    F: AsyncFnOnce(&mut BuildContext) -> L + 'static,
-    L: Logic<M, N>,
-    M: Kvt,
-    N: Kvt,
-{
-    type Logic = L;
-    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
-        (self)(ctx).await
-    }
-}
-
 impl<M, L, N> Operator<M, DirectLogic<L>, N>
 where
     M: Kvt,
@@ -112,7 +70,7 @@ where
     /// Create a new stream operator directly by supplying a name and a function which will
     /// repeatedly be called (scheduled) by the worker
     pub fn direct(name: String, logic: L) -> Self {
-        Self::built_by(name, DirectLogic { logic })
+        Self::built_by(name, DirectLogic::new(logic))
     }
 }
 
@@ -148,24 +106,12 @@ where
             name: name.to_owned(),
         }
     }
-}
 
-impl<M, B, N> GetOutput<N> for Operator<M, B, N>
-where
-    N: Kvt,
-    M: Kvt,
-{
-    fn get_output_mut(&mut self) -> &mut Output<N> {
+    pub(crate) fn get_output_mut(&mut self) -> &mut Output<N> {
         &mut self.output
     }
-}
 
-impl<M, B, N> GetInput<M> for Operator<M, B, N>
-where
-    N: Kvt,
-    M: Kvt,
-{
-    fn get_input_mut(&mut self) -> &mut Input<M> {
+    pub(crate) fn get_input_mut(&mut self) -> &mut Input<M> {
         &mut self.input
     }
 }

@@ -5,32 +5,45 @@ use std::{
     rc::Rc,
     task::{Context, Poll},
 };
-use tokio::sync::Notify;
+use thiserror::Error;
+use tokio::sync::{Notify, watch};
 
-pub(crate) struct Signal(Rc<Notify>);
+pub(crate) struct Signal(watch::Sender<bool>, watch::Receiver<bool>);
 
 impl Signal {
-    pub fn new() -> Self {
-        Self(Rc::new(Notify::new()))
+    pub fn new(active: bool) -> Self {
+        let (tx, rx) = watch::channel(active);
+        Self(tx, rx)
     }
 
-    pub fn handle(&self) -> SignalHandle {
-        SignalHandle(Rc::clone(&self.0))
+    pub fn handle(&self, name: String) -> SignalHandle {
+        SignalHandle(self.1.clone(), name)
     }
 
-    pub fn send(&self) {
-        self.0.notify_waiters();
+    pub fn activate(&self) {
+        // PANIC: We hold one receiver ourselves, therefore this is safe to do
+        self.0.send(true).expect("Channel must be open")
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct SignalHandle(Rc<Notify>);
+pub(crate) struct SignalHandle(watch::Receiver<bool>, String);
 
 impl SignalHandle {
     // wait for this signal to be indicated
-    pub async fn watch(self) {
-        self.0.notified().await
+    pub async fn watch(mut self) -> Result<(), SignalRecvError> {
+        self.0
+            .wait_for(|x| *x)
+            .await
+            .map_err(|_| SignalRecvError::SignalDropped)
+            .map(|_| ())
     }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum SignalRecvError {
+    #[error("The Signal was dropped")]
+    SignalDropped,
 }
 
 // TODO: tests

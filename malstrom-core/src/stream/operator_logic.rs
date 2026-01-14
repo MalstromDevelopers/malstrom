@@ -1,15 +1,57 @@
-use std::marker::PhantomData;
-
-use crate::{
-    channels::operator_io::{Input, Output},
-    keyed::distributed::{Acquire, Collect, Interrogate},
-    snapshot::Barrier,
-    types::{
-        DataMessage, Kvt, MaybeData, MaybeKey, MaybeTime, Message, RescaleMessage, SuspendMarker,
-    },
+use std::{
+    hash::{Hash, Hasher},
+    marker::PhantomData,
 };
 
-use super::OperatorContext;
+use crate::{
+    channels::operator_io::{Input, Output, full_broadcast},
+    keyed::distributed::{Acquire, Collect, Interrogate},
+    snapshot::Barrier,
+    stream::{OperatorContext, WorkerBuildContext},
+    types::{Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, RescaleMessage, SuspendMarker},
+};
+
+use super::BuildContext;
+
+pub trait LogicBuilder<M: Kvt, N: Kvt>: 'static {
+    type Logic: Logic<M, N>;
+    async fn build(self, ctx: &mut BuildContext) -> Self::Logic;
+}
+
+pub struct DirectLogic<L> {
+    logic: L,
+}
+
+impl<L> DirectLogic<L> {
+    pub(crate) fn new(logic: L) -> Self {
+        Self { logic }
+    }
+}
+
+impl<M, N, L> LogicBuilder<M, N> for DirectLogic<L>
+where
+    M: Kvt,
+    N: Kvt,
+    L: Logic<M, N> + 'static,
+{
+    type Logic = L;
+    async fn build(self, _ctx: &mut BuildContext) -> Self::Logic {
+        self.logic
+    }
+}
+
+impl<M, N, F, L> LogicBuilder<M, N> for F
+where
+    F: AsyncFnOnce(&mut BuildContext) -> L + 'static,
+    L: Logic<M, N>,
+    M: Kvt,
+    N: Kvt,
+{
+    type Logic = L;
+    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
+        (self)(ctx).await
+    }
+}
 
 /// Operator Logic with absolutely no safeguard, allows you to break keying and everything else
 pub(crate) trait Logic<M: Kvt, N: Kvt>: 'static {
@@ -130,17 +172,6 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
         }
     }
 }
-
-// impl<In, Out, X> Logic<In, Out> for X where X: SafeLogic<In, Out>, In: Kvt, Out: Kvt {
-//     async fn apply(
-//         &mut self,
-//         input: &mut Input<In>,
-//         output: &mut Output<Out>,
-//         ctx: &mut OperatorContext,
-//     ) {
-//         todo!()
-//     }
-// }
 
 pub struct SafeLogicWrapper<L> {
     implementation: L,

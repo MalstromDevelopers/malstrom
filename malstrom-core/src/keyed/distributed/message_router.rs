@@ -87,7 +87,7 @@ where
     M::Value: Serialize + DeserializeOwned,
     M::Timestamp: Serialize + DeserializeOwned,
 {
-    pub(super) fn handle_rescale(
+    pub(super) async fn handle_rescale(
         self,
         message: RescaleMessage,
         partitioner: WorkerPartitioner<<M as Kvt>::Key>,
@@ -101,7 +101,7 @@ where
                     message,
                     partitioner,
                 );
-                output.send(Message::Interrogate(interrogate));
+                output.send(Message::Interrogate(interrogate)).await;
                 MessageRouter::Interrogate(new_router)
             }
             // if the stream is split and re-joined the same rescale message may
@@ -110,7 +110,7 @@ where
         }
     }
 
-    pub(super) fn lifecycle(
+    pub(super) async fn lifecycle(
         self: MessageRouter<M>,
         partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         output: &mut Output<M>,
@@ -120,10 +120,12 @@ where
             MessageRouter::Normal(normal_router) => MessageRouter::Normal(normal_router),
             MessageRouter::Interrogate(interrogate_router) => interrogate_router.lifecycle(),
             MessageRouter::Collect(collect_router) => {
-                collect_router.lifecycle(partitioner, output, remotes)
+                collect_router.lifecycle(partitioner, output, remotes).await
             }
             MessageRouter::Finished(finished_router) => {
-                finished_router.lifecycle(partitioner, output, remotes)
+                finished_router
+                    .lifecycle(partitioner, output, remotes)
+                    .await
             }
         }
     }

@@ -27,20 +27,17 @@ impl<M: Kvt> Output<M> {
     /// Create a new Sender with **no** associated Receiver
     /// Link a receiver with [link].
     pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<M>) -> Self {
+        /// Allow NoTime type to indicate a final output
+        /// even if send is never called on this output
+        let finalized_signal = Signal::new(M::Timestamp::CHECK_FINISHED(&None));
         let this = Self {
             senders: Vec::new(),
             partitioner: Box::new(partitioner),
             frontier: None,
             suspended: false,
             /// signal to listen for finished input (last epoch received or NoTime)
-            finalized_signal: Signal::new(),
+            finalized_signal: finalized_signal,
         };
-        /// Allow NoTime type to indicate a final output
-        /// even if send is never called on this output
-        if M::Timestamp::CHECK_FINISHED(&None) {
-            this.finalized_signal.send();
-        };
-
         this
     }
 
@@ -91,7 +88,7 @@ impl<M: Kvt> Output<M> {
             }
         };
         if M::Timestamp::CHECK_FINISHED(&self.frontier) {
-            self.finalized_signal.send();
+            self.finalized_signal.activate();
         };
     }
     /// Get the frontier on this Sender, i.e the timestamp of the largest
@@ -107,9 +104,9 @@ impl<M: Kvt> Output<M> {
     pub(crate) fn is_suspended(&self) -> bool {
         self.suspended
     }
-    
-    pub(crate) fn get_finalized_handle(&self) -> SignalHandle {
-        self.finalized_signal.handle()
+
+    pub(crate) fn get_finalized_handle(&self, name: String) -> SignalHandle {
+        self.finalized_signal.handle(name)
     }
 }
 

@@ -27,7 +27,7 @@ pub(crate) fn deserialize_state<S: DeserializeOwned>(state: Vec<u8>) -> S {
 /// A persistence backend provides persistent storage for storing snapshots across job restarts.
 /// This may be on a local disk, remote storage, a database or anything really which can reliably
 /// store data
-pub trait PersistenceBackend: Send + 'static {
+pub trait PersistenceBackend: Send + Sync + 'static {
     /// Client for this backend. The client is used to store and load state from the backend.
     type Client: PersistenceClient;
     /// Return the version of the last committed snapshot or `None` if no version has not been

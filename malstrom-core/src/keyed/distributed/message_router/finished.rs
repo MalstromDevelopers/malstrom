@@ -64,7 +64,7 @@ impl FinishedRouter {
         }
     }
 
-    pub(crate) fn lifecycle<M: Kvt>(
+    pub(crate) async fn lifecycle<M: Kvt>(
         self,
         _partitioner: WorkerPartitioner<<M as Kvt>::Key>,
         output: &mut Output<M>,
@@ -81,7 +81,7 @@ impl FinishedRouter {
             }
             remotes.shrink_to_fit();
             let normal_router = NormalRouter::new(self.new_worker_set, self.version);
-            output.send(Message::Rescale(self.trigger));
+            output.send(Message::Rescale(self.trigger)).await;
             MessageRouter::Normal(normal_router)
         } else {
             MessageRouter::Finished(self)

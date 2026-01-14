@@ -64,7 +64,7 @@ impl FileSourcePartition {
 
 impl StatefulSourcePartition<String, usize> for FileSourcePartition {
     type PartitionState = usize;
-    fn poll(&mut self) -> Option<(String, usize)> {
+    async fn poll(&mut self) -> Option<(String, usize)> {
         // open the file
         let file = self.file.get_or_insert_with(|| {
             BufReader::new(File::open(&self.path).unwrap())
@@ -77,13 +77,6 @@ impl StatefulSourcePartition<String, usize> for FileSourcePartition {
             self.next_line += 1;
             (x.unwrap(), i)
         })
-    }
-
-    fn is_finished(&mut self) -> bool {
-        match self.file.as_mut() {
-            Some(x) => x.peek().is_none(),
-            None => false, // not yet started
-        }
     }
 
     fn snapshot(&self) -> Self::PartitionState {
@@ -109,5 +102,6 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
 fn main() {
     let _rt = SingleThreadRuntime::builder()
         .persistence(NoPersistence)
-        .build(build_dataflow);
+        .build(build_dataflow)
+        .execute();
 }

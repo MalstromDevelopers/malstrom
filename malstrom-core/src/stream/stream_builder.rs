@@ -2,7 +2,6 @@
 
 use std::{iter, marker::PhantomData, rc::Rc, sync::Mutex};
 
-use super::{GetInput, GetOutput};
 use crate::{
     channels::operator_io::{Input, Output, link},
     stream::{LogicBuilder, Operator},
