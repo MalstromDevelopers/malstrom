@@ -3,7 +3,7 @@ use super::{
     watchmap::WatchMap,
 };
 use crate::{
-    runtime::communication::CoordinatorWorkerComm, snapshot::SnapshotVersion, types::WorkerId,
+    runtime::communication::{CoordinatorClient, CoordinatorWorkerComm}, snapshot::SnapshotVersion, types::WorkerId,
 };
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -44,10 +44,10 @@ pub(super) struct WorkerState {
 
 #[derive(Clone)]
 pub(crate) struct CoordinatorState {
-    /// Contains state of all know workers, active or not
-    pub(super) worker_states: WatchMap<WorkerId, WorkerState>,
+    /// Contains state of all known workers, active or not
+    pub(super) worker_states: IndexMap<WorkerId, WorkerState>,
     /// Map of senders to communicate with workers
-    pub(super) active_workers: IndexMap<WorkerId, WorkerSender>,
+    pub(super) active_workers: IndexMap<WorkerId, CoordinatorClient>,
     /// Last reconfiguration the cluster has completed
     /// or None if no reconfiguration yet completed
     pub(super) config_version: Option<u64>,
@@ -62,7 +62,7 @@ impl CoordinatorState {
     where
         C: CoordinatorWorkerComm,
     {
-        let worker_states = WatchMap::from(ser.worker_states);
+        let worker_states = IndexMap::from(ser.worker_states);
         let (active_workers, _recv_tasks) =
             setup_comm(comm, &ser.active_workers, &worker_states).await?;
         Ok(Self {

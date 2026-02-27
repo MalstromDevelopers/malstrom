@@ -2,7 +2,7 @@ use kafka_sink_builder::SetAtLeastOneBroker;
 use malstrom::errorhandling::MalstromFatal as _;
 use malstrom::sinks::StatelessSinkImpl;
 use malstrom::types::DataMessage;
-use rdkafka::{producer::BaseProducer, ClientConfig};
+use rdkafka::{ClientConfig, producer::BaseProducer};
 use std::{collections::HashMap, time::Duration};
 use thiserror::Error;
 

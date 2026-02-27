@@ -3,8 +3,6 @@ mod communication;
 mod multi;
 mod single;
 
-pub use communication::InterThreadCommunication;
-pub(crate) use communication::Shared;
 pub use multi::MultiThreadRuntime;
 pub use single::SingleThreadRuntime;
 pub use single::SingleThreadRuntimeFlavor;

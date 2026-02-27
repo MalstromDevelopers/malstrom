@@ -36,18 +36,15 @@ where
             .await
             .to_build_context(self.operator_id, self.name);
         let mut logic = self.logic_builder.build(&mut build_ctx).await;
-        let mut operator_context = OperatorContext::new(
-            build_ctx.worker_id,
-            self.operator_id,
-            build_ctx.communication,
-        );
+        let mut operator_context = OperatorContext::new(build_ctx.worker_id, self.operator_id);
+
+        let mut output_closed = self.output.get_closed_signal();
 
         loop {
-            logic
-                .apply(&mut self.input, &mut self.output, &mut operator_context)
-                .await;
-            if self.output.is_suspended() {
-                return;
+            tokio::select! {
+                _ = logic.apply(&mut self.input, &mut self.output, &mut operator_context) => (),
+                    // can not possibly process more messages
+                _ = output_closed.wait_for() => return
             }
         }
     }

@@ -7,10 +7,10 @@ use tracing::info;
 
 use crate::{
     channels::signal::SignalHandle,
-    coordinator::types::{BuildInformation, CoordinationMessage, WorkerMessage},
+    coordinator::messages::*,
     runtime::{
-        CommunicationClient, OperatorOperatorComm, RuntimeFlavor,
-        communication::WorkerCoordinatorComm,
+        CommunicationClient, CommunicationError, OperatorOperatorComm, RuntimeFlavor,
+        communication::{WorkerClient, WorkerCoordinatorComm},
     },
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion},
     stream::{DirectLogic, Operator, WorkerBuildContext},
@@ -24,7 +24,7 @@ use crate::{
 pub struct Worker<P, C> {
     persistence_backend: P,
     communication_backend: Rc<C>,
-    coordinator_comm: CommunicationClient<WorkerMessage, CoordinationMessage>,
+    coordinator_comm: WorkerClient,
     comm_rt: tokio::runtime::Runtime,
     worker_id: WorkerId,
 }
@@ -57,10 +57,13 @@ where
         self,
         sys_msg_sender: mpsc::Sender<SysMessage<P::Client>>,
         operator_rt: LocalRuntime,
-        operators: HashMap<u64, (tokio::task::JoinHandle<()>, SignalHandle)>,
+        operators: HashMap<u64, tokio::task::JoinHandle<()>>,
         build_ctx_sender: tokio::sync::broadcast::Sender<WorkerBuildContext>,
     ) -> Result<(), WorkerExecutionError> {
-        let buildinfo = self.wait_for_build_info();
+        let (msg, build_responder) = self
+            .comm_rt
+            .block_on(self.coordinator_comm.recv::<StartBuild, ()>());
+        let buildinfo = msg.0;
         info!("Obtained build info: {:?}", buildinfo);
 
         let state_client = match buildinfo.resume_snapshot {
@@ -74,11 +77,12 @@ where
             Rc::clone(&self.communication_backend) as Rc<dyn OperatorOperatorComm>,
             buildinfo.worker_set.clone(),
         );
-
-        self.coordinator_comm.send(WorkerMessage::BuildComplete);
-        self.wait_for_execution_start();
-
         let _ = build_ctx_sender.send(build_ctx);
+        self.comm_rt.block_on(build_responder.respond(()));
+
+        let (_, exec_start_responder) = self
+            .comm_rt
+            .block_on(self.coordinator_comm.recv::<StartExecution, ()>());
 
         let coord_task = CoordinationTask::new(
             self.worker_id,
@@ -87,31 +91,14 @@ where
             self.coordinator_comm,
         )
         .start(&self.comm_rt);
-        let (_tasks, signals): (Vec<_>, Vec<_>) = operators.into_values().collect();
-        operator_rt.block_on(futures::future::join_all(
-            signals.into_iter().map(SignalHandle::watch),
-        ));
+
+        self.comm_rt.block_on(exec_start_responder.respond(()));
+
+        let tasks = operators.into_values();
+        operator_rt.block_on(futures::future::join_all(tasks));
         info!("Finished execution");
+
         Ok(())
-    }
-
-    fn wait_for_build_info(&self) -> BuildInformation {
-        info!("Waiting for Coordinator build info");
-        self.comm_rt.block_on(async move {
-            match self.coordinator_comm.recv_async().await {
-                CoordinationMessage::StartBuild(buildinfo) => buildinfo,
-                _ => unreachable!(),
-            }
-        })
-    }
-
-    fn wait_for_execution_start(&self) {
-        self.comm_rt.block_on(async move {
-            match self.coordinator_comm.recv_async().await {
-                CoordinationMessage::StartExecution => (),
-                _ => unreachable!(),
-            }
-        })
     }
 }
 
@@ -119,10 +106,6 @@ where
 #[allow(missing_docs)]
 #[derive(Error, Debug)]
 pub enum WorkerExecutionError {
-    #[error("Error establishing communication to workers/coordinator")]
-    CommunicationError(#[from] crate::runtime::CommunicationError),
-    #[error("Error from communication backend")]
-    CommunicationBackendError(#[from] crate::runtime::communication::CommunicationBackendError),
     #[error(
         "{0} Unfinished streams in this runtime.
     You must call `.finish()` on all streams created on this runtime
@@ -131,8 +114,8 @@ pub enum WorkerExecutionError {
     UnfinishedStreams(usize),
     #[error("Operator name '{0}' is not unique. Rename this operator.")]
     NonUniqueName(String),
-    #[error("Error starting async runtime: {0:?}")]
+    #[error("Error starting async runtime")]
     AsyncRuntime(#[from] std::io::Error),
-    #[error(transparent)]
-    Coordinator(#[from] crate::coordinator::CoordinatorExecutionError),
+    #[error("Error in communication backend")]
+    Communication(#[from] CommunicationError),
 }

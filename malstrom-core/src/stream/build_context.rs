@@ -20,9 +20,9 @@ pub struct BuildContext {
     pub operator_id: OperatorId,
     /// User given name of this operator
     pub operator_name: String,
-    persistence_backend: Rc<dyn PersistenceClient>,
-    // HACK: We need this in the ica tests
-    pub(crate) communication: Rc<dyn OperatorOperatorComm>,
+
+    persistence: Rc<dyn PersistenceClient>,
+    communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
 }
 
@@ -31,7 +31,7 @@ impl BuildContext {
         worker_id: WorkerId,
         operator_id: OperatorId,
         name: String,
-        persistence_backend: Rc<dyn PersistenceClient>,
+        persistence: Rc<dyn PersistenceClient>,
         communication: Rc<dyn OperatorOperatorComm>,
         worker_ids: IndexSet<WorkerId>,
     ) -> Self {
@@ -39,7 +39,7 @@ impl BuildContext {
             worker_id,
             operator_id,
             operator_name: name,
-            persistence_backend,
+            persistence,
             communication,
             worker_ids,
         }
@@ -48,7 +48,7 @@ impl BuildContext {
     /// Load the persisted state for this operator.
     /// If no persisted state exists, this returns `None`
     pub async fn load_state<S: Serialize + DeserializeOwned>(&self) -> Option<S> {
-        self.persistence_backend
+        self.persistence
             .load(&self.operator_id)
             .map(deserialize_state)
     }
@@ -61,33 +61,8 @@ impl BuildContext {
         &self.worker_ids
     }
 
-    /// Create a client for inter-worker communication
-    pub fn create_communication_client<T: Distributable>(
-        &mut self,
-        other_worker: WorkerId,
-    ) -> BiCommunicationClient<T> {
-        CommunicationClient::new(
-            other_worker,
-            self.operator_id,
-            Rc::clone(&self.communication),
-        )
-        .expect("Backend communication failure")
-    }
-
-    /// Create clients for all workers active at build_time
-    pub fn create_all_communication_clients<T: Distributable>(
-        &mut self,
-    ) -> IndexMap<WorkerId, BiCommunicationClient<T>> {
-        let other_workers = self
-            .get_worker_ids()
-            .into_iter()
-            .filter(|wid| **wid != self.worker_id)
-            .cloned()
-            .collect_vec();
-        other_workers
-            .into_iter()
-            .map(|wid| (wid, self.create_communication_client(wid)))
-            .collect()
+    pub(crate) fn get_communication(&self) -> Rc<dyn OperatorOperatorComm> {
+        Rc::clone(&self.communication)
     }
 }
 
@@ -95,7 +70,7 @@ impl BuildContext {
 #[derive(Clone)]
 pub(crate) struct WorkerBuildContext {
     worker_id: WorkerId,
-    persistence_backend: Rc<dyn PersistenceClient>,
+    persistence: Rc<dyn PersistenceClient>,
     communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
 }
@@ -103,13 +78,13 @@ pub(crate) struct WorkerBuildContext {
 impl WorkerBuildContext {
     pub(crate) fn new(
         worker_id: WorkerId,
-        persistence_backend: Rc<dyn PersistenceClient>,
+        persistence: Rc<dyn PersistenceClient>,
         communication: Rc<dyn OperatorOperatorComm>,
         worker_ids: IndexSet<WorkerId>,
     ) -> Self {
         Self {
             worker_id,
-            persistence_backend,
+            persistence,
             communication,
             worker_ids,
         }
@@ -128,7 +103,7 @@ impl WorkerBuildContext {
             operator_id,
             operator_name,
             worker_id: self.worker_id,
-            persistence_backend: self.persistence_backend,
+            persistence: self.persistence,
             communication: self.communication,
             worker_ids: self.worker_ids,
         }

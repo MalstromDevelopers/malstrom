@@ -89,7 +89,7 @@ where
     ) -> Option<S> {
         let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state).await;
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
-        output.send(Message::Data(out_msg));
+        output.send(Message::Data(out_msg)).await;
         new_state
     }
 }

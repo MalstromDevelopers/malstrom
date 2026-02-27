@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     channels::operator_io::{Input, Output},
-    snapshot::{Barrier, PersistenceClient},
+    snapshot::{SnapshotBarrier, PersistenceClient},
     stream::Logic,
     types::*,
     worker::sys_message::SysMessage,
@@ -25,7 +25,7 @@ impl<P: PersistenceClient> Logic<(), ()> for RootLogic<P> {
         while let Some(sys_msg) = self.0.recv().await {
             match sys_msg {
                 SysMessage::Snapshot { client, callback } => {
-                    let barrier = Barrier::new(Box::new(client), callback);
+                    let barrier = SnapshotBarrier::new(Box::new(client), callback);
                     output.send(Message::AbsBarrier(barrier)).await;
                 }
                 SysMessage::Reconfigure {

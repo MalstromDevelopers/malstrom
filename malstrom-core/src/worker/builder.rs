@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::{
     channels::signal::SignalHandle,
-    coordinator::types::{BuildInformation, CoordinationMessage, WorkerMessage},
+    coordinator::messages::BuildInformation,
     runtime::{
         CommunicationClient, OperatorOperatorComm, RuntimeFlavor,
         communication::WorkerCoordinatorComm,
@@ -80,7 +80,7 @@ pub(crate) struct InnerRuntimeBuilder {
     // build_ctx will be sent here once available
     build_ctx: tokio::sync::broadcast::Sender<WorkerBuildContext>,
     operator_rt: LocalRuntime,
-    operator_tasks: HashMap<OperatorId, (tokio::task::JoinHandle<()>, SignalHandle)>,
+    operator_tasks: HashMap<OperatorId, tokio::task::JoinHandle<()>>,
 }
 
 impl InnerRuntimeBuilder {
@@ -101,10 +101,6 @@ impl InnerRuntimeBuilder {
         B: LogicBuilder<In, Out>,
         Out: Kvt,
     {
-        // signal which indicates the input as finalized
-        let name = operator.get_name().into();
-        let finalized_signal = operator.get_output_mut().get_finalized_handle(name);
-
         let mut ctx_receiver = self.build_ctx.subscribe();
         let operator_id = operator.get_id();
         let operator_name = operator.get_name().to_owned();
@@ -112,10 +108,7 @@ impl InnerRuntimeBuilder {
             let build_ctx = ctx_receiver.recv().map(Result::unwrap);
             operator.start(build_ctx).await;
         });
-        if let Some(_) = self
-            .operator_tasks
-            .insert(operator_id, (task, finalized_signal))
-        {
+        if let Some(_) = self.operator_tasks.insert(operator_id, task) {
             panic!("Non unique operator name: {operator_name}")
         }
         operator_id

@@ -6,8 +6,10 @@ use std::{
     sync::Mutex,
 };
 
+use futures::channel::oneshot;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use crate::runtime::BiCommunicationClient;
 use crate::{runtime::communication::Distributable, types::*};
@@ -216,42 +218,25 @@ where
 pub struct Collect<K> {
     /// The key for which state is being collected
     pub key: K,
-    collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
+    /// collected keys + state are sent here
+    send_back: mpsc::UnboundedSender<(OperatorId, Vec<u8>)>
 }
 impl<K> Collect<K>
-where
-    K: Key,
 {
-    pub(crate) fn new(key: K) -> Self {
-        Self {
+    pub(crate) fn new(key: K) -> (Self, mpsc::UnboundedReceiver<(OperatorId, Vec<u8>)>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let this = Self {
             key,
-            collection: Rc::new(Mutex::new(IndexMap::new())),
-        }
+            send_back: tx
+        };
+        (this, rx)
     }
 
     /// Add the given state to the collection, allowing it to be transferred to another worker
     pub fn add_state<S: Distributable>(&mut self, operator_id: OperatorId, state: S) {
-        #[allow(clippy::unwrap_used)]
-        self.collection
-            .lock()
-            .unwrap()
-            .insert(operator_id, BiCommunicationClient::encode(state));
-    }
-}
-impl<K> Collect<K> {
-    /// Try unwrapping the inner Rc and Mutex. This succeeds if there
-    /// is exactly one strong count to this Collect.
-    ///
-    /// PANICS: If the Mutex is poisoned
-    pub(crate) fn try_unwrap(self) -> Result<(K, IndexMap<OperatorId, Vec<u8>>), Self> {
-        #[allow(clippy::unwrap_used)]
-        match Rc::try_unwrap(self.collection).map(|mutex| mutex.into_inner().unwrap()) {
-            Ok(collection) => Ok((self.key, collection)),
-            Err(collection) => Err(Self {
-                key: self.key,
-                collection,
-            }),
-        }
+        let msg = (operator_id, BiCommunicationClient::encode(state));
+        // something must go really wrong for the Receiver to be dropped prematurely
+        self.send_back.send(msg).expect("Expected collect send_back Receiver to exist")
     }
 }
 
@@ -275,7 +260,6 @@ pub struct Acquire<K> {
     collection: Rc<Mutex<IndexMap<OperatorId, Vec<u8>>>>,
 }
 impl<K> Acquire<K> {
-    #[cfg(test)]
     pub(crate) fn new(key: K, collection: IndexMap<OperatorId, Vec<u8>>) -> Self {
         Self {
             key,

@@ -5,16 +5,22 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod message_router;
 pub mod types;
+mod routers;
 
 use std::iter::once;
 
 use message_router::{MessageRouter, NormalRouter};
-pub use types::*;
+// pub use types::*;
+
+// mod remote_receiver;
+mod wire_message;
+mod distributor;
+mod reconfig_task;
 
 use crate::{
     channels::operator_io::{Input, Output},
     runtime::BiCommunicationClient,
-    snapshot::Barrier,
+    snapshot::SnapshotBarrier,
     stream::{BuildContext, Logic, OperatorContext},
     types::{DataMessage, Key, Kvt, MaybeTime, Message, RescaleMessage, SuspendMarker, WorkerId},
 };
@@ -33,7 +39,7 @@ pub(crate) struct Distributor<M: Kvt> {
     router: Container<MessageRouter<M>>,
     remotes: Remotes<M>,
     partitioner: WorkerPartitioner<<M as Kvt>::Key>,
-    local_barrier: Option<Barrier>,
+    local_barrier: Option<SnapshotBarrier>,
     local_suspend: Option<SuspendMarker>,
     local_frontier: Option<<M as Kvt>::Timestamp>,
 }
@@ -279,7 +285,7 @@ where
     }
 
     /// Handle a barrier we receive
-    fn handle_local_barrier(&mut self, barrier: Barrier) {
+    fn handle_local_barrier(&mut self, barrier: SnapshotBarrier) {
         self.local_barrier = Some(barrier);
         broadcast(
             self.remotes.values().map(|x| &x.0),
@@ -501,7 +507,7 @@ mod test {
         let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
             OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
                 .await;
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
         tester.step();
 
         assert!(tester.recv_local().is_none());
@@ -530,7 +536,7 @@ mod test {
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
 
         tester.step();
         let local_result = tester.recv_local().unwrap();
@@ -550,7 +556,7 @@ mod test {
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
 
         tester.step();
         let local_result = tester.recv_local().unwrap();
@@ -558,7 +564,7 @@ mod test {
             matches!(local_result, Message::AbsBarrier(_)),
             "{local_result:?}"
         );
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
         tester.step();
         assert!(tester.recv_local().is_none());
     }
@@ -570,7 +576,7 @@ mod test {
         let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
             OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
                 .await;
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
         tester
             .remote()
             .send_to_operator(NetworkMessage::BarrierMarker, 1, 0);
@@ -589,7 +595,7 @@ mod test {
         let mut tester: OperatorTester<Msg, Msg, _, NetworkMessage<Msg>> =
             OperatorTester::built_by(DistributorBuilder::<_, Msg>::new(index_select), 0, 0, 0..2)
                 .await;
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
 
         tester
             .remote()
@@ -629,7 +635,7 @@ mod test {
         let msg = tester.recv_local();
         assert!(msg.is_none(), "{msg:?}");
 
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
         tester.step();
 
         let barrier = tester.recv_local().unwrap();
@@ -646,7 +652,7 @@ mod test {
 
         OperatorTester::send_local(
             &mut tester,
-            Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))),
+            Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))),
         );
         OperatorTester::send_local(
             &mut tester,

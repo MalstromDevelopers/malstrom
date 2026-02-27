@@ -1,5 +1,5 @@
 use bon::Builder;
-use rdkafka::{message::BorrowedMessage, producer::BaseRecord, Message};
+use rdkafka::{Message, message::BorrowedMessage, producer::BaseRecord};
 
 /// A single record as received by or sent to Kafka
 #[derive(Builder, Debug, Clone)]

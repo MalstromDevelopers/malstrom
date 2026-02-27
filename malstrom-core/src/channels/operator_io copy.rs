@@ -3,9 +3,9 @@
 //! Essentially these are the edges in the stream graph.
 use super::spsc;
 use crate::{
-    channels::{alignment::{AlignedValue, AlignmentGroup}, recv_trait::Receiver, signal::{Signal, SignalHandle}},
+    channels::signal::{Signal, SignalHandle},
     snapshot::SnapshotBarrier,
-    types::{Barrier, Kvt, MaybeTime, Message, OperatorPartitioner, SuspendMarker, Timestamp},
+    types::{Kvt, MaybeTime, Message, OperatorPartitioner, SuspendMarker, Timestamp},
 };
 use futures::{FutureExt, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -73,7 +73,7 @@ impl<M: Kvt> Output<M> {
                 }
             }
             x => {
-                if matches!(x, Message::AbsBarrier(Barrier::Suspend(_))) {
+                if matches!(x, Message::SuspendMarker(_)) {
                     self.closed_signal.send(true);
                 }
                 // repeat_n will clone for every iteration except the last
@@ -151,28 +151,20 @@ impl<M: Kvt> UpstreamState<M> {
     }
 }
 
-/// Outer group for Barriers, inner group for SuspendMarkers
-type BarrierAlign<M> = AlignmentGroup<spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
-
-fn is_barrier<M: Kvt>(msg: &Message<M>) -> bool {matches!(msg, Message::AbsBarrier(_))}
-
 /// Operator Input
 pub struct Input<M: Kvt> {
-    /// Highest epoch seen so far per inbound edge,
-    frontiers: Vec<Option<M::Timestamp>>,
-    /// last Epoch value we sent out
-    last_epoch: Option<M::Timestamp>,
-    receivers: BarrierAlign<M>,
+    /// Each receiver in this Vec is an inbound edge to the
+    /// operator
+    states: Vec<UpstreamState<M>>,
+    receivers: Vec<spsc::Receiver<Message<M>>>,
 }
 
 impl<M: Kvt> Input<M> {
     /// Create a new input which is not (yet) linked to any output
     pub(crate) fn new_unlinked() -> Input<M> {
-        let barrier_align = BarrierAlign::new_empty(is_barrier);
         Self {
-            frontiers: Vec::new(),
-            last_epoch: None,
-            receivers: barrier_align,
+            states: Vec::new(),
+            receivers: Vec::new(),
         }
     }
 
@@ -185,7 +177,7 @@ where
     /// Get the frontier of this Input, i.e. the smallest Epoch currently merged
     #[inline]
     pub(crate) fn get_frontier(&self) -> Option<M::Timestamp> {
-        self.last_epoch.clone()
+        merge_timestamps(self.states.iter().map(|x| &x.epoch))
     }
 }
 
@@ -199,37 +191,71 @@ where
     /// not receive any messages from that channel until all channels are barred.
     /// Once all channels are barred, a single barrier will be emitted
     pub async fn recv(&mut self) -> Message<M> {
-        loop {
-            // We loop here just for the case where we get an epoch but can not emit it
-            // because of inputs which are behind or because it would not advance the frontier
-            let (msg, idx) = match self.receivers.recv().await {
-                AlignedValue::Unaligned((msg, idx)) => (msg, idx),
-                AlignedValue::Aligned(mut items) => {
-                    let msg = items.pop().expect("Expected at least one receiver in Input");
-                    // does not matter which barrier we send, as long as they are aligned
-                    // index also does not matter
-                    (msg, 0)
-                }
-            };
+        // get all non-barred non-suspended links
+        let ready_receivers = self.states.iter().map(|x| !x.barred && !x.suspended);
+        let receivers = self
+            .receivers
+            .iter()
+            .zip_eq(ready_receivers)
+            .filter_map(|(recv, mask)| mask.then_some(recv))
+            .enumerate();
+
+        let mut unaligned_receivers: FuturesUnordered<_> = receivers
+            .map(async |(i, receiver)| {
+                let msg = receiver.recv().await;
+                (i, msg)
+            })
+            .collect();
+
+        // TODO: Ensure the Input is linked via the typesystem
+        while let (i, msg) = unaligned_receivers
+            .next()
+            .await
+            .expect("At least one receiver")
+        {
+            // get the first messag we can emit
+            // PANIC: We can unwrap because we got the idx from the iterator above
+            let state = self.states.get_mut(i).unwrap();
             match msg {
                 Message::Epoch(e) => {
-                    self.frontiers[idx] = Some(e);
-                    let merged = merge_timestamps(self.frontiers.iter());
-                    // Only sent out if we would advance the frontier
-                    // TODO: test
-                    let out_epoch = match (self.last_epoch.as_ref(), merged) {
-                        (None, Some(e)) => Some(e),
-                        (Some(le), Some(me)) if me > *le => Some(me),
-                        _ => None
-                    };
-                    if let Some(e) = out_epoch {
-                        self.last_epoch = Some(e.clone());
-                        return Message::Epoch(e);
+                    state.epoch = Some(e);
+                    let merged = merge_timestamps(self.states.iter().map(|x| &x.epoch));
+                    if let Some(m) = merged {
+                        return Message::Epoch(m);
                     }
-                },
-                x => return x
+                }
+                Message::AbsBarrier(barrier) => {
+                    state.barred = true;
+                    if self.states.iter().all(|x| x.barred) {
+                        for st in self.states.iter_mut() {
+                            st.barred = false;
+                        }
+                        return Message::AbsBarrier(barrier);
+                    }
+                }
+                Message::SuspendMarker(suspend) => {
+                    state.suspended = true;
+                    if self.states.iter().all(|x| x.suspended) {
+                        for st in self.states.iter_mut() {
+                            st.suspended = false;
+                        }
+                        return Message::SuspendMarker(suspend);
+                    }
+                }
+                x => return x,
             }
         }
+        // if we reached heard it can be because:
+        // 1. we got an epoch, but we can not issue it because the other inputs
+        //    are behind
+        // 2. We got a barrier, but we are still waiting for the barrier on other
+        //    inputs
+        // 3. We got a suspend marker but are still waiting for the marker on other
+        //    inputs
+        //
+        // In all these cases just receiving again will solve the issue
+        drop(unaligned_receivers);
+        self.recv().await
     }
 }
 
@@ -244,7 +270,15 @@ pub(crate) fn link<M: Kvt>(sender: &mut Output<M>, receiver: &mut Input<M>) {
     let (tx, rx) = spsc::unbounded();
     sender.senders.push(tx);
     receiver.receivers.push(rx);
-    receiver.frontiers.push(None);
+    receiver.states.push(UpstreamState::new());
+}
+
+/// Link a Sender and receiver together
+pub(crate) fn link_root(sender: &mut RootOutput, receiver: &mut Input<()>) {
+    let (tx, rx) = spsc::unbounded();
+    sender.senders.push(tx);
+    receiver.receivers.push(rx);
+    receiver.states.push(UpstreamState::new());
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership

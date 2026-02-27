@@ -2,11 +2,11 @@
 //! Inspiration taken from https://docs.rs/local-channel
 
 use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    rc::Rc,
-    task::{Poll, Waker},
+    cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, task::{Context, Poll, Waker}
 };
+
+use futures::Stream;
+use pin_project::pin_project;
 
 type Shared<T> = Rc<RefCell<SharedInner<T>>>;
 
@@ -123,20 +123,16 @@ impl<T> Receiver<T> {
         shared.borrow_mut().has_receiver = true;
         Self { shared }
     }
-
+}
+impl <T> super::recv_trait::Receiver for Receiver<T> {
+    type Output = T;
     /// Receive a message from the channel, returns None if the channel
     /// contains no messages
-    pub fn recv(&self) -> Receive<'_, T> {
+    fn recv(&mut self) -> Receive<'_, T> {
         Receive(self)
     }
-
-    /// Apply a function to a reference of the next receivable
-    /// element if any.
-    /// Returns None if there currently is no next element
-    pub fn peek_apply<U, F: FnOnce(&T) -> U>(&self, func: F) -> Option<U> {
-        self.shared.borrow().peek().map(func)
-    }
 }
+
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         self.shared.borrow_mut().has_receiver = false
@@ -179,6 +175,7 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let receiver = Receiver::new(shared);
     (sender, receiver)
 }
+
 
 #[cfg(test)]
 mod tests {

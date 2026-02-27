@@ -5,7 +5,7 @@ use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
 use crate::runtime::SingleThreadRuntime;
 use crate::runtime::communication::Distributable;
-use crate::snapshot::{Barrier, SnapshotVersion};
+use crate::snapshot::{SnapshotBarrier, SnapshotVersion};
 use crate::stream::Logic;
 use crate::types::{Key, Kvt, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};
@@ -85,7 +85,7 @@ pub(crate) fn test_forward_system_messages<
 ) where
     In::Key: Key + Default,
 {
-    let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence)));
+    let msg = Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence)));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(

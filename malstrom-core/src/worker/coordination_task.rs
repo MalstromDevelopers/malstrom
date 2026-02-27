@@ -7,10 +7,10 @@ use tracing::info;
 
 use crate::{
     channels::signal::SignalHandle,
-    coordinator::types::{BuildInformation, CoordinationMessage, WorkerMessage},
+    coordinator::messages::{BuildInformation, RuntimeMessage},
     runtime::{
         CommunicationClient, OperatorOperatorComm, RuntimeFlavor,
-        communication::WorkerCoordinatorComm,
+        communication::{WorkerClient, WorkerCoordinatorComm},
     },
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion},
     stream::{DirectLogic, Operator, WorkerBuildContext},
@@ -23,7 +23,7 @@ pub(super) struct CoordinationTask<P: PersistenceBackend> {
     worker_id: WorkerId,
     persistence_backend: P,
     sys_msg_sender: mpsc::Sender<SysMessage<P::Client>>,
-    coordinator_comm: CommunicationClient<WorkerMessage, CoordinationMessage>,
+    coordinator_comm: WorkerClient,
 }
 
 impl<P> CoordinationTask<P>
@@ -34,7 +34,7 @@ where
         this_worker: WorkerId,
         persistence_backend: P,
         sys_msg_sender: mpsc::Sender<SysMessage<P::Client>>,
-        coordinator_comm: CommunicationClient<WorkerMessage, CoordinationMessage>,
+        coordinator_comm: WorkerClient,
     ) -> Self {
         Self {
             worker_id: this_worker,
@@ -47,17 +47,28 @@ where
     pub(super) fn start(self, comm_rt: &tokio::runtime::Runtime) -> tokio::task::JoinHandle<()> {
         comm_rt.spawn(async move {
             loop {
-                let msg = self.coordinator_comm.recv_async().await;
+                let (msg, responder) = self.coordinator_comm.recv::<RuntimeMessage, bool>().await;
                 match msg {
-                    CoordinationMessage::StartBuild(_) => unreachable!(),
-                    CoordinationMessage::StartExecution => unreachable!(),
-                    CoordinationMessage::Snapshot(version) => self.handle_snapshot(version).await,
-                    CoordinationMessage::Reconfigure((new_set, new_version)) => {
-                        self.handle_reconfigure(new_set, new_version).await
+                    RuntimeMessage::Snapshot(version) => {
+                        self.handle_snapshot(version).await;
+                        responder.respond(true).await;
                     }
-                    CoordinationMessage::Suspend => {
+                    RuntimeMessage::Reconfigure((new_set, new_version)) => {
+                        self.handle_reconfigure(new_set, new_version).await;
+                        responder.respond(true).await;
+                    }
+                    RuntimeMessage::Suspend => {
                         self.handle_suspend().await;
+                        responder.respond(true).await;
                         return;
+                    }
+                    RuntimeMessage::ExecutionComplete => {
+                        // following task already dropped
+                        let finished = self.sys_msg_sender.is_closed();
+                        responder.respond(finished).await;
+                        if finished {
+                            return;
+                        }
                     }
                 }
             }
@@ -68,7 +79,6 @@ where
         let persistence_client = self
             .persistence_backend
             .for_version(self.worker_id, &version);
-        self.coordinator_comm.send(WorkerMessage::SnapshotStarted);
 
         let (tx, mut rx) = mpsc::channel(1);
         let msg = SysMessage::Snapshot {
@@ -77,8 +87,6 @@ where
         };
         self.sys_msg_sender.send(msg).await;
         let _ = rx.recv().await;
-        self.coordinator_comm
-            .send(WorkerMessage::SnapshotComplete(version));
     }
 
     async fn handle_reconfigure(&self, new_set: IndexSet<WorkerId>, new_version: u64) {
@@ -90,8 +98,6 @@ where
         };
         self.sys_msg_sender.send(msg).await;
         let _ = rx.recv().await;
-        self.coordinator_comm
-            .send(WorkerMessage::ReconfigureComplete(new_version));
     }
 
     async fn handle_suspend(&self) {
@@ -99,6 +105,5 @@ where
         let msg = SysMessage::Suspend { callback: tx };
         self.sys_msg_sender.send(msg).await;
         let _ = rx.recv().await;
-        self.coordinator_comm.send(WorkerMessage::SuspendComplete);
     }
 }

@@ -11,15 +11,15 @@ use super::k8s_operator::coordinator_operator_service_server::{
 };
 
 use super::k8s_operator::{RescaleRequest, RescaleResponse};
+use super::{APICommand, RescaleCommand};
 use super::{
     exchange::{
-        coordinator_service_server::CoordinatorServiceServer, WorkerCoordinatorRequest,
-        WorkerCoordinatorResponse,
+        WorkerCoordinatorRequest, WorkerCoordinatorResponse,
+        coordinator_service_server::CoordinatorServiceServer,
     },
     transport::GrpcTransport,
     util::{decode_id, new_channel},
 };
-use super::{APICommand, RescaleCommand};
 use flume::{Receiver, Sender};
 use futures::{Stream, StreamExt};
 use malstrom::{
@@ -32,8 +32,8 @@ use tokio::net::TcpListener;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::server::Connected;
 use tonic::transport::Server;
+use tonic::transport::server::Connected;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 

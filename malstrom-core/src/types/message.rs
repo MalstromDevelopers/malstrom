@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
-    snapshot::Barrier,
+    snapshot::SnapshotBarrier,
     types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
 };
 
@@ -133,10 +133,14 @@ pub enum Message<M: Kvt> {
     /// Barrier used for asynchronous snapshotting
     AbsBarrier(Barrier),
     /// Informational message that the job is currently rescaling
+    /// TODO: Rename Reconfig
     Rescale(RescaleMessage),
     /// Information that this worker plans on shutting down (temporarily)
     /// See struct docstring for more information
-    SuspendMarker(SuspendMarker),
+    // SuspendMarker(SuspendMarker),
+
+    /// Information that job reconfiguration has completed with new ConfigVersion
+    ReconfigComplete(u64),
 
     /// Rescaling state movement messages
     Interrogate(Interrogate<<M as Kvt>::Key>),
@@ -167,6 +171,13 @@ where
     }
 }
 
+pub enum Barrier {
+    // Take a snapshot, then suspend
+    Suspend(SnapshotBarrier),
+    /// Take a snapshot, then resume
+    Snapshot(SnapshotBarrier)
+}
+
 macro_rules! impl_from_variants {
     ($($variant:ident($variant_type:ty)),* $(,)?) => {
         $(
@@ -186,7 +197,7 @@ macro_rules! impl_from_variants {
 }
 impl_from_variants!(
     Data(DataMessage<M>),
-    AbsBarrier(Barrier),
+    AbsBarrier(SnapshotBarrier),
     Rescale(RescaleMessage),
     SuspendMarker(SuspendMarker),
     Interrogate(Interrogate<K>),

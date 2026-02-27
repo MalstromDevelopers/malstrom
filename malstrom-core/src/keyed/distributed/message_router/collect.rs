@@ -111,10 +111,10 @@ where
                     .get(&target)
                     .expect("partitioner returns valid target")
                     .0;
-                target_client.send(NetworkMessage::Acquire(acquire));
+                target_client.send(NetworkMessage::Acquire(acquire)).await;
                 for buffered_msg in self.buffered.drain(..) {
                     let net_msg = NetworkDataMessage::new(buffered_msg, self.version);
-                    target_client.send(NetworkMessage::Data(net_msg));
+                    target_client.send(NetworkMessage::Data(net_msg)).await;
                 }
                 self.set_and_emit_collect(output).await;
             }

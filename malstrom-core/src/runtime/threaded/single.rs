@@ -42,8 +42,6 @@ where
             coordinator.execute(1, self.snapshots, self.persistence, communication)
         });
         worker.execute()?;
-        // TODO: Coordinator thread does not terminate, which messes with the tests
-        //coord_thread.join().map_err(ExecutionError::CoordinatorJoin)??;
         Ok(())
     }
 }

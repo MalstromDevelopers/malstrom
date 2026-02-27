@@ -48,14 +48,15 @@ pub trait PersistenceClient: Send + 'static {
     fn persist(&mut self, state: &[u8], operator_id: &OperatorId);
 }
 
+
 /// A snapshotting barrier for use with the
 /// [ABS snapshotting algorithm](https://arxiv.org/abs/1506.08603)
-pub struct Barrier {
+pub struct SnapshotBarrier {
     backend: Rc<RefCell<Box<dyn PersistenceClient>>>,
     /// sends when the last barrier is dropped
     callback: Rc<RefCell<mpsc::Sender<()>>>,
 }
-impl Clone for Barrier {
+impl Clone for SnapshotBarrier {
     fn clone(&self) -> Self {
         Self {
             backend: Rc::clone(&self.backend),
@@ -63,13 +64,13 @@ impl Clone for Barrier {
         }
     }
 }
-impl Debug for Barrier {
+impl Debug for SnapshotBarrier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Barrier").finish()
     }
 }
 
-impl Barrier {
+impl SnapshotBarrier {
     pub(super) fn new(backend: Box<dyn PersistenceClient>, callback: mpsc::Sender<()>) -> Self {
         Self {
             backend: Rc::new(RefCell::new(backend)),
@@ -88,7 +89,7 @@ impl Barrier {
     }
 }
 
-impl Drop for Barrier {
+impl Drop for SnapshotBarrier {
     fn drop(&mut self) {
         // kinda ugly, but works
         if Rc::strong_count(&self.callback) == 1 {

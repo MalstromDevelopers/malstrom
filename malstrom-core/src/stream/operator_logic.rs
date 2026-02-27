@@ -6,7 +6,7 @@ use std::{
 use crate::{
     channels::operator_io::{Input, Output, full_broadcast},
     keyed::distributed::{Acquire, Collect, Interrogate},
-    snapshot::Barrier,
+    snapshot::SnapshotBarrier,
     stream::{OperatorContext, WorkerBuildContext},
     types::{Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, RescaleMessage, SuspendMarker},
 };
@@ -106,7 +106,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     /// Called for every snapshot barrier reaching the operator
     async fn on_barrier(
         &mut self,
-        barrier: &mut Barrier,
+        barrier: &mut SnapshotBarrier,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
     ) {

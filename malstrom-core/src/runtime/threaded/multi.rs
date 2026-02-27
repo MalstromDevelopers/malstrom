@@ -4,16 +4,16 @@ use bon::Builder;
 use thiserror::Error;
 
 use crate::{
-    coordinator::{
-        Coordinator, CoordinatorApi, CoordinatorExecutionError, CoordinatorRequestError,
-    },
-    runtime::RuntimeFlavor,
+    coordinator::{Coordinator, CoordinatorApi, CoordinatorExecutionError},
+    runtime::{RuntimeFlavor, threaded::communication::InterThreadChannels},
     snapshot::PersistenceBackend,
     types::WorkerId,
     worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
-use super::{Shared, communication::InterThreadCommunication};
+use super::communication::{
+    CoordinatorChannels, CoordinatorCommunication, OperatorChannels, OperatorCommunication,
+};
 
 /// Runs all dataflows on multiple threads within one machine
 ///
@@ -61,35 +61,36 @@ where
     /// Start job execution an all workers in this runtime.
     pub fn execute(self) -> Result<(), WorkerExecutionError> {
         let mut threads = Vec::with_capacity(self.parrallelism as usize);
-        let shared = Shared::default();
 
-        for i in 0..self.parrallelism {
-            let thread =
-                Self::spawn_worker(self.build, self.persistence.clone(), Arc::clone(&shared), i);
-            threads.push(thread);
-        }
+        let coord_channels = CoordinatorChannels::default();
+        let operator_channels = OperatorChannels::default();
 
         let (coordinator, coordinator_api) = Coordinator::new();
 
         let coordinator_thread = {
             let persistence = self.persistence.clone();
-            let shared = Arc::clone(&shared);
+            let comm = CoordinatorCommunication::new(Arc::clone(&coord_channels), WorkerId::MAX);
+            let shared = Arc::clone(&coord_channels);
             std::thread::spawn(move || {
                 coordinator
-                    .execute(
-                        self.parrallelism,
-                        self.snapshots,
-                        persistence,
-                        InterThreadCommunication::new(shared, u64::MAX),
-                    )
+                    .execute(self.parrallelism, self.snapshots, persistence, comm)
                     .map_err(ExecutionError::Coordinator)
             })
         };
         threads.push(coordinator_thread);
+
         // fails if there are no API handles
         let _ = self.api_handles.send(Some(coordinator_api));
-        // Err(_) would mean all senders dropped i.e. all threads finished, which would be
-        // perfectly fine with us
+
+        for i in 0..self.parrallelism {
+            let thread = Self::spawn_worker(
+                self.build,
+                self.persistence.clone(),
+                Arc::clone(&operator_channels),
+                i,
+            );
+            threads.push(thread);
+        }
 
         loop {
             if let Ok(desired) = self.rescale_req.1.try_recv() {
@@ -99,7 +100,7 @@ where
                         let thread = Self::spawn_worker(
                             self.build,
                             self.persistence.clone(),
-                            Arc::clone(&shared),
+                            Arc::clone(&operator_channels),
                             i,
                         );
                         threads.push(thread);
@@ -116,7 +117,7 @@ where
     fn spawn_worker(
         build_fn: fn(&mut dyn StreamProvider) -> (),
         persistence: P,
-        shared: Shared,
+        shared: InterThreadChannels<Vec<u8>>,
         thread_id: u64,
     ) -> std::thread::JoinHandle<Result<(), ExecutionError>> {
         std::thread::Builder::new()

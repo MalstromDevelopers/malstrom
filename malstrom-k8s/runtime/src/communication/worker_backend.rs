@@ -18,8 +18,8 @@ use flume::{Receiver, Sender};
 use futures::{Stream, StreamExt};
 use malstrom::{
     runtime::{
-        communication::{BiStreamTransport, WorkerCoordinatorComm},
         OperatorOperatorComm,
+        communication::{BiStreamTransport, WorkerCoordinatorComm},
     },
     types::{OperatorId, WorkerId},
 };
@@ -29,9 +29,9 @@ use tokio::net::TcpListener;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::server::Connected;
 use tonic::transport::Server;
-use tonic::{metadata::MetadataMap, Request, Response, Status, Streaming};
+use tonic::transport::server::Connected;
+use tonic::{Request, Response, Status, Streaming, metadata::MetadataMap};
 use tracing::{debug, info};
 
 type InboundChannels =

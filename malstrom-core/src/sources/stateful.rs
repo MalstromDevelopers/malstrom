@@ -19,7 +19,7 @@ use crate::{
         BiCommunicationClient,
         communication::{Distributable, broadcast},
     },
-    snapshot::Barrier,
+    snapshot::SnapshotBarrier,
     stream::{
         BuildContext, InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator,
         OperatorContext, SafeLogic, SafeLogicWrapper, StreamBuilder,

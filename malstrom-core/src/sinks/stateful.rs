@@ -15,7 +15,7 @@ use crate::{
     },
     operators::StreamSink,
     runtime::communication::Distributable,
-    snapshot::Barrier,
+    snapshot::SnapshotBarrier,
     stream::{
         BuildContext, Logic, Malstrom, Operator, OperatorContext, SafeLogic, SafeLogicWrapper,
         StreamBuilder,
@@ -210,7 +210,7 @@ where
 
     async fn on_barrier(
         &mut self,
-        barrier: &mut Barrier,
+        barrier: &mut SnapshotBarrier,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {

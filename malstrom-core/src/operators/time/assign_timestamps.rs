@@ -112,7 +112,7 @@ mod tests {
             &mut self,
             data_message: DataMessage<Msg>,
             output: &mut crate::channels::operator_io::Output<Msg>,
-            ctx: &mut crate::stream::OperatorContext<'_>,
+            ctx: &mut crate::stream::OperatorContext,
         ) {
             output.send(Message::Data(data_message));
         }
@@ -121,7 +121,7 @@ mod tests {
             &mut self,
             epoch: &<Msg as Kvt>::Timestamp,
             output: &mut crate::channels::operator_io::Output<Msg>,
-            ctx: &mut crate::stream::OperatorContext<'_>,
+            ctx: &mut crate::stream::OperatorContext,
         ) {
             self.0.give(epoch.clone());
         }
@@ -245,18 +245,17 @@ mod tests {
                 async move |input: &mut Input<(NoKey, i32, i32)>,
                             out: &mut Output<(NoKey, i32, i32)>,
                             _: &mut OperatorContext| {
-                    match input.recv() {
+                    match input.recv().await {
                         // encode epoch to -T
-                        Some(Message::Data(d)) => {
+                        Message::Data(d) => {
                             collector.give(d.timestamp);
-                            out.send(Message::Data(d))
+                            out.send(Message::Data(d)).await
                         }
-                        Some(Message::Epoch(e)) => {
+                        Message::Epoch(e) => {
                             collector.give(-e);
-                            out.send(Message::Epoch(e))
+                            out.send(Message::Epoch(e)).await
                         }
-                        Some(x) => out.send(x),
-                        None => (),
+                        x => out.send(x).await,
                     };
                 },
             ));

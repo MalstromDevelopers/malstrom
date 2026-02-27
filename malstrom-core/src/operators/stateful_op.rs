@@ -196,7 +196,7 @@ where
 
     async fn on_barrier(
         &mut self,
-        barrier: &mut crate::snapshot::Barrier,
+        barrier: &mut crate::snapshot::SnapshotBarrier,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
@@ -244,7 +244,7 @@ mod tests {
     use crate::{
         keyed::distributed::{Acquire, Collect, Interrogate},
         runtime::BiCommunicationClient,
-        snapshot::{Barrier, PersistenceClient},
+        snapshot::{SnapshotBarrier, PersistenceClient},
         testing::{CapturingPersistenceBackend, OperatorTester},
         types::*,
     };
@@ -527,7 +527,7 @@ mod tests {
         tester.step();
 
         let backend = CapturingPersistenceBackend::default();
-        tester.send_local(Message::AbsBarrier(Barrier::new(Box::new(backend.clone()))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(backend.clone()))));
         tester.step();
 
         let state: IndexMap<bool, i32> = BiCommunicationClient::decode(&backend.load(&42).unwrap());
