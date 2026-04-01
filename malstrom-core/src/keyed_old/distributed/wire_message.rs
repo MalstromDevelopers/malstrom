@@ -4,7 +4,10 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
-    keyed::distributed::{Acquire, Collect}, runtime::communication::Distributable, snapshot::SnapshotVersion, types::{DataMessage, Key, Kvt, MaybeData, MaybeTime, OperatorId, WorkerId}
+    keyed::distributed::{Acquire, Collect},
+    runtime::communication::Distributable,
+    snapshot::SnapshotVersion,
+    types::{DataMessage, Key, Kvt, MaybeData, MaybeTime, Message, OperatorId, WorkerId},
 };
 
 /// Marker trait for distributable key
@@ -19,47 +22,32 @@ impl<T: MaybeTime + Distributable> DistTimestamp for T {}
 
 pub(super) type Version = u64;
 
+pub(super) type VersionedMessage<M: Kvt> =
+    Message<(M::Key, (M::Value, Version, WorkerId), M::Timestamp)>;
+    
+pub(super) type VersionedDataMessage<M: Kvt> = DataMessage<(M::Key, (M::Value, Version, WorkerId), M::Timestamp)>;
+
 #[derive(Serialize, Deserialize, Clone)]
-pub(super) enum WireMessage<M: Kvt>
-{
+pub(super) enum WireMessage<M: Kvt> {
     #[serde(bound(
         serialize = "M::Key: Serialize, M::Value: Serialize, M::Timestamp: Serialize",
         deserialize = "M::Key: Deserialize<'de>, M::Value: Deserialize<'de>, M::Timestamp: Deserialize<'de>"
     ))]
-    Data(VersionedMessage<M>),
+    Data(VersionedDataMessage<M>),
     Epoch(<M as Kvt>::Timestamp),
     SnapshotBarrier,
     Acquire(WireAcquire<<M as Kvt>::Key>),
-    Upgrade(Version),
-    AckUpgrade(Version),
 }
 
-impl<M> WireMessage<M> where M: Kvt,
-    M::Key: Serialize + DeserializeOwned,
-    M::Value: Serialize + DeserializeOwned,
-    M::Timestamp: Serialize + DeserializeOwned, {
-    pub(super) fn is_barrier(&self) -> bool {
-        matches!(self, WireMessage::SnapshotBarrier)
-    }
-}
-
-
-#[derive(Serialize, Deserialize, Clone)]
-pub(super) struct VersionedMessage<M: Kvt> {
-    #[serde(bound(
-        serialize = "M::Key: Serialize, M::Value: Serialize, M::Timestamp: Serialize",
-        deserialize = "M::Key: Deserialize<'de>, M::Value: Deserialize<'de>, M::Timestamp: Deserialize<'de>"
-    ))]
-    pub content: DataMessage<M>,
-    pub version: Version,
-}
-
-impl<M> VersionedMessage<M>
+impl<M> WireMessage<M>
 where
     M: Kvt,
+    M::Key: Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
 {
-    pub(super) fn new(content: DataMessage<M>, version: Version) -> Self {
-        Self { content, version }
+    pub(super) fn is_barrier(&self) -> bool {
+        matches!(self, WireMessage::SnapshotBarrier)
     }
 }
 

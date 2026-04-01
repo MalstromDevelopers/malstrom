@@ -165,7 +165,7 @@ where
             Message::Acquire(a) => output.send(Message::Acquire(a)).await,
             // Message::Load(l) => todo!(),
             Message::Rescale(x) => output.send(Message::Rescale(x)).await,
-            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
+            Message::ReconfigComplete(x) => output.send(Message::ReconfigComplete(x)).await,
         }
     }
 }

@@ -11,7 +11,7 @@ use crate::{
     keyed::{
         KeyDistribute,
         distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
-        partitioners::rendezvous_select,
+        rendezvous_select,
     },
     operators::StreamSink,
     runtime::communication::Distributable,

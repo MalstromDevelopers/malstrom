@@ -1,22 +1,17 @@
-use std::marker::PhantomData;
+use std::{hash::Hash, marker::PhantomData};
 
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    stream::{BuildContext, LogicBuilder, Malstrom, Operator, StreamBuilder},
-    types::{DataMessage, Key, Kvt, MaybeKey},
+    keyed::WorkerPartitioner, stream::{BuildContext, Logic, LogicBuilder, Malstrom, Operator, StreamBuilder}, types::{DataMessage, Key, Kvt, MaybeKey}
 };
 
 use super::{
     KeyLocal,
-    distributed::{
-        Distributor,
-        types::{DistData, DistKey, DistTimestamp, WorkerPartitioner},
-    },
 };
 
 /// Key a stream and distribute message to workers according to their key
-pub trait KeyDistribute<In: Kvt, Key: DistKey> {
+pub trait KeyDistribute<In: Kvt, Key> {
     /// Turn a stream into a keyed stream and distribute
     /// messages across workers via the partitioning function.
     /// The keyed stream returned by this method is capable
@@ -35,7 +30,7 @@ where
     In: Kvt,
     In::Value: Serialize + DeserializeOwned,
     In::Timestamp: Serialize + DeserializeOwned,
-    Key: DistKey,
+    Key: Clone + 'static + Serialize + DeserializeOwned,
 {
     fn key_distribute(
         self,
@@ -45,68 +40,5 @@ where
     ) -> StreamBuilder<(Key, In::Value, In::Timestamp)> {
         self.key_local(format!("{name}-key"), key_func)
             .distribute(format!("{name}-distribute"), partitioner)
-    }
-}
-
-pub(crate) trait Distribute<K: Key, M: Kvt> {
-    /// Turn a stream into a keyed stream and distribute
-    /// messages across workers via the partitioning function.
-    /// The keyed stream returned by this method is capable
-    /// of redistributing state on cluster size changes
-    /// with no downtime.
-    fn distribute(
-        self,
-        name: impl Into<String>,
-        partitioner: WorkerPartitioner<K>,
-    ) -> StreamBuilder<M>;
-}
-
-impl<K, M, X> Distribute<K, M> for X
-where
-    X: Malstrom<M>,
-    K: DistKey,
-    M: Kvt<Key = K>,
-    M::Value: Serialize + DeserializeOwned,
-    M::Timestamp: Serialize + DeserializeOwned,
-{
-    fn distribute(
-        self,
-        name: impl Into<String>,
-        partitioner: WorkerPartitioner<K>,
-    ) -> StreamBuilder<M> {
-        self.then(Operator::built_by(
-            name.into(),
-            DistributorBuilder {
-                partitioner,
-                _message_type: PhantomData::<M>,
-            },
-        ))
-    }
-}
-
-pub(crate) struct DistributorBuilder<K, M> {
-    partitioner: WorkerPartitioner<K>,
-    _message_type: PhantomData<M>,
-}
-impl<K, M> DistributorBuilder<K, M> {
-    pub(crate) fn new(partitioner: WorkerPartitioner<K>) -> Self {
-        Self {
-            partitioner,
-            _message_type: PhantomData,
-        }
-    }
-}
-
-impl<M, K> LogicBuilder<M, M> for DistributorBuilder<K, M>
-where
-    M: Kvt<Key = K>,
-    M::Value: Serialize + DeserializeOwned,
-    M::Timestamp: Serialize + DeserializeOwned,
-    K: Key + Serialize + DeserializeOwned,
-{
-    type Logic = Distributor<M>;
-
-    async fn build(self, ctx: &mut BuildContext) -> Self::Logic {
-        Distributor::<M>::new(self.partitioner, ctx).await
     }
 }

@@ -12,6 +12,14 @@ use crate::{
     types::{Barrier, DataMessage, Kvt, Message, NoKey, SuspendMarker, WorkerId},
 };
 
+/// Represents the different phases of the ICA (Interrogate-Collect-Acquire) reconfiguration process
+enum ICAPhase {
+    Normal,
+    Interrogating,
+    Collecting,
+    Finished,
+}
+
 struct CollectBuffer<M>;
 
 impl<M> CollectBuffer<M> {

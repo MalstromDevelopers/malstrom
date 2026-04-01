@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     coordinator::{Coordinator, CoordinatorApi, CoordinatorExecutionError},
-    runtime::{RuntimeFlavor, threaded::communication::InterThreadChannels},
+    runtime::{RuntimeFlavor},
     snapshot::PersistenceBackend,
     types::WorkerId,
     worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},

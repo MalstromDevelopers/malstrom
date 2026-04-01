@@ -124,6 +124,7 @@ where
 /// Most messages will be of the data flavour, i.e. data to be processed,
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
+#[derive(Debug, Clone)]
 pub enum Message<M: Kvt> {
     /// A data record flowing through the data stream
     Data(DataMessage<M>),
@@ -140,7 +141,7 @@ pub enum Message<M: Kvt> {
     // SuspendMarker(SuspendMarker),
 
     /// Information that job reconfiguration has completed with new ConfigVersion
-    ReconfigComplete(u64),
+    ReconfigComplete(ReconfigComplete),
 
     /// Rescaling state movement messages
     Interrogate(Interrogate<<M as Kvt>::Key>),
@@ -150,32 +151,12 @@ pub enum Message<M: Kvt> {
     Acquire(Acquire<<M as Kvt>::Key>),
 }
 
-impl<M> Debug for Message<M>
-where
-    M: Kvt,
-    M::Key: Debug,
-    M::Value: Debug,
-    M::Timestamp: Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Data(arg0) => f.debug_tuple("Data").field(arg0).finish(),
-            Self::Epoch(arg0) => f.debug_tuple("Epoch").field(arg0).finish(),
-            Self::AbsBarrier(arg0) => f.debug_tuple("AbsBarrier").field(arg0).finish(),
-            Self::Rescale(arg0) => f.debug_tuple("Rescale").field(arg0).finish(),
-            Self::SuspendMarker(arg0) => f.debug_tuple("SuspendMarker").field(arg0).finish(),
-            Self::Interrogate(arg0) => f.debug_tuple("Interrogate").field(arg0).finish(),
-            Self::Collect(arg0) => f.debug_tuple("Collect").field(arg0).finish(),
-            Self::Acquire(arg0) => f.debug_tuple("Acquire").field(arg0).finish(),
-        }
-    }
-}
-
+#[derive(Debug, Clone)]
 pub enum Barrier {
     // Take a snapshot, then suspend
     Suspend(SnapshotBarrier),
     /// Take a snapshot, then resume
-    Snapshot(SnapshotBarrier)
+    Snapshot(SnapshotBarrier),
 }
 
 macro_rules! impl_from_variants {
@@ -194,24 +175,6 @@ macro_rules! impl_from_variants {
             }
         )*
     };
-}
-impl_from_variants!(
-    Data(DataMessage<M>),
-    AbsBarrier(SnapshotBarrier),
-    Rescale(RescaleMessage),
-    SuspendMarker(SuspendMarker),
-    Interrogate(Interrogate<K>),
-    Collect(Collect<K>),
-    Acquire(Acquire<K>),
-);
-impl<M, T> From<T> for Message<M>
-where
-    M: Kvt<Timestamp = T>,
-    T: Timestamp,
-{
-    fn from(value: T) -> Self {
-        Message::Epoch(value)
-    }
 }
 
 /// Indicates a reconfiguration in the amount of workers
@@ -257,24 +220,13 @@ impl RescaleMessage {
     }
 }
 
-impl<M> Clone for Message<M>
-where
-    M: Kvt + Clone,
-{
-    fn clone(&self) -> Self {
-        // for some reason this could not be derived
-        match self {
-            Self::Data(x) => Self::Data(x.clone()),
-            Self::Epoch(x) => Self::Epoch(x.clone()),
-            Self::AbsBarrier(x) => Self::AbsBarrier(x.clone()),
-            Self::Rescale(x) => Self::Rescale(x.clone()),
-            Self::SuspendMarker(x) => Self::SuspendMarker(x.clone()),
-            Self::Interrogate(x) => Self::Interrogate(x.clone()),
-            Self::Collect(x) => Self::Collect(x.clone()),
-            Self::Acquire(x) => Self::Acquire(x.clone()),
-        }
-    }
+pub struct ReconfigComplete {
+    /// Configuration version we have advanced to
+    version: u64,
+    /// Set of workerIds in the new configuration
+    workers: IndexSet<WorkerId>,
 }
+
 
 /// This marker will be sent by the cluster lifecycle controller
 /// when the worker is planning to shut down.

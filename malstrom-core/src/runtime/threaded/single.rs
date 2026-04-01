@@ -7,7 +7,6 @@ use crate::{
     worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
-use super::{Shared, communication::InterThreadCommunication};
 use bon::Builder;
 use thiserror::Error;
 
@@ -61,16 +60,17 @@ pub enum ExecutionError {
 /// Useful for unit-tests.
 #[derive(Debug, Default, Clone)]
 pub struct SingleThreadRuntimeFlavor {
-    comm_shared: Shared,
+    // comm_shared: Shared,
 }
 
 impl RuntimeFlavor for SingleThreadRuntimeFlavor {
-    type Communication = InterThreadCommunication;
+    type Communication = (); // TODO InterThreadCommunication;
 
     fn communication(
         &mut self,
     ) -> Result<Self::Communication, crate::runtime::runtime_flavor::CommunicationError> {
-        Ok(InterThreadCommunication::new(self.comm_shared.clone(), 0))
+       todo!()
+        // Ok(InterThreadCommunication::new(self.comm_shared.clone(), 0))
     }
 
     fn this_worker_id(&self) -> u64 {

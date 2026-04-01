@@ -68,11 +68,11 @@ where
             Message::Interrogate(_) => (),
             Message::Collect(_) => (),
             Message::Acquire(_) => (),
-            // necessary to convince Rust it is a different generic type now
+            // necessary because it is a different generic type now
             Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)).await,
             Message::Rescale(x) => output.send(Message::Rescale(x)).await,
-            Message::SuspendMarker(x) => output.send(Message::SuspendMarker(x)).await,
             Message::Epoch(x) => output.send(Message::Epoch(x)).await,
+            Message::ReconfigComplete(x) => output.send(Message::ReconfigComplete(x)).await
         }
     }
 }

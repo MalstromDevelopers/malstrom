@@ -3,6 +3,11 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use indexmap::IndexSet;
 
+use crate::types::WorkerId;
+
+/// A pratitioning function for selecting which worker a keyed message will go to
+pub type WorkerPartitioner<K> = fn(&K, &IndexSet<WorkerId>) -> WorkerId;
+
 /// Select a value from an Iterator of choices by applying [rendezvous hashing](https://en.wikipedia.org/wiki/Rendezvous_hashing).
 /// Rendezvous hashing ensures minimal shuffling when the set of options changes
 /// at the cost of being O(n) with n == options.len()
