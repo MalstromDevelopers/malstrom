@@ -5,7 +5,7 @@ use super::spsc;
 use crate::{
     channels::{alignment::{AlignedValue, AlignmentGroup}, recv_trait::Receiver, signal::{Signal, SignalHandle}},
     snapshot::SnapshotBarrier,
-    types::{Barrier, Kvt, MaybeTime, Message, OperatorPartitioner, SuspendMarker, Timestamp},
+    types::{Barrier, Kvt, MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker, Timestamp},
 };
 use futures::{FutureExt, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -152,7 +152,7 @@ impl<M: Kvt> UpstreamState<M> {
 }
 
 /// Outer group for Barriers, inner group for SuspendMarkers
-type BarrierAlign<M> = AlignmentGroup<spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
+type BarrierAlign<M> = AlignmentGroup<OperatorId, spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
 
 fn is_barrier<M: Kvt>(msg: &Message<M>) -> bool {matches!(msg, Message::AbsBarrier(_))}
 
@@ -202,18 +202,17 @@ where
         loop {
             // We loop here just for the case where we get an epoch but can not emit it
             // because of inputs which are behind or because it would not advance the frontier
-            let (msg, idx) = match self.receivers.recv().await {
-                AlignedValue::Unaligned((msg, idx)) => (msg, idx),
+            let (key, msg) = match self.receivers.recv().await {
+                AlignedValue::Unaligned((key, msg)) => (key, msg),
                 AlignedValue::Aligned(mut items) => {
-                    let msg = items.pop().expect("Expected at least one receiver in Input");
                     // does not matter which barrier we send, as long as they are aligned
                     // index also does not matter
-                    (msg, 0)
+                    items.pop().expect("Expected at least one receiver in Input")
                 }
             };
             match msg {
                 Message::Epoch(e) => {
-                    self.frontiers[idx] = Some(e);
+                    self.frontiers[key as usize] = Some(e);
                     let merged = merge_timestamps(self.frontiers.iter());
                     // Only sent out if we would advance the frontier
                     // TODO: test
@@ -243,12 +242,14 @@ pub(crate) fn full_broadcast<T>(_: &T, outputs: &mut [bool]) {
 pub(crate) fn link<M: Kvt>(sender: &mut Output<M>, receiver: &mut Input<M>) {
     let (tx, rx) = spsc::unbounded();
     sender.senders.push(tx);
-    receiver.receivers.push(rx);
+    let next_key = receiver.receivers.keys().last().unwrap_or(&0) + 1;
+    receiver.receivers.insert(next_key, rx);
     receiver.frontiers.push(None);
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: MaybeTime>(
+/// TODO: Move this somewhere else
+pub(crate) fn merge_timestamps<'a, T: MaybeTime>(
     mut timestamps: impl Iterator<Item = &'a Option<T>>,
 ) -> Option<T> {
     let mut merged = timestamps.next()?.clone();

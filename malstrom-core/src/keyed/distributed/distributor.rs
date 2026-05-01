@@ -1,92 +1,48 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::{collections::VecDeque, hash::Hash};
 
-use futures::{FutureExt, stream::FuturesUnordered};
 use indexmap::{IndexMap, IndexSet};
+use tokio::sync::oneshot;
 
 use crate::{
-    channels::{alignment::AlignmentGroup, operator_io::{Input, Output}, spsc},
-    keyed::distributed::{Acquire, Version, WorkerPartitioner, routers::MessageRouter, wire_message::{VersionedMessage, WireMessage}},
-    runtime::communication::{Distributable, OperatorCommReceiver},
-    snapshot::{PersistenceBackend, SnapshotBarrier},
-    stream::Logic,
-    types::{Barrier, DataMessage, Kvt, Message, NoKey, SuspendMarker, WorkerId},
+    channels::{operator_io::{Input, Output}, recv_trait::Receiver, spsc},
+    keyed::{
+        WorkerPartitioner,
+        distributed::{
+            Collect, ConfigVersion, Interrogate, remote_receiver::DistributorReceiver, remote_sender::DistributorSender, targeted_message::TargetedData, versioned_message::{VersionedData, VersionedMessage}, wire_message::WireAcquire
+        },
+    },
+    stream::{BuildContext, Logic, OperatorContext},
+    types::{
+        DataMessage, Key, Kvt, OperatorId, ReconfigComplete, RescaleMessage, WorkerId, distributable::Distributable
+    },
 };
 
-struct CollectBuffer<M>;
-
-impl<M> CollectBuffer<M> {
-    fn append(&mut self, msg: M) {
-        todo!()
-    }
-}
-
-struct Distributor<M> where
-// TODO: simplify these trait bounds
-    M: Kvt + Distributable,
+struct Distributor<M>
+where
+    M: Kvt,
     M::Key: Distributable,
     M::Value: Distributable,
-    M::Timestamp: Distributable {
-
-    /// Remote receivers
-    remote_recvs: AlignmentGroup<OperatorCommReceiver<WireMessage<M>>, fn(WireMessage<M>) -> bool>,
-    /// a local barrier waiting for alignment
-    local_barrier: Option<Barrier>,
-    own_version: Version,
-    router: Box<dyn MessageRouter<M::Key>>,
-    /// currently collected key + buffer if any
-    current_collect: Option<(M::Key, CollectBuffer)>
-
+    M::Timestamp: Distributable,
+{
+    remote_receiver: DistributorReceiver<M>,
+    remote_sender: DistributorSender<M>,
+    router: MessageRouter<M>,
 }
 
-impl<M> Logic<M, M> for Distributor<M> where     M: Kvt + Distributable,
+impl<M> Logic<M, M> for Distributor<M>
+where
+    M: Kvt,
     M::Key: Distributable,
     M::Value: Distributable,
-    M::Timestamp: Distributable {
-        async fn apply(
+    M::Timestamp: Distributable,
+{
+    async fn apply(
         &mut self,
         input: &mut Input<M>,
         output: &mut Output<M>,
-        ctx: &mut crate::stream::OperatorContext,
+        ctx: &mut OperatorContext,
     ) {
-        /// select over
-        /// - local input message
-        /// - remote input message
-        /// - ICA reconfig progress
-        
-        let local_recv = if self.local_barrier.is_none() {
-            input.recv().boxed_local()
-        } else {
-            std::future::pending().boxed_local()
-        };
-        
+        let (collect, acquire) = self.router.run().await;
+        let msg = self.remote_receiver.recv(input, ctx).await;
     }
-}
-
-impl<M> Distributor<M> where M: Kvt + Distributable,
-    M::Key: Distributable,
-    M::Value: Distributable,
-    M::Timestamp: Distributable {
-
-    fn handle_local_msg(&mut self, msg: Message<M>) {
-        match msg {
-            Message::Data(data_message) => {
-                /// buffer message if key is currently getting collected
-                if let Some((key, buffer)) = self.current_collect.as_mut() {
-                    if key == data_message.key {
-                        buffer.append(msg);
-                        return;
-                    }
-                };
-                let target = self.router.route_message(msg.key, self.worker_id);
-            },
-            Message::Epoch(_) => todo!(),
-            Message::AbsBarrier(barrier) => todo!(),
-            Message::Rescale(rescale_message) => todo!(),
-            Message::ReconfigComplete(_) => todo!(),
-            Message::Interrogate(_) => todo!(),
-            Message::Collect(_) => todo!(),
-            Message::Acquire(_) => todo!(),
-        }
-    }
-
 }

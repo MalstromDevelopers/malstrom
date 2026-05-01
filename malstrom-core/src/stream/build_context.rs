@@ -5,9 +5,9 @@ use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::runtime::LocalRuntime;
 
-use crate::runtime::communication::Distributable;
-use crate::runtime::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
+use crate::runtime::{OperatorOperatorComm};
 use crate::snapshot::{PersistenceClient, deserialize_state};
 use crate::types::{OperatorId, WorkerId};
 
@@ -18,8 +18,12 @@ pub struct BuildContext {
     pub worker_id: WorkerId,
     /// ID of this operator
     pub operator_id: OperatorId,
+    /// Runtime of this operator
+    pub operator_rt: Rc<LocalRuntime>,
     /// User given name of this operator
     pub operator_name: String,
+    /// Last completed configuration
+    pub config_version: ConfigVersion,
 
     persistence: Rc<dyn PersistenceClient>,
     communication: Rc<dyn OperatorOperatorComm>,
@@ -73,6 +77,7 @@ pub(crate) struct WorkerBuildContext {
     persistence: Rc<dyn PersistenceClient>,
     communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
+    config_version: u64,
 }
 
 impl WorkerBuildContext {
@@ -96,16 +101,19 @@ impl WorkerBuildContext {
     /// into a full build context
     pub(crate) fn to_build_context(
         self,
+        operator_rt: Rc<LocalRuntime>,
         operator_id: OperatorId,
         operator_name: String,
     ) -> BuildContext {
         BuildContext {
             operator_id,
             operator_name,
+            operator_rt,
             worker_id: self.worker_id,
             persistence: self.persistence,
             communication: self.communication,
             worker_ids: self.worker_ids,
+            config_version: self.config_version
         }
     }
 }

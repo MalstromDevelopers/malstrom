@@ -9,6 +9,7 @@ Example: One struct + its impl + the return and error types of all functions in 
 
 For functions and types always create doc comments. Document parameters, but not the return type
 Remember you can use [<type name>] in Rust to create links to other types where useful.
+Doc comments should be brief.
 
 Ideally each function which could error should have its own error type.
 

@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    runtime::communication::{Distributable, ReqResResponder},
-    types::WorkerId,
+    runtime::communication::ReqResResponder,
+    types::{WorkerId, distributable::Distributable},
 };
 
 /// A communication implementation for sending messages from a worker to the coordinator.

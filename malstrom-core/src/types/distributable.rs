@@ -1,5 +1,7 @@
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::types::Kvt;
+
 
 /// A type which can be sent (distributed) between workers
 pub trait Distributable: Serialize + DeserializeOwned + 'static {

@@ -10,11 +10,10 @@ use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
         KeyDistribute,
-        distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
+        distributed::{Acquire, Collect, Interrogate},
         rendezvous_select,
     },
     operators::StreamSink,
-    runtime::communication::Distributable,
     snapshot::SnapshotBarrier,
     stream::{
         BuildContext, Logic, Malstrom, Operator, OperatorContext, SafeLogic, SafeLogicWrapper,
@@ -22,7 +21,7 @@ use crate::{
     },
     types::{
         Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime,
-        RescaleMessage, SuspendMarker,
+        RescaleMessage, SuspendMarker, distributable::Distributable,
     },
 };
 /// Implementation of a stateful sink
@@ -30,7 +29,7 @@ pub trait StatefulSinkImpl<M: Kvt>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
-    type Part: DistKey;
+    type Part: Key + Distributable;
     /// State for a partition of this sink. The state is persisted across job restarts
     /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState: Distributable;
@@ -238,7 +237,7 @@ where
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
-        let key_state = self.partitions.swap_remove(&collect.key);
+        let key_state = self.partitions.swap_remove(collect.get_key());
         if let Some(partition) = key_state {
             collect.add_state(ctx.operator_id, partition.collect());
         }

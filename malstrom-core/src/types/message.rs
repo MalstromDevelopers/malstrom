@@ -124,7 +124,7 @@ where
 /// Most messages will be of the data flavour, i.e. data to be processed,
 /// however JetStream also uses its data channels to coordinate snapshoting
 /// and rescaling
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Message<M: Kvt> {
     /// A data record flowing through the data stream
     Data(DataMessage<M>),
@@ -203,7 +203,7 @@ impl RescaleMessage {
 
     /// Get the set of workers which will be active after the rescale
     /// has concluded
-    pub fn get_new_workers(&self) -> &IndexSet<WorkerId> {
+    pub fn get_all_workers(&self) -> &IndexSet<WorkerId> {
         &self.workers
     }
 
@@ -225,6 +225,15 @@ pub struct ReconfigComplete {
     version: u64,
     /// Set of workerIds in the new configuration
     workers: IndexSet<WorkerId>,
+}
+
+impl ReconfigComplete {
+    pub fn get_new_worker_set(&self) -> &IndexSet<WorkerId> {
+        &self.workers
+    }
+    pub fn get_new_version(&self) -> u64 {
+        self.version
+    }
 }
 
 

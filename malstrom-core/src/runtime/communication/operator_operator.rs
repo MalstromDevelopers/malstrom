@@ -7,7 +7,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::types::{OperatorId, WorkerId};
+use crate::types::{OperatorId, WorkerId, distributable::Distributable};
 
 /// A backend facilitating inter-worker communication in malstrom.
 /// This trait defines the methods required to establish communication channels
@@ -54,7 +54,7 @@ where
     /// * `to_worker` - The ID of the worker hosting the target operator.
     /// * `to_operator` - The ID of the target operator.
     /// * `backend` - The backend implementing the [`OperatorOperatorComm`] trait.
-    pub(crate) async fn new<Backend: OperatorOperatorComm>(
+    pub(crate) async fn new<Backend: OperatorOperatorComm + ?Sized>(
         to_worker: WorkerId,
         to_operator: OperatorId,
         backend: &Backend,
@@ -85,7 +85,7 @@ pub(crate) struct OperatorCommReceiver<T> {
 
 impl<T> OperatorCommReceiver<T>
 where
-    T: super::Distributable,
+    T: Distributable,
 {
     /// Creates a new [`OperatorCommReceiver`] for receiving messages from a specific operator.
     ///
@@ -93,10 +93,10 @@ where
     /// * `from_worker` - The ID of the worker hosting the source operator.
     /// * `from_operator` - The ID of the source operator.
     /// * `backend` - The backend implementing the [`OperatorOperatorComm`] trait.
-    pub(crate) async fn new<Backend: OperatorOperatorComm>(
+    pub(crate) async fn new<Backend: OperatorOperatorComm + ?Sized>(
         from_worker: WorkerId,
         from_operator: OperatorId,
-        backend: Backend,
+        backend: &Backend,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let receiver = backend.new_receiver(from_worker, from_operator).await?;
         Ok(Self {
@@ -115,7 +115,7 @@ where
 
 impl<T> crate::channels::recv_trait::Receiver for OperatorCommReceiver<T>
 where
-    T: super::Distributable,
+    T: Distributable,
  {
     type Output = T;
     

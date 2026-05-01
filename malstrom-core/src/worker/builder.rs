@@ -10,7 +10,7 @@ use crate::{
     channels::signal::SignalHandle,
     coordinator::messages::BuildInformation,
     runtime::{
-        CommunicationClient, OperatorOperatorComm, RuntimeFlavor,
+        OperatorOperatorComm, RuntimeFlavor,
         communication::WorkerCoordinatorComm,
     },
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion},
@@ -78,8 +78,9 @@ where
 
 pub(crate) struct InnerRuntimeBuilder {
     // build_ctx will be sent here once available
+    // TODO: replace with [tokio::sync::OnceCell]
     build_ctx: tokio::sync::broadcast::Sender<WorkerBuildContext>,
-    operator_rt: LocalRuntime,
+    operator_rt: Rc<LocalRuntime>,
     operator_tasks: HashMap<OperatorId, tokio::task::JoinHandle<()>>,
 }
 
@@ -87,7 +88,7 @@ impl InnerRuntimeBuilder {
     fn new() -> Self {
         Self {
             build_ctx: tokio::sync::broadcast::Sender::new(1),
-            operator_rt: LocalRuntime::new().unwrap(),
+            operator_rt: Rc::new(LocalRuntime::new().unwrap()),
             operator_tasks: HashMap::new(),
         }
     }
@@ -104,6 +105,7 @@ impl InnerRuntimeBuilder {
         let mut ctx_receiver = self.build_ctx.subscribe();
         let operator_id = operator.get_id();
         let operator_name = operator.get_name().to_owned();
+
         let task = self.operator_rt.spawn_local(async move {
             let build_ctx = ctx_receiver.recv().map(Result::unwrap);
             operator.start(build_ctx).await;

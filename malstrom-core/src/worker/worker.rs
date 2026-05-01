@@ -9,7 +9,7 @@ use crate::{
     channels::signal::SignalHandle,
     coordinator::messages::*,
     runtime::{
-        CommunicationClient, CommunicationError, OperatorOperatorComm, RuntimeFlavor,
+        CommunicationError, OperatorOperatorComm, RuntimeFlavor,
         communication::{WorkerClient, WorkerCoordinatorComm},
     },
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion},

@@ -6,7 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::types::{Kvt, OperatorId, WorkerId};
+use crate::types::{Kvt, OperatorId, WorkerId, distributable::Distributable};
 
 mod operator_operator;
 mod reqres;

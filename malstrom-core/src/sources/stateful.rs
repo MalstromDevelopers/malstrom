@@ -10,14 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
-        Distribute,
-        distributed::{Acquire, Collect, Interrogate},
-        partitioners::rendezvous_select,
+        distributed::{Acquire, Collect, Interrogate}, rendezvous_select,
     },
     operators::StreamSource,
     runtime::{
-        BiCommunicationClient,
-        communication::{Distributable, broadcast},
+        communication::broadcast,
     },
     snapshot::SnapshotBarrier,
     stream::{
@@ -26,7 +23,7 @@ use crate::{
     },
     types::{
         Data, DataMessage, Key, Kvt, MaybeKey, Message, NoData, NoKey, NoTime, OnceTime,
-        RescaleMessage, SuspendMarker, Timestamp, WorkerId,
+        RescaleMessage, SuspendMarker, Timestamp, WorkerId, distributable::Distributable,
     },
 };
 
@@ -382,7 +379,7 @@ where
                         output.send(Message::AbsBarrier(barrier));
                     }
                     Message::Rescale(rescale_message) => {
-                        let new_workers = rescale_message.get_new_workers();
+                        let new_workers = rescale_message.get_all_workers();
                         self.comm_clients.retain(|wid, _| new_workers.contains(wid));
                         for wid in new_workers.iter() {
                             if !self.comm_clients.contains_key(wid) && !wid == ctx.worker_id {

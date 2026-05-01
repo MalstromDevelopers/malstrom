@@ -2,8 +2,10 @@
 
 use std::{
     hash::{Hash, Hasher},
-    marker::PhantomData,
+    marker::PhantomData, rc::Rc,
 };
+
+use tokio::runtime::LocalRuntime;
 
 use crate::{
     channels::operator_io::{Input, Output, full_broadcast},
@@ -29,7 +31,11 @@ where
     N: Kvt,
     B: LogicBuilder<M, N>,
 {
-    pub(crate) async fn start(mut self, build_ctx: impl Future<Output = WorkerBuildContext>) {
+    pub(crate) async fn start(
+        mut self,
+        build_ctx: impl Future<Output = WorkerBuildContext>,
+        operator_rt: Rc<LocalRuntime>
+    ) {
         let name = self.get_name().to_string();
 
         let mut build_ctx = build_ctx

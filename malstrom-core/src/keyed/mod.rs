@@ -6,4 +6,4 @@ pub use key_distribute::KeyDistribute;
 mod worker_partitioners;
 pub use worker_partitioners::{WorkerPartitioner, rendezvous_select, index_select};
 
-mod distributed;
+pub(crate) mod distributed;
