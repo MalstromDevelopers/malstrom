@@ -85,6 +85,8 @@ pub enum CoordinatorExecutionError {
     RuntimeError(#[from] std::io::Error),
     #[error("Error joining coordinator loop task")]
     CoordinatorLoopJoin(#[source] tokio::task::JoinError),
+    #[error("Error in coordinator")]
+    CoordinatorTask(#[from] CoordinatorError)
 }
 
 /// Create a new coordinator loop. This creates a coordinator and starts it.
@@ -94,7 +96,7 @@ async fn coordinator_loop<C, P>(
     requests: flume::Receiver<ApiRequest>,
     communication_backend: C,
     mut persistence_backend: P,
-) -> Result<(), CoordinatorError<C>>
+) -> Result<(), CoordinatorError>
 where
     C: Send + WorkerCoordinatorComm,
     P: Send + PersistenceBackend,
@@ -102,7 +104,7 @@ where
     let mut state = state
         .setup_communication(&communication_backend)
         .await
-        .map_err(CoordinatorError::Communication)?;
+        .map_err(|_|CoordinatorError::Communication)?;
     // start job on all workers
     state.start_build().await;
     state.start_execution().await;
@@ -139,7 +141,7 @@ where
                     let next_version = state.snapshot_version.map(|x| x + 1).unwrap_or(0);
                     state.take_snapshot(next_version).await;
                     state.snapshot_version = Some(next_version);
-                    let serialized_state = serialize_state(&state.get_serializable());
+                    let serialized_state = serialize_state(&SerializableClusterHandle::from(&state));
                     persistence_backend
                         .for_version(COORDINATOR_ID, &next_version)
                         .persist(&serialized_state, &0);
@@ -164,12 +166,10 @@ where
 }
 
 #[derive(Debug, Error)]
-pub enum CoordinatorError<C>
-where
-    C: WorkerCoordinatorComm,
+pub enum CoordinatorError
 {
     #[error("Error setting up communication to workers")]
-    Communication(#[source] C::Error),
+    Communication,
     #[error(transparent)]
     TokioJoin(#[from] tokio::task::JoinError),
 }

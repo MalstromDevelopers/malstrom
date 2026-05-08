@@ -9,10 +9,7 @@ use tracing::info;
 use crate::{
     channels::signal::SignalHandle,
     coordinator::messages::BuildInformation,
-    runtime::{
-        OperatorOperatorComm, RuntimeFlavor,
-        communication::WorkerCoordinatorComm,
-    },
+    runtime::{OperatorOperatorComm, RuntimeFlavor, communication::WorkerCoordinatorComm},
     snapshot::{NoPersistence, PersistenceBackend, PersistenceClient, SnapshotVersion},
     stream::{DirectLogic, LogicBuilder, Operator, WorkerBuildContext},
     types::{Kvt, OperatorId, WorkerId},
@@ -62,12 +59,15 @@ where
             .into_inner()
             .expect("Lock poisened");
         inner.add_operator(self.root_operator);
-        Worker::new(
+
+        let worker = inner.operator_rt.block_on(
+           Worker::new(
             self.persistence,
             self.flavor.communication()?,
             self.flavor.this_worker_id(),
-        )?
-        .execute(
+        ) 
+        )?;
+        worker.execute(
             self.sys_msg_sender,
             inner.operator_rt,
             inner.operator_tasks,

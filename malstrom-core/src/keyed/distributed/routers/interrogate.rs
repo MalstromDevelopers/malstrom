@@ -5,7 +5,10 @@ use crate::{
     keyed::{
         WorkerPartitioner,
         distributed::{
-            ConfigVersion, Interrogate, routers::{CollectRouter, NormalRouter, RouterInput, RouterKind, RouterOutput}, targeted_message::TargetedData, versioned_message::VersionedData
+            ConfigVersion, Interrogate,
+            routers::{CollectRouter, NormalRouter, RouterInput, RouterKind, RouterOutput},
+            targeted_message::TargetedData,
+            versioned_message::VersionedData,
         },
     },
     types::{Key, Kvt, RescaleMessage, WorkerId, distributable::Distributable},
@@ -30,7 +33,10 @@ where
     M: Kvt,
     M::Key: Key + Distributable,
 {
-    pub(super) fn new(normal: NormalRouter<M>, trigger: RescaleMessage) -> (Self, Interrogate<M::Key>) {
+    pub(super) fn new(
+        normal: NormalRouter<M>,
+        trigger: RescaleMessage,
+    ) -> (Self, Interrogate<M::Key>) {
         let (interrogate, interrogate_recv) = Interrogate::new();
         let this = Self {
             this_version: normal.this_version,
@@ -44,7 +50,8 @@ where
         (this, interrogate)
     }
 
-    pub(super) async fn apply(mut self,
+    pub(super) async fn apply(
+        mut self,
         input: &mut spsc::Receiver<RouterInput<M>>,
         output: &mut spsc::Sender<RouterOutput<M>>,
     ) -> RouterKind<M> {

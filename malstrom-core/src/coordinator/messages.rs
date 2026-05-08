@@ -12,6 +12,8 @@ pub(crate) struct BuildInformation {
     /// snapshot which the workers shall load
     /// or none if starting fresh
     pub(crate) resume_snapshot: Option<u64>,
+    /// CLuster config version to resmue
+    pub(crate) config_version: u64
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -24,7 +26,6 @@ pub(crate) struct StartExecution;
 pub(crate) enum RuntimeMessage {
     Snapshot(u64),
     Reconfigure((IndexSet<WorkerId>, u64)),
-    Suspend,
     ExecutionComplete,
 }
 

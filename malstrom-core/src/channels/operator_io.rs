@@ -3,9 +3,15 @@
 //! Essentially these are the edges in the stream graph.
 use super::spsc;
 use crate::{
-    channels::{alignment::{AlignedValue, AlignmentGroup}, recv_trait::Receiver, signal::{Signal, SignalHandle}},
+    channels::{
+        alignment::{AlignedValue, AlignmentGroup},
+        recv_trait::Receiver,
+        signal::{Signal, SignalHandle},
+    },
     snapshot::SnapshotBarrier,
-    types::{Barrier, Kvt, MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker, Timestamp},
+    types::{
+        Barrier, Kvt, MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker, Timestamp,
+    },
 };
 use futures::{FutureExt, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Itertools;
@@ -152,9 +158,12 @@ impl<M: Kvt> UpstreamState<M> {
 }
 
 /// Outer group for Barriers, inner group for SuspendMarkers
-type BarrierAlign<M> = AlignmentGroup<OperatorId, spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
+type BarrierAlign<M> =
+    AlignmentGroup<OperatorId, spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
 
-fn is_barrier<M: Kvt>(msg: &Message<M>) -> bool {matches!(msg, Message::AbsBarrier(_))}
+fn is_barrier<M: Kvt>(msg: &Message<M>) -> bool {
+    matches!(msg, Message::AbsBarrier(_))
+}
 
 /// Operator Input
 pub struct Input<M: Kvt> {
@@ -175,7 +184,6 @@ impl<M: Kvt> Input<M> {
             receivers: barrier_align,
         }
     }
-
 }
 
 impl<M: Kvt> Input<M>
@@ -207,7 +215,9 @@ where
                 AlignedValue::Aligned(mut items) => {
                     // does not matter which barrier we send, as long as they are aligned
                     // index also does not matter
-                    items.pop().expect("Expected at least one receiver in Input")
+                    items
+                        .pop()
+                        .expect("Expected at least one receiver in Input")
                 }
             };
             match msg {
@@ -219,14 +229,14 @@ where
                     let out_epoch = match (self.last_epoch.as_ref(), merged) {
                         (None, Some(e)) => Some(e),
                         (Some(le), Some(me)) if me > *le => Some(me),
-                        _ => None
+                        _ => None,
                     };
                     if let Some(e) = out_epoch {
                         self.last_epoch = Some(e.clone());
                         return Message::Epoch(e);
                     }
-                },
-                x => return x
+                }
+                x => return x,
             }
         }
     }
@@ -266,7 +276,7 @@ pub(crate) fn merge_timestamps<'a, T: MaybeTime>(
 #[cfg(test)]
 mod test {
     use crate::{
-        snapshot::{SnapshotBarrier, NoPersistence},
+        snapshot::{NoPersistence, SnapshotBarrier},
         types::{DataMessage, NoData, NoKey, NoTime, SuspendMarker},
     };
 
@@ -297,11 +307,15 @@ mod test {
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
+        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
+        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
     }
@@ -315,12 +329,16 @@ mod test {
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
+        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
-        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence))));
+        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
 
         let msg = receiver.recv();

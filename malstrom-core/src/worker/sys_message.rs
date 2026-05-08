@@ -16,7 +16,4 @@ pub(crate) enum SysMessage<P> {
         new_version: u64,
         callback: mpsc::Sender<()>,
     },
-    Suspend {
-        callback: mpsc::Sender<()>,
-    },
 }

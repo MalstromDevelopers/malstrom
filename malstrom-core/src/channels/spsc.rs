@@ -2,7 +2,11 @@
 //! Inspiration taken from https://docs.rs/local-channel
 
 use std::{
-    cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc, task::{Context, Poll, Waker}
+    cell::RefCell,
+    collections::VecDeque,
+    pin::Pin,
+    rc::Rc,
+    task::{Context, Poll, Waker},
 };
 
 use futures::Stream;
@@ -124,7 +128,7 @@ impl<T> Receiver<T> {
         Self { shared }
     }
 }
-impl <T> super::recv_trait::Receiver for Receiver<T> {
+impl<T> super::recv_trait::Receiver for Receiver<T> {
     type Output = T;
     /// Receive a message from the channel, returns None if the channel
     /// contains no messages
@@ -175,7 +179,6 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let receiver = Receiver::new(shared);
     (sender, receiver)
 }
-
 
 #[cfg(test)]
 mod tests {

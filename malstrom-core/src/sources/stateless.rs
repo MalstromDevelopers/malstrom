@@ -4,7 +4,10 @@ use std::marker::PhantomData;
 use crate::{
     operators::{Source, StreamSource},
     stream::{InitialStreamBuilder, Malstrom, StreamBuilder},
-    types::{Data, Key, Kvt, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp, distributable::Distributable},
+    types::{
+        Data, Key, Kvt, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp,
+        distributable::Distributable,
+    },
 };
 
 use super::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};

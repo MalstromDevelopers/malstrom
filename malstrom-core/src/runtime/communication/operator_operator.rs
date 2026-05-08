@@ -1,4 +1,8 @@
-use std::{marker::PhantomData, pin::Pin, task::{Context, Poll}};
+use std::{
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -18,22 +22,22 @@ pub trait OperatorOperatorComm {
     ///
     /// # Arguments
     /// * `to_worker` - The ID of the worker hosting the target operator.
-    /// * `to_operator` - The ID of the target operator.
+    /// * `channel_id` - The ID of the communication channel.
     async fn new_sender(
         &self,
         to_worker: WorkerId,
-        to_operator: OperatorId,
+        channel_id: OperatorId,
     ) -> Result<Box<dyn super::StreamSender>, Box<dyn std::error::Error>>;
 
     /// Creates a new receiver for receiving messages from a specific operator on a specific worker.
     ///
     /// # Arguments
     /// * `from_worker` - The ID of the worker hosting the source operator.
-    /// * `from_operator` - The ID of the source operator.
+    /// * `channel_id` - The ID of the communication channel.
     async fn new_receiver(
         &self,
         from_worker: WorkerId,
-        from_operator: OperatorId,
+        channel_id: OperatorId,
     ) -> Result<Box<dyn super::StreamReceiver>, Box<dyn std::error::Error>>;
 }
 
@@ -52,14 +56,14 @@ where
     ///
     /// # Arguments
     /// * `to_worker` - The ID of the worker hosting the target operator.
-    /// * `to_operator` - The ID of the target operator.
+    /// * `channel_id` - Unique ID of the communication channel
     /// * `backend` - The backend implementing the [`OperatorOperatorComm`] trait.
     pub(crate) async fn new<Backend: OperatorOperatorComm + ?Sized>(
         to_worker: WorkerId,
-        to_operator: OperatorId,
+        channel_id: u64,
         backend: &Backend,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let sender = backend.new_sender(to_worker, to_operator).await?;
+        let sender = backend.new_sender(to_worker, channel_id).await?;
         Ok(Self {
             sender,
             msg_type: PhantomData,
@@ -90,15 +94,15 @@ where
     /// Creates a new [`OperatorCommReceiver`] for receiving messages from a specific operator.
     ///
     /// # Arguments
-    /// * `from_worker` - The ID of the worker hosting the source operator.
-    /// * `from_operator` - The ID of the source operator.
+    /// * `from_worker` - The ID of the worker you want to receive from
+    /// * `channel_id` - Unique ID of the communication channel
     /// * `backend` - The backend implementing the [`OperatorOperatorComm`] trait.
     pub(crate) async fn new<Backend: OperatorOperatorComm + ?Sized>(
         from_worker: WorkerId,
-        from_operator: OperatorId,
+        channel_id: u64,
         backend: &Backend,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let receiver = backend.new_receiver(from_worker, from_operator).await?;
+        let receiver = backend.new_receiver(from_worker, channel_id).await?;
         Ok(Self {
             receiver,
             msg_type: PhantomData,
@@ -116,9 +120,9 @@ where
 impl<T> crate::channels::recv_trait::Receiver for OperatorCommReceiver<T>
 where
     T: Distributable,
- {
+{
     type Output = T;
-    
+
     /// Receives a message from the source operator.
     async fn recv(&mut self) -> Self::Output {
         let encoded = self.receiver.recv().await.expect("Backend receive error");

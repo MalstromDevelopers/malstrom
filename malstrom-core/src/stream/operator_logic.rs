@@ -8,7 +8,7 @@ use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::SnapshotBarrier,
     stream::{OperatorContext, WorkerBuildContext},
-    types::{Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, RescaleMessage, SuspendMarker},
+    types::{Barrier, Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, ReconfigComplete, RescaleMessage, SuspendMarker},
 };
 
 use super::BuildContext;
@@ -106,7 +106,7 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     /// Called for every snapshot barrier reaching the operator
     async fn on_barrier(
         &mut self,
-        barrier: &mut SnapshotBarrier,
+        barrier: &mut Barrier,
         output: &mut Output<N>,
         ctx: &mut OperatorContext,
     ) {
@@ -165,6 +165,15 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     ) {
     }
 
+    async fn on_reconfig_complete(
+        &mut self,
+        reconfig_complete: &ReconfigComplete,
+        output: &mut Output<N>,
+        ctx: &mut OperatorContext,
+    ) {
+    }
+
+
     /// Turn this type into a schedulable function which can be scheduled by the Malstrom worker.
     fn into_logic(self) -> SafeLogicWrapper<Self> {
         SafeLogicWrapper {
@@ -202,37 +211,35 @@ where
                 self.implementation
                     .on_barrier(&mut barrier, output, ctx)
                     .await;
-                output.send(barrier.into()).await;
+                output.send(Message::AbsBarrier(barrier)).await
             }
             Message::Rescale(mut rescale_message) => {
                 self.implementation
                     .on_rescale(&mut rescale_message, output, ctx)
                     .await;
-                output.send(rescale_message.into()).await;
-            }
-            Message::SuspendMarker(mut suspend_marker) => {
-                self.implementation
-                    .on_suspend(&mut suspend_marker, output, ctx)
-                    .await;
-                output.send(suspend_marker.into()).await;
+                output.send(Message::Rescale(rescale_message)).await
             }
             Message::Interrogate(mut interrogate) => {
                 self.implementation
                     .on_interrogate(&mut interrogate, output, ctx)
                     .await;
-                output.send(interrogate.into()).await;
+                output.send(Message::Interrogate(interrogate)).await
             }
             Message::Collect(mut collect) => {
                 self.implementation
                     .on_collect(&mut collect, output, ctx)
                     .await;
-                output.send(collect.into()).await;
+                output.send(Message::Collect(collect)).await
             }
             Message::Acquire(mut acquire) => {
                 self.implementation
                     .on_acquire(&mut acquire, output, ctx)
                     .await;
-                output.send(acquire.into()).await;
+                output.send(Message::Acquire(acquire)).await
+            }
+            Message::ReconfigComplete(reconfig_complete) => {
+                self.implementation.on_reconfig_complete(&reconfig_complete, output, ctx).await;
+                output.send(Message::ReconfigComplete(reconfig_complete)).await
             }
         };
     }

@@ -2,7 +2,8 @@
 
 use std::{
     hash::{Hash, Hasher},
-    marker::PhantomData, rc::Rc,
+    marker::PhantomData,
+    rc::Rc,
 };
 
 use tokio::runtime::LocalRuntime;
@@ -33,8 +34,7 @@ where
 {
     pub(crate) async fn start(
         mut self,
-        build_ctx: impl Future<Output = WorkerBuildContext>,
-        operator_rt: Rc<LocalRuntime>
+        build_ctx: impl Future<Output = WorkerBuildContext>
     ) {
         let name = self.get_name().to_string();
 

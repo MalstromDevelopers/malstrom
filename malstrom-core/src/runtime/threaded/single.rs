@@ -1,12 +1,10 @@
 use std::time::Duration;
 
 use crate::{
-    coordinator::{Coordinator, CoordinatorExecutionError},
-    runtime::RuntimeFlavor,
-    snapshot::PersistenceBackend,
-    worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
+    coordinator::{Coordinator, CoordinatorExecutionError}, runtime::{OperatorOperatorComm, RuntimeFlavor, communication::{ReqResReceiver, ReqResSender, StreamReceiver, StreamSender, WorkerCoordinatorComm}}, snapshot::PersistenceBackend, types::{OperatorId, WorkerId}, worker::{StreamProvider, WorkerBuilder, WorkerExecutionError}
 };
 
+use async_trait::async_trait;
 use bon::Builder;
 use thiserror::Error;
 
@@ -64,16 +62,47 @@ pub struct SingleThreadRuntimeFlavor {
 }
 
 impl RuntimeFlavor for SingleThreadRuntimeFlavor {
-    type Communication = (); // TODO InterThreadCommunication;
+    type Communication = InterThreadCommunication;
 
     fn communication(
         &mut self,
     ) -> Result<Self::Communication, crate::runtime::runtime_flavor::CommunicationError> {
-       todo!()
+        todo!()
         // Ok(InterThreadCommunication::new(self.comm_shared.clone(), 0))
     }
 
     fn this_worker_id(&self) -> u64 {
         0
     }
+}
+
+struct InterThreadCommunication;
+
+#[async_trait]
+impl OperatorOperatorComm for InterThreadCommunication {
+    async fn new_sender(
+        &self,
+        to_worker: WorkerId,
+        channel_id: OperatorId,
+    ) -> Result<Box<dyn StreamSender>, Box<dyn std::error::Error>> {todo!()}
+
+    async fn new_receiver(
+        &self,
+        from_worker: WorkerId,
+        channel_id: OperatorId,
+    ) -> Result<Box<dyn StreamReceiver>, Box<dyn std::error::Error>> {todo!()}
+
+}
+
+impl WorkerCoordinatorComm for InterThreadCommunication {
+
+    async fn worker_to_coordinator(
+        &self,
+    ) -> Result<impl ReqResReceiver, Box<dyn std::error::Error>>{todo!()}
+
+
+    async fn coordinator_to_worker(
+        &self,
+        to_worker: WorkerId,
+    ) -> Result<impl ReqResSender, Box<dyn std::error::Error>>{todo!()}
 }

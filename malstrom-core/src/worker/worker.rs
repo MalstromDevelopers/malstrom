@@ -34,7 +34,7 @@ where
     P: PersistenceBackend,
     C: OperatorOperatorComm + WorkerCoordinatorComm + 'static,
 {
-    pub(super) fn new(
+    pub(super) async fn new(
         persistence_backend: P,
         communication_backend: C,
         worker_id: WorkerId,
@@ -42,7 +42,7 @@ where
         let comm_rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
-        let coordinator_comm = CommunicationClient::worker_to_coordinator(&communication_backend)?;
+        let coordinator_comm = WorkerClient::new(&communication_backend).await?;
 
         Ok(Self {
             persistence_backend,
@@ -56,7 +56,7 @@ where
     pub(super) fn execute(
         self,
         sys_msg_sender: mpsc::Sender<SysMessage<P::Client>>,
-        operator_rt: LocalRuntime,
+        operator_rt: Rc<LocalRuntime>,
         operators: HashMap<u64, tokio::task::JoinHandle<()>>,
         build_ctx_sender: tokio::sync::broadcast::Sender<WorkerBuildContext>,
     ) -> Result<(), WorkerExecutionError> {
@@ -76,6 +76,8 @@ where
             Rc::clone(&state_client),
             Rc::clone(&self.communication_backend) as Rc<dyn OperatorOperatorComm>,
             buildinfo.worker_set.clone(),
+            buildinfo.config_version,
+            Rc::clone(&operator_rt)
         );
         let _ = build_ctx_sender.send(build_ctx);
         self.comm_rt.block_on(build_responder.respond(()));
@@ -117,5 +119,5 @@ pub enum WorkerExecutionError {
     #[error("Error starting async runtime")]
     AsyncRuntime(#[from] std::io::Error),
     #[error("Error in communication backend")]
-    Communication(#[from] CommunicationError),
+    Communication(#[from] Box<dyn std::error::Error + Send + Sync>),
 }

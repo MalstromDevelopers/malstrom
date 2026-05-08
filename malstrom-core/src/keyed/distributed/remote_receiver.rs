@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use futures::FutureExt;
 use indexmap::{IndexMap, IndexSet};
+use seahash::hash;
 
 use crate::channels::alignment::AlignedValue;
 use crate::channels::operator_io::{Output, merge_timestamps};
@@ -11,7 +12,7 @@ use crate::keyed::distributed::versioned_message::VersionedMessage;
 use crate::keyed::distributed::wire_message::WireMessage;
 use crate::runtime::OperatorOperatorComm;
 use crate::runtime::communication::{OperatorCommSender, broadcast};
-use crate::stream::{Logic, OperatorContext};
+use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::distributable::Distributable;
 use crate::types::{Key, ReconfigComplete, RescaleMessage};
 use crate::{
@@ -55,6 +56,37 @@ where
     M::Value: Distributable,
     M::Timestamp: Distributable,
 {
+    pub(super) async fn new(ctx: &BuildContext) -> Self {
+        let comm = ctx.get_communication();
+        let mut remote_wids = ctx.get_worker_ids().to_owned();
+        remote_wids.swap_remove(&ctx.worker_id);
+
+        let mut remote_recvs =
+            AlignmentGroup::new_empty(WireMessage::is_barrier as fn(&WireMessage<M>) -> bool);
+        let mut barrier_senders = IndexMap::new();
+
+        for wid in remote_wids.iter() {
+            let receiver = OperatorCommReceiver::new(*wid, ctx.operator_id, &*comm)
+                .await
+                .expect("Backend communication failed");
+            remote_recvs.insert(*wid, ReceiverWrapper::<M>::new(receiver));
+
+            let sender = OperatorCommSender::new(*wid, ctx.operator_id, &*comm)
+                .await
+                .expect("Backend communication failed");
+            barrier_senders.insert(*wid, sender);
+        }
+        let barrier_aligner = BarrierAligner::default();
+        let comm = Rc::clone(&comm);
+
+        Self {
+            remote_recvs,
+            barrier_senders,
+            barrier: barrier_aligner,
+            comm,
+        }
+    }
+
     /// Main processing method that handles both local and remote messages
     ///
     /// This method applies the distributor receiver logic by processing messages based on
@@ -76,29 +108,29 @@ where
         input: &mut Input<M>,
         ctx: &OperatorContext,
     ) -> Option<VersionedMessage<M>> {
-    let msg = match self.barrier.status() {
-        AlignStatus::NotWaiting => {
-            tokio::select! {
-                msg = input.recv() => {
-                    self.handle_local_message(msg, ctx).await
-                }
-                msg = self.remote_recvs.recv() => {
-                    self.handle_remote_message(msg, ctx).await
+        let msg = match self.barrier.status() {
+            AlignStatus::NotWaiting => {
+                tokio::select! {
+                    msg = input.recv() => {
+                        self.handle_local_message(msg, ctx).await
+                    }
+                    msg = self.remote_recvs.recv() => {
+                        self.handle_remote_message(msg, ctx).await
+                    }
                 }
             }
-        }
-        AlignStatus::WaitingForLocal => {
-            let msg = input.recv().await;
-            self.handle_local_message(msg, ctx).await
-        }
-        AlignStatus::WatingForRemote => {
-            let msg = self.remote_recvs.recv().await;
-            self.handle_remote_message(msg, ctx).await
-        }
-    };
+            AlignStatus::WaitingForLocal => {
+                let msg = input.recv().await;
+                self.handle_local_message(msg, ctx).await
+            }
+            AlignStatus::WatingForRemote => {
+                let msg = self.remote_recvs.recv().await;
+                self.handle_remote_message(msg, ctx).await
+            }
+        };
 
-    self.merge_frontiers(msg).await
-}
+        self.merge_frontiers(msg).await
+    }
 
     /// Handles epoch messages by merging timestamps from all remote receivers
     ///
@@ -151,8 +183,13 @@ where
         let (sender, wire_message) = match msg {
             AlignedValue::Unaligned(wire_message) => wire_message,
             // a barrier from remote
-            AlignedValue::Aligned(_) => return self.barrier.store_remote().map(Message::AbsBarrier)
-                .map(VersionedMessage::Other)
+            AlignedValue::Aligned(_) => {
+                return self
+                    .barrier
+                    .store_remote()
+                    .map(Message::AbsBarrier)
+                    .map(VersionedMessage::Other);
+            }
         };
 
         match wire_message {
@@ -167,7 +204,7 @@ where
             WireMessage::Acquire(wire_acquire) => Some(VersionedMessage::Other(Message::Acquire(
                 wire_acquire.into(),
             ))),
-            WireMessage::SnapshotBarrier => unreachable!("Barriers are aligned in AlignmentGroup")
+            WireMessage::SnapshotBarrier => unreachable!("Barriers are aligned in AlignmentGroup"),
         }
     }
 
@@ -244,6 +281,18 @@ struct ReceiverWrapper<M: Kvt> {
     receiver: OperatorCommReceiver<WireMessage<M>>,
     last_epoch: Option<M::Timestamp>,
 }
+impl<M> ReceiverWrapper<M>
+where
+    M: Kvt,
+{
+    pub(super) fn new(receiver: OperatorCommReceiver<WireMessage<M>>) -> Self {
+        Self {
+            receiver,
+            last_epoch: None,
+        }
+    }
+}
+
 impl<M> Receiver for ReceiverWrapper<M>
 where
     M: Kvt,
@@ -262,6 +311,7 @@ where
 ///
 /// The BarrierAligner ensures that barriers are only emitted when both local
 /// and remote barriers have been received.
+#[derive(Default)]
 struct BarrierAligner {
     /// local barrier if we have received it yet
     local_barrier: Option<Barrier>,

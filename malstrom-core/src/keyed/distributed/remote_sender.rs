@@ -4,12 +4,14 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::channels::operator_io::Output;
 use crate::channels::recv_trait::Receiver as _;
+use crate::keyed::distributed::routers::RouterOutput;
+use crate::keyed::distributed::targeted_message::{TargetedData, TargetedMessage};
 use crate::keyed::distributed::versioned_message::{VersionedData, VersionedMessage};
 use crate::keyed::distributed::wire_message::{WireAcquire, WireMessage};
 use crate::keyed::distributed::{Acquire, ConfigVersion};
 use crate::runtime::OperatorOperatorComm;
 use crate::runtime::communication::{OperatorCommSender, broadcast};
-use crate::stream::{Logic, OperatorContext};
+use crate::stream::{BuildContext, Logic, OperatorContext};
 use crate::types::distributable::Distributable;
 use crate::types::{DataMessage, Key, OperatorId, ReconfigComplete, RescaleMessage};
 use crate::{
@@ -31,8 +33,6 @@ where
 {
     /// Remote sender indexed by worker ID
     remote_senders: RemoteSenders<M>,
-    /// Operator ID of the receiver operator
-    receiver_operator_id: OperatorId,
     /// Communication backend for inter-operator communication
     comm: Rc<dyn OperatorOperatorComm>,
 }
@@ -44,18 +44,63 @@ where
     M::Value: Distributable,
     M::Timestamp: Distributable,
 {
+    pub(super) async fn new(ctx: &BuildContext) -> Self {
+        let comm = ctx.get_communication();
+        let mut remote_wids = ctx.get_worker_ids().to_owned();
+        remote_wids.swap_remove(&ctx.worker_id);
+        let mut remote_senders = IndexMap::new();
+
+        for wid in remote_wids.iter() {
+            let sender = OperatorCommSender::new(*wid, ctx.operator_id, &*comm)
+                .await
+                .expect("Communication Backend failed");
+            remote_senders.insert(*wid, sender);
+        }
+
+        Self {
+            remote_senders,
+            comm: Rc::clone(&comm),
+        }
+    }
+
+    pub(super) async fn send(
+        &mut self,
+        msg: TargetedMessage<M>,
+        output: &mut Output<M>,
+        ctx: &mut OperatorContext,
+    ) {
+        match msg {
+            TargetedMessage::Data(data) => self.handle_data(data, output, ctx).await,
+            TargetedMessage::Other(message) => match message {
+                Message::Data(data_message) => unreachable!(),
+                Message::Epoch(epoch) => self.handle_epoch(epoch, output).await,
+                Message::Rescale(rescale) => self.handle_rescale(rescale, output, ctx).await,
+                Message::ReconfigComplete(reconfig) => {
+                    self.handle_reconfig_complete(reconfig, output).await
+                }
+                msg => output.send(msg).await,
+            },
+        }
+    }
+
     async fn handle_data(
         &mut self,
-        target: WorkerId,
-        msg: VersionedData<M>,
+        msg: TargetedData<M>,
         output: &mut Output<M>,
-        ctx: OperatorContext,
+        ctx: &OperatorContext,
     ) {
+        let target = msg.target_id;
+
         if target == ctx.worker_id {
             let local_msg = Message::Data(msg.data_msg);
             output.send(local_msg).await
         } else {
-            let wire_msg = WireMessage::Data(msg);
+            let wire_msg = WireMessage::Data(VersionedData {
+                sender_id: ctx.worker_id,
+                config_version: msg.config_version,
+                data_msg: msg.data_msg,
+            });
+
             let client = self
                 .remote_senders
                 .get(&target)
@@ -84,12 +129,7 @@ where
         }
     }
 
-    async fn handle_epoch(
-        &mut self,
-        epoch: M::Timestamp,
-        output: &mut Output<M>,
-        ctx: OperatorContext,
-    ) {
+    async fn handle_epoch(&mut self, epoch: M::Timestamp, output: &mut Output<M>) {
         broadcast(
             self.remote_senders.values(),
             WireMessage::Epoch(epoch.clone()),
@@ -109,10 +149,9 @@ where
         let new_workers = all_workers.difference(&existing_workers);
 
         for wid in new_workers.into_iter() {
-            let sender =
-                OperatorCommSender::new(*wid, self.receiver_operator_id, self.comm.as_ref())
-                    .await
-                    .expect("Communication backend failure");
+            let sender = OperatorCommSender::new(*wid, ctx.operator_id, self.comm.as_ref())
+                .await
+                .expect("Communication backend failure");
             self.remote_senders.insert(*wid, sender);
         }
         output.send(Message::Rescale(rescale)).await

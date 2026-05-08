@@ -1,4 +1,4 @@
-mod distributor;
+pub(crate) mod distributor;
 
 mod acquire;
 pub use acquire::Acquire;
@@ -12,10 +12,10 @@ pub use collect::Collect;
 mod remote_receiver;
 mod remote_sender;
 
+mod routers;
 mod targeted_message;
 mod versioned_message;
 mod wire_message;
-mod routers;
 
 /// Version of the current cluster configuration.
 /// TODO: move to global crate scope

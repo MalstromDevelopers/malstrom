@@ -8,7 +8,9 @@ mod time;
 
 pub use data::{Data, MaybeData, NoData};
 pub use key::{Key, MaybeKey, NoKey};
-pub use message::{DataMessage, Kvt, Message, RescaleMessage, SuspendMarker, Barrier, ReconfigComplete};
+pub use message::{
+    Barrier, DataMessage, Kvt, Message, ReconfigComplete, RescaleMessage, SuspendMarker,
+};
 pub use operator_partitioner::{OperatorId, OperatorPartitioner};
 pub use sealed::sealed::Sealed;
 pub use time::{MaybeTime, NoTime, OnceTime, Timestamp};

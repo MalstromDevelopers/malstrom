@@ -4,14 +4,14 @@
 
 use futures::FutureExt;
 use indexmap::IndexSet;
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
+use serde::{Deserialize, Serialize, de::DeserializeOwned, ser::SerializeStruct};
 use std::{cell::RefCell, fmt::Debug, rc::Rc};
 use tokio::sync::mpsc;
 
 use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::SnapshotBarrier,
-    types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime},
+    types::{MaybeData, MaybeKey, MaybeTime, NoData, NoKey, NoTime, OperatorId},
 };
 
 use super::{Timestamp, WorkerId};
@@ -159,6 +159,21 @@ pub enum Barrier {
     Snapshot(SnapshotBarrier),
 }
 
+impl Barrier {
+
+    /// Persist the given state for the given operator.
+    pub fn persist<S: Serialize + DeserializeOwned>(
+        &mut self,
+        state: &S,
+        operator_id: &OperatorId,
+    ) {
+        match self {
+            Barrier::Suspend(snapshot_barrier) => snapshot_barrier.persist(state, operator_id),
+            Barrier::Snapshot(snapshot_barrier) => snapshot_barrier.persist(state, operator_id),
+        }
+    }
+}
+
 macro_rules! impl_from_variants {
     ($($variant:ident($variant_type:ty)),* $(,)?) => {
         $(
@@ -220,6 +235,7 @@ impl RescaleMessage {
     }
 }
 
+#[derive(Clone)]
 pub struct ReconfigComplete {
     /// Configuration version we have advanced to
     version: u64,
@@ -235,7 +251,6 @@ impl ReconfigComplete {
         self.version
     }
 }
-
 
 /// This marker will be sent by the cluster lifecycle controller
 /// when the worker is planning to shut down.

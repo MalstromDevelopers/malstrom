@@ -72,7 +72,7 @@ where
             Message::AbsBarrier(b) => output.send(Message::AbsBarrier(b)).await,
             Message::Rescale(x) => output.send(Message::Rescale(x)).await,
             Message::Epoch(x) => output.send(Message::Epoch(x)).await,
-            Message::ReconfigComplete(x) => output.send(Message::ReconfigComplete(x)).await
+            Message::ReconfigComplete(x) => output.send(Message::ReconfigComplete(x)).await,
         }
     }
 }

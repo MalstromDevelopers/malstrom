@@ -48,7 +48,6 @@ pub trait PersistenceClient: Send + 'static {
     fn persist(&mut self, state: &[u8], operator_id: &OperatorId);
 }
 
-
 /// A snapshotting barrier for use with the
 /// [ABS snapshotting algorithm](https://arxiv.org/abs/1506.08603)
 pub struct SnapshotBarrier {

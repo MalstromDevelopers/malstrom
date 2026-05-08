@@ -20,8 +20,7 @@ use crate::{
         StreamBuilder,
     },
     types::{
-        Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime,
-        RescaleMessage, SuspendMarker, distributable::Distributable,
+        Barrier, Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker, distributable::Distributable
     },
 };
 /// Implementation of a stateful sink
@@ -209,7 +208,7 @@ where
 
     async fn on_barrier(
         &mut self,
-        barrier: &mut SnapshotBarrier,
+        barrier: &mut Barrier,
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {

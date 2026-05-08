@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    keyed::distributed::{ConfigVersion, wire_message::WireMessage},
+    keyed::distributed::{ConfigVersion, routers::RouterOutput, wire_message::WireMessage},
     types::{DataMessage, Kvt, Message, WorkerId},
 };
 
@@ -27,6 +27,30 @@ impl<M: Kvt> TargetedMessage<M> {
                 data_msg: d,
             }),
             x => Self::Other(x),
+        }
+    }
+}
+
+impl<M> From<RouterOutput<M>> for TargetedMessage<M>
+where
+    M: Kvt,
+{
+    fn from(value: RouterOutput<M>) -> Self {
+        match value {
+            RouterOutput::DataMessage(targeted_data) => TargetedMessage::Data(targeted_data),
+            RouterOutput::Rescale(rescale_message) => {
+                TargetedMessage::Other(Message::Rescale(rescale_message))
+            }
+            RouterOutput::Complete(reconfig_complete) => {
+                TargetedMessage::Other(Message::ReconfigComplete(reconfig_complete))
+            }
+            RouterOutput::Collect(collect) => TargetedMessage::Other(Message::Collect(collect)),
+            RouterOutput::Acquire(wire_acquire) => {
+                TargetedMessage::Other(Message::Acquire(wire_acquire.into()))
+            }
+            RouterOutput::Interrogate(interrogate) => {
+                TargetedMessage::Other(Message::Interrogate(interrogate))
+            }
         }
     }
 }

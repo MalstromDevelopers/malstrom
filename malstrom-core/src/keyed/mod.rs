@@ -3,7 +3,8 @@ mod key_local;
 pub use key_local::KeyLocal;
 mod key_distribute;
 pub use key_distribute::KeyDistribute;
+pub(crate) use key_distribute::Distribute;
 mod worker_partitioners;
-pub use worker_partitioners::{WorkerPartitioner, rendezvous_select, index_select};
+pub use worker_partitioners::{WorkerPartitioner, index_select, rendezvous_select};
 
 pub(crate) mod distributed;

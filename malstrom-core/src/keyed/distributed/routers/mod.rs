@@ -57,8 +57,8 @@ where
     M::Key: Key + Distributable,
 {
     pub(super) fn spawn_new(ctx: &BuildContext, partition_func: WorkerPartitioner<M::Key>) -> Self {
-        let (input_tx, input_rx) = spsc::unbounded();
-        let (output_tx, output_rx) = spsc::unbounded();
+        let (input_tx, mut input_rx) = spsc::unbounded();
+        let (mut output_tx, output_rx) = spsc::unbounded();
 
         let normal_router = NormalRouter::new(
             ctx.config_version,
@@ -66,7 +66,7 @@ where
             partition_func,
             ctx.get_worker_ids().to_owned(),
         );
-        let router = RouterKind::Normal(normal_router);
+        let mut router = RouterKind::Normal(normal_router);
         let routing_task = ctx.operator_rt.spawn_local(async move {
             loop {
                 router = router.apply(&mut input_rx, &mut output_tx).await

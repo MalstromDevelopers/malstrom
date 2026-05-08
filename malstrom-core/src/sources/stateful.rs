@@ -6,16 +6,17 @@ use std::{hash::Hash, marker::PhantomData};
 use futures::{FutureExt, StreamExt, stream::FuturesUnordered};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use crate::keyed::Distribute as _;
 
+use crate::runtime::communication::OperatorCommReceiver;
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
-        distributed::{Acquire, Collect, Interrogate}, rendezvous_select,
+        distributed::{Acquire, Collect, Interrogate},
+        rendezvous_select,
     },
     operators::StreamSource,
-    runtime::{
-        communication::broadcast,
-    },
+    runtime::communication::broadcast,
     snapshot::SnapshotBarrier,
     stream::{
         BuildContext, InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator,
@@ -118,7 +119,7 @@ where
 
         builder
             .then(part_lister)
-            .distribute(&format!("{name}-distribute-partitions"), rendezvous_select)
+            .distribute(format!("{name}-distribute-partitions"), rendezvous_select)
             .then(Operator::built_by(
                 format!("{name}-partition"),
                 StatefulSourcePartitionOpBuilder {
@@ -233,7 +234,7 @@ struct StatefulSourcePartitionOp<
     partitions: IndexMap<SrcImpl::Part, SrcImpl::SourcePartition>,
     part_builder: SrcImpl,
     all_partitions: IndexMap<SrcImpl::Part, bool>, // true if partition is finished
-    comm_clients: IndexMap<WorkerId, BiCommunicationClient<PartitionFinished<SrcImpl::Part>>>,
+    comm_clients: IndexMap<WorkerId, OperatorCommReceiver<PartitionFinished<SrcImpl::Part>>>,
     // final marker, we keep it in an option to only send it once
     max_t: Option<Out::Timestamp>,
     _phantom: PhantomData<(SrcImpl::PartitionState, Out::Value)>,
@@ -401,9 +402,9 @@ where
                         output.send(Message::Interrogate(interrogate));
                     }
                     Message::Collect(mut collect) => {
-                        let key_state = self.partitions.swap_remove(&collect.key);
+                        let key_state = self.partitions.swap_remove(&collect.get_key());
                         if let Some(partition) = key_state {
-                            collect.add_state(ctx.operator_id, partition.collect());
+                            collect.add_state(ctx.operator_id, &partition.collect());
                         }
                         output.send(Message::Collect(collect));
                     }

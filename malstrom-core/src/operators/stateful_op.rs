@@ -12,7 +12,7 @@ use crate::{
         SafeLogic, SafeLogicWrapper, StreamBuilder,
     },
     types::{
-        Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp,
+        Barrier, Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp
     },
 };
 
@@ -196,7 +196,7 @@ where
 
     async fn on_barrier(
         &mut self,
-        barrier: &mut crate::snapshot::SnapshotBarrier,
+        barrier: &mut Barrier,
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
@@ -209,7 +209,7 @@ where
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
-        interrogate.add_keys(&(self.state.keys().map(|k| k.to_owned()).collect_vec()));
+        interrogate.add_keys(self.state.keys().map(|k| k.to_owned()));
     }
 
     async fn on_collect(
@@ -218,8 +218,8 @@ where
         output: &mut Output<(In::Key, T, In::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
-        if let Some(x) = self.state.swap_remove(&collect.key) {
-            collect.add_state(ctx.operator_id, x);
+        if let Some(x) = self.state.swap_remove(collect.get_key()) {
+            collect.add_state(ctx.operator_id, &x);
         }
     }
 
@@ -244,7 +244,7 @@ mod tests {
     use crate::{
         keyed::distributed::{Acquire, Collect, Interrogate},
         runtime::BiCommunicationClient,
-        snapshot::{SnapshotBarrier, PersistenceClient},
+        snapshot::{PersistenceClient, SnapshotBarrier},
         testing::{CapturingPersistenceBackend, OperatorTester},
         types::*,
     };
@@ -527,7 +527,9 @@ mod tests {
         tester.step();
 
         let backend = CapturingPersistenceBackend::default();
-        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(backend.clone()))));
+        tester.send_local(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            backend.clone(),
+        ))));
         tester.step();
 
         let state: IndexMap<bool, i32> = BiCommunicationClient::decode(&backend.load(&42).unwrap());

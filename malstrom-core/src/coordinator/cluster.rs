@@ -32,19 +32,19 @@ impl ClusterHandle {
     /// Create a serializable version of the state by cloning.
     /// The serializable version, once created, is completely decoupled from the [CoordinatorState]
     /// i.e. updates are not reflected
-    pub(crate) fn get_serializable(&self) -> SerializableClusterHandle {
-        let worker_states = self
-            .workers
-            .iter()
-            .map(|(id, (state, _))| (id, state))
-            .cloned()
-            .collect();
-        SerializableClusterHandle {
-            worker_states,
-            config_version: self.config_version,
-            snapshot_version: self.snapshot_version,
-        }
-    }
+    // pub(crate) fn get_serializable(&self) -> SerializableClusterHandle {
+    //     let worker_states = self
+    //         .workers
+    //         .iter()
+    //         .map(|(id, (state, _))| (id, state))
+    //         .cloned()
+    //         .collect();
+    //     SerializableClusterHandle {
+    //         worker_states,
+    //         config_version: self.config_version,
+    //         snapshot_version: self.snapshot_version,
+    //     }
+    // }
 
     /// Start execution graph build on all workers
     /// Completes when all workers have finished building
@@ -52,6 +52,7 @@ impl ClusterHandle {
         let build_info = BuildInformation {
             worker_set: self.workers.keys().map(|x| *x).collect(),
             resume_snapshot: self.snapshot_version,
+            config_version: self.config_version.unwrap_or_default()
         };
         let msg = StartBuild(build_info);
         let responses = self
@@ -96,7 +97,7 @@ impl ClusterHandle {
         &mut self,
         new_set: IndexSet<WorkerId>,
         comm: &C,
-    ) -> Result<(), C::Error>
+    ) -> Result<(), Box<dyn std::error::Error>>
     where
         C: WorkerCoordinatorComm,
     {
@@ -119,17 +120,8 @@ impl ClusterHandle {
         Ok(())
     }
 
-    pub async fn suspend(&self) -> () {
-        let msg = RuntimeMessage::Suspend;
-        let responses = self
-            .workers
-            .values()
-            .map(|(_, client)| client.send::<_, bool>(msg.clone()));
-        join_all(responses).await;
-    }
-
     /// Add, build and start a new worker
-    async fn add_worker<C>(&mut self, id: WorkerId, comm: &C) -> Result<(), C::Error>
+    async fn add_worker<C>(&mut self, id: WorkerId, comm: &C) -> Result<(), Box<dyn std::error::Error>>
     where
         C: WorkerCoordinatorComm,
     {
@@ -159,7 +151,7 @@ impl SerializableClusterHandle {
     }
 
     /// Load state from its serializable representation
-    pub(crate) async fn setup_communication<C>(self, comm: &C) -> Result<ClusterHandle, C::Error>
+    pub(crate) async fn setup_communication<C>(self, comm: &C) -> Result<ClusterHandle, Box<dyn std::error::Error>>
     where
         C: WorkerCoordinatorComm,
     {
@@ -175,6 +167,13 @@ impl SerializableClusterHandle {
             cluster.workers.insert(id, (state, client));
         }
         Ok(cluster)
+    }
+}
+
+impl From<&ClusterHandle> for SerializableClusterHandle {
+    fn from(value: &ClusterHandle) -> Self {
+        let worker_states = value.workers.iter().map(|(wid, x)| (*wid, x.0.clone())).collect();
+        Self { worker_states, config_version: value.config_version, snapshot_version: value.snapshot_version }
     }
 }
 
@@ -216,7 +215,7 @@ where
             persistence_client
                 .load(&0)
                 .map(deserialize_state)
-                .unwrap_or_default()
+                .unwrap_or_else(|| SerializableClusterHandle::new(default_scale))
         }
         None => SerializableClusterHandle::new(default_scale),
     }

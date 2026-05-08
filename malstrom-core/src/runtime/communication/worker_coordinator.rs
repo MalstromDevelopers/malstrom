@@ -87,8 +87,8 @@ impl WorkerClient {
     /// # Returns
     /// A `Result` containing the `WorkerClient` or an error from the backend.
     pub(crate) async fn new<Backend: WorkerCoordinatorComm>(
-        backend: Backend,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+        backend: &Backend,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let receiver = backend.worker_to_coordinator().await?;
         let receiver = Box::new(receiver);
         Ok(Self { receiver })

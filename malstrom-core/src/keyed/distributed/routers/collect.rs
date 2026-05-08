@@ -4,19 +4,32 @@ use indexmap::{IndexMap, IndexSet};
 use tokio::sync::oneshot;
 
 use crate::{
-    channels::{operator_io::{Input, Output}, recv_trait::Receiver, spsc},
+    channels::{
+        operator_io::{Input, Output},
+        recv_trait::Receiver,
+        spsc,
+    },
     keyed::{
         WorkerPartitioner,
         distributed::{
-            Collect, ConfigVersion, Interrogate, remote_receiver::DistributorReceiver, remote_sender::DistributorSender, routers::{InterrogateRouter, RouterInput, RouterKind, RouterOutput, upgrading::UpgradingRouter}, targeted_message::TargetedData, versioned_message::{VersionedData, VersionedMessage}, wire_message::WireAcquire
+            Collect, ConfigVersion, Interrogate,
+            remote_receiver::DistributorReceiver,
+            remote_sender::DistributorSender,
+            routers::{
+                InterrogateRouter, RouterInput, RouterKind, RouterOutput,
+                upgrading::UpgradingRouter,
+            },
+            targeted_message::TargetedData,
+            versioned_message::{VersionedData, VersionedMessage},
+            wire_message::WireAcquire,
         },
     },
     stream::{BuildContext, Logic, OperatorContext},
     types::{
-        DataMessage, Key, Kvt, OperatorId, ReconfigComplete, RescaleMessage, WorkerId, distributable::Distributable
+        DataMessage, Key, Kvt, OperatorId, ReconfigComplete, RescaleMessage, WorkerId,
+        distributable::Distributable,
     },
 };
-
 
 pub(super) struct CollectRouter<M: Kvt> {
     pub this_version: ConfigVersion,
@@ -41,7 +54,7 @@ struct CollectState<M: Kvt> {
     /// (Vec instead of VecDeque because we never pop)
     message_buffer: Vec<VersionedData<M>>,
     /// receiver to get states
-    rx: tokio::sync::mpsc::UnboundedReceiver<(OperatorId, Vec<u8>)>
+    rx: tokio::sync::mpsc::UnboundedReceiver<(OperatorId, Vec<u8>)>,
 }
 
 impl<M> CollectRouter<M>
@@ -62,23 +75,24 @@ where
         }
     }
 
-    pub(super) async fn apply(mut self,
+    pub(super) async fn apply(
+        mut self,
         input: &mut spsc::Receiver<RouterInput<M>>,
         output: &mut spsc::Sender<RouterOutput<M>>,
     ) -> RouterKind<M> {
         // this could probably be done more elegantly somehow, but meh
-        let current_collect =  match self.current_collect.as_mut() {
+        let current_collect = match self.current_collect.as_mut() {
             Some(x) => x,
             // there is no collect, try to create the next one, possibly ending the collection
             // phase if there are no keys left
-            None => {match self.whitelist.pop() {
+            None => match self.whitelist.pop() {
                 Some(next_key) => {
                     let (collect, rx) = Collect::new(next_key.clone());
-                    let collect_state = CollectState{
+                    let collect_state = CollectState {
                         key: next_key,
                         states: IndexMap::new(),
                         message_buffer: Vec::new(),
-                        rx
+                        rx,
                     };
                     output.send(RouterOutput::Collect(collect)).await;
                     self.current_collect.insert(collect_state)
@@ -88,10 +102,10 @@ where
                     output.send(RouterOutput::Rescale(rescale_msg)).await;
                     return RouterKind::Upgrading(router);
                 }
-            }}
+            },
         };
 
-        tokio::select!{
+        tokio::select! {
             // receive input msg
             msg = input.recv() => {
                 let msg = match msg {

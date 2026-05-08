@@ -57,11 +57,6 @@ where
                         self.handle_reconfigure(new_set, new_version).await;
                         responder.respond(true).await;
                     }
-                    RuntimeMessage::Suspend => {
-                        self.handle_suspend().await;
-                        responder.respond(true).await;
-                        return;
-                    }
                     RuntimeMessage::ExecutionComplete => {
                         // following task already dropped
                         let finished = self.sys_msg_sender.is_closed();
@@ -96,13 +91,6 @@ where
             new_version,
             callback: tx,
         };
-        self.sys_msg_sender.send(msg).await;
-        let _ = rx.recv().await;
-    }
-
-    async fn handle_suspend(&self) {
-        let (tx, mut rx) = mpsc::channel(1);
-        let msg = SysMessage::Suspend { callback: tx };
         self.sys_msg_sender.send(msg).await;
         let _ = rx.recv().await;
     }
