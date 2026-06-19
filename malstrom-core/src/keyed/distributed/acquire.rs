@@ -4,7 +4,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    keyed::distributed::wire_message::WireAcquire, snapshot::deserialize_state, types::{OperatorId, distributable::Distributable}
+    keyed::distributed::wire_message::WireAcquire,
+    snapshot::deserialize_state,
+    types::{OperatorId, distributable::Distributable},
 };
 
 /// Acquire encapsulates state which has moved to the current worker from another worker due to
@@ -23,9 +25,8 @@ where
         let mut inner = self.inner.borrow_mut();
         match inner.1.swap_remove(operator_id) {
             Some(state) => Some((inner.0.clone(), deserialize_state(state))),
-            None => None
+            None => None,
         }
-
     }
 }
 

@@ -82,7 +82,7 @@ pub(crate) struct WorkerBuildContext {
     communication: Rc<dyn OperatorOperatorComm>,
     worker_ids: IndexSet<WorkerId>,
     config_version: u64,
-    operator_rt: Rc<LocalRuntime>
+    operator_rt: Rc<LocalRuntime>,
 }
 
 impl WorkerBuildContext {
@@ -100,7 +100,7 @@ impl WorkerBuildContext {
             communication,
             worker_ids,
             config_version,
-            operator_rt
+            operator_rt,
         }
     }
 }

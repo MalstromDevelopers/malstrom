@@ -259,7 +259,7 @@ where
         let new_workers = all_workers.difference(&existing_workers);
         for wid in new_workers.into_iter() {
             let receiver =
-                OperatorCommReceiver::new(ctx.worker_id, ctx.operator_id, self.comm.as_ref())
+                OperatorCommReceiver::new(*wid, ctx.operator_id, self.comm.as_ref())
                     .await
                     .expect("Communication backend failure");
             let receiver = ReceiverWrapper {

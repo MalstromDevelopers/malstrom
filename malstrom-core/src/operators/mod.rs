@@ -14,6 +14,7 @@ mod stateful_op;
 mod time;
 mod ttl_map;
 mod union;
+mod com_utility;
 
 // Public Api operators reexported for convenience
 pub use crate::keyed::KeyDistribute;

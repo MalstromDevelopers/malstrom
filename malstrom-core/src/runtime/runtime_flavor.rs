@@ -8,7 +8,9 @@ pub trait RuntimeFlavor {
 
     /// Establish communication between multiple JetStream workers,
     /// possibly on different machines
-    fn communication(&mut self) -> Result<Self::Communication, Box<dyn std::error::Error + Send + Sync>>;
+    fn communication(
+        &mut self,
+    ) -> Result<Self::Communication, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Return the ID of the worker where this method was called
     fn this_worker_id(&self) -> u64;

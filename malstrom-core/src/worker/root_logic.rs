@@ -26,7 +26,9 @@ impl<P: PersistenceClient> Logic<(), ()> for RootLogic<P> {
             match sys_msg {
                 SysMessage::Snapshot { client, callback } => {
                     let barrier = SnapshotBarrier::new(Box::new(client), callback);
-                    output.send(Message::AbsBarrier(Barrier::Snapshot(barrier))).await;
+                    output
+                        .send(Message::AbsBarrier(Barrier::Snapshot(barrier)))
+                        .await;
                 }
                 SysMessage::Reconfigure {
                     new_set,

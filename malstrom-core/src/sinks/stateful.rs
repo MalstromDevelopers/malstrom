@@ -20,7 +20,8 @@ use crate::{
         StreamBuilder,
     },
     types::{
-        Barrier, Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime, RescaleMessage, SuspendMarker, distributable::Distributable
+        Barrier, Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime,
+        RescaleMessage, SuspendMarker, distributable::Distributable,
     },
 };
 /// Implementation of a stateful sink
@@ -136,8 +137,8 @@ where
             Message::Rescale(rescale_message) => {
                 output.send(Message::Rescale(rescale_message)).await
             }
-            Message::SuspendMarker(suspend_marker) => {
-                output.send(Message::SuspendMarker(suspend_marker)).await
+            Message::ReconfigComplete(reconfig) => {
+                output.send(Message::ReconfigComplete(reconfig)).await
             }
             // these don't matter since we have a key_distribute next anyway
             Message::Interrogate(_) => (),
@@ -226,7 +227,7 @@ where
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         _ctx: &mut OperatorContext,
     ) {
-        let keys = self.partitions.keys();
+        let keys = self.partitions.keys().cloned();
         interrogate.add_keys(keys);
     }
 
@@ -236,9 +237,9 @@ where
         _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
-        let key_state = self.partitions.swap_remove(collect.get_key());
+        let key_state = self.partitions.swap_remove(&collect.get_key().clone());
         if let Some(partition) = key_state {
-            collect.add_state(ctx.operator_id, partition.collect());
+            collect.add_state(ctx.operator_id, &partition.collect());
         }
     }
 

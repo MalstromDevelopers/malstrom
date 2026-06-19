@@ -32,10 +32,7 @@ where
     N: Kvt,
     B: LogicBuilder<M, N>,
 {
-    pub(crate) async fn start(
-        mut self,
-        build_ctx: impl Future<Output = WorkerBuildContext>
-    ) {
+    pub(crate) async fn start(mut self, build_ctx: impl Future<Output = WorkerBuildContext>) {
         let name = self.get_name().to_string();
 
         let mut build_ctx = build_ctx

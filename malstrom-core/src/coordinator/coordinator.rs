@@ -86,7 +86,7 @@ pub enum CoordinatorExecutionError {
     #[error("Error joining coordinator loop task")]
     CoordinatorLoopJoin(#[source] tokio::task::JoinError),
     #[error("Error in coordinator")]
-    CoordinatorTask(#[from] CoordinatorError)
+    CoordinatorTask(#[from] CoordinatorError),
 }
 
 /// Create a new coordinator loop. This creates a coordinator and starts it.
@@ -104,7 +104,7 @@ where
     let mut state = state
         .setup_communication(&communication_backend)
         .await
-        .map_err(|_|CoordinatorError::Communication)?;
+        .map_err(|_| CoordinatorError::Communication)?;
     // start job on all workers
     state.start_build().await;
     state.start_execution().await;
@@ -141,7 +141,8 @@ where
                     let next_version = state.snapshot_version.map(|x| x + 1).unwrap_or(0);
                     state.take_snapshot(next_version).await;
                     state.snapshot_version = Some(next_version);
-                    let serialized_state = serialize_state(&SerializableClusterHandle::from(&state));
+                    let serialized_state =
+                        serialize_state(&SerializableClusterHandle::from(&state));
                     persistence_backend
                         .for_version(COORDINATOR_ID, &next_version)
                         .persist(&serialized_state, &0);
@@ -166,8 +167,7 @@ where
 }
 
 #[derive(Debug, Error)]
-pub enum CoordinatorError
-{
+pub enum CoordinatorError {
     #[error("Error setting up communication to workers")]
     Communication,
     #[error(transparent)]

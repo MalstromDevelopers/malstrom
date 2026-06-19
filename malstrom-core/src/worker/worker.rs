@@ -77,7 +77,7 @@ where
             Rc::clone(&self.communication_backend) as Rc<dyn OperatorOperatorComm>,
             buildinfo.worker_set.clone(),
             buildinfo.config_version,
-            Rc::clone(&operator_rt)
+            Rc::clone(&operator_rt),
         );
         let _ = build_ctx_sender.send(build_ctx);
         self.comm_rt.block_on(build_responder.respond(()));

@@ -160,7 +160,6 @@ pub enum Barrier {
 }
 
 impl Barrier {
-
     /// Persist the given state for the given operator.
     pub fn persist<S: Serialize + DeserializeOwned>(
         &mut self,

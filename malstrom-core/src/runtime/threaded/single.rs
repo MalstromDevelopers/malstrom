@@ -1,7 +1,16 @@
 use std::time::Duration;
 
 use crate::{
-    coordinator::{Coordinator, CoordinatorExecutionError}, runtime::{OperatorOperatorComm, RuntimeFlavor, communication::{ReqResReceiver, ReqResSender, StreamReceiver, StreamSender, WorkerCoordinatorComm}}, snapshot::PersistenceBackend, types::{OperatorId, WorkerId}, worker::{StreamProvider, WorkerBuilder, WorkerExecutionError}
+    coordinator::{Coordinator, CoordinatorExecutionError},
+    runtime::{
+        OperatorOperatorComm, RuntimeFlavor,
+        communication::{
+            ReqResReceiver, ReqResSender, StreamReceiver, StreamSender, WorkerCoordinatorComm,
+        },
+    },
+    snapshot::PersistenceBackend,
+    types::{OperatorId, WorkerId},
+    worker::{StreamProvider, WorkerBuilder, WorkerExecutionError},
 };
 
 use async_trait::async_trait;
@@ -84,25 +93,30 @@ impl OperatorOperatorComm for InterThreadCommunication {
         &self,
         to_worker: WorkerId,
         channel_id: OperatorId,
-    ) -> Result<Box<dyn StreamSender>, Box<dyn std::error::Error>> {todo!()}
+    ) -> Result<Box<dyn StreamSender>, Box<dyn std::error::Error>> {
+        todo!()
+    }
 
     async fn new_receiver(
         &self,
         from_worker: WorkerId,
         channel_id: OperatorId,
-    ) -> Result<Box<dyn StreamReceiver>, Box<dyn std::error::Error>> {todo!()}
-
+    ) -> Result<Box<dyn StreamReceiver>, Box<dyn std::error::Error>> {
+        todo!()
+    }
 }
 
 impl WorkerCoordinatorComm for InterThreadCommunication {
-
     async fn worker_to_coordinator(
         &self,
-    ) -> Result<impl ReqResReceiver, Box<dyn std::error::Error>>{todo!()}
-
+    ) -> Result<impl ReqResReceiver, Box<dyn std::error::Error>> {
+        todo!()
+    }
 
     async fn coordinator_to_worker(
         &self,
         to_worker: WorkerId,
-    ) -> Result<impl ReqResSender, Box<dyn std::error::Error>>{todo!()}
+    ) -> Result<impl ReqResSender, Box<dyn std::error::Error>> {
+        todo!()
+    }
 }

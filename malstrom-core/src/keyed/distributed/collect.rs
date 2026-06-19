@@ -2,7 +2,10 @@ use indexmap::IndexMap;
 use std::hash::Hash;
 use tokio::sync::oneshot;
 
-use crate::{snapshot::serialize_state, types::{OperatorId, distributable::Distributable}};
+use crate::{
+    snapshot::serialize_state,
+    types::{OperatorId, distributable::Distributable},
+};
 
 /// The Collect messages takes state from operators so it can be sent to another worker
 #[derive(Clone)]
@@ -37,7 +40,9 @@ where
     /// The correct key can be obtained from [Collect::get_key]
     pub fn add_state<S: Distributable>(&self, operator_id: OperatorId, state: &S) {
         let serialized = serialize_state(state);
-        self.backchannel.send((operator_id, serialized)).expect("Expected Collect to be alive")
+        self.backchannel
+            .send((operator_id, serialized))
+            .expect("Expected Collect to be alive")
     }
 
     pub fn get_key(&self) -> &K {

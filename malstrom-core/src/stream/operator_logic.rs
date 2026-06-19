@@ -8,7 +8,10 @@ use crate::{
     keyed::distributed::{Acquire, Collect, Interrogate},
     snapshot::SnapshotBarrier,
     stream::{OperatorContext, WorkerBuildContext},
-    types::{Barrier, Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, ReconfigComplete, RescaleMessage, SuspendMarker},
+    types::{
+        Barrier, Data, DataMessage, Kvt, MaybeKey, MaybeTime, Message, ReconfigComplete,
+        RescaleMessage, SuspendMarker,
+    },
 };
 
 use super::BuildContext;
@@ -173,7 +176,6 @@ pub trait SafeLogic<M: Kvt, N: Kvt<Key = M::Key>>: Sized + 'static {
     ) {
     }
 
-
     /// Turn this type into a schedulable function which can be scheduled by the Malstrom worker.
     fn into_logic(self) -> SafeLogicWrapper<Self> {
         SafeLogicWrapper {
@@ -238,8 +240,12 @@ where
                 output.send(Message::Acquire(acquire)).await
             }
             Message::ReconfigComplete(reconfig_complete) => {
-                self.implementation.on_reconfig_complete(&reconfig_complete, output, ctx).await;
-                output.send(Message::ReconfigComplete(reconfig_complete)).await
+                self.implementation
+                    .on_reconfig_complete(&reconfig_complete, output, ctx)
+                    .await;
+                output
+                    .send(Message::ReconfigComplete(reconfig_complete))
+                    .await
             }
         };
     }

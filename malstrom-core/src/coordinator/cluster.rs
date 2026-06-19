@@ -52,7 +52,7 @@ impl ClusterHandle {
         let build_info = BuildInformation {
             worker_set: self.workers.keys().map(|x| *x).collect(),
             resume_snapshot: self.snapshot_version,
-            config_version: self.config_version.unwrap_or_default()
+            config_version: self.config_version.unwrap_or_default(),
         };
         let msg = StartBuild(build_info);
         let responses = self
@@ -121,7 +121,11 @@ impl ClusterHandle {
     }
 
     /// Add, build and start a new worker
-    async fn add_worker<C>(&mut self, id: WorkerId, comm: &C) -> Result<(), Box<dyn std::error::Error>>
+    async fn add_worker<C>(
+        &mut self,
+        id: WorkerId,
+        comm: &C,
+    ) -> Result<(), Box<dyn std::error::Error>>
     where
         C: WorkerCoordinatorComm,
     {
@@ -151,7 +155,10 @@ impl SerializableClusterHandle {
     }
 
     /// Load state from its serializable representation
-    pub(crate) async fn setup_communication<C>(self, comm: &C) -> Result<ClusterHandle, Box<dyn std::error::Error>>
+    pub(crate) async fn setup_communication<C>(
+        self,
+        comm: &C,
+    ) -> Result<ClusterHandle, Box<dyn std::error::Error>>
     where
         C: WorkerCoordinatorComm,
     {
@@ -172,8 +179,16 @@ impl SerializableClusterHandle {
 
 impl From<&ClusterHandle> for SerializableClusterHandle {
     fn from(value: &ClusterHandle) -> Self {
-        let worker_states = value.workers.iter().map(|(wid, x)| (*wid, x.0.clone())).collect();
-        Self { worker_states, config_version: value.config_version, snapshot_version: value.snapshot_version }
+        let worker_states = value
+            .workers
+            .iter()
+            .map(|(wid, x)| (*wid, x.0.clone()))
+            .collect();
+        Self {
+            worker_states,
+            config_version: value.config_version,
+            snapshot_version: value.snapshot_version,
+        }
     }
 }
 

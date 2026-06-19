@@ -60,13 +60,11 @@ where
             .expect("Lock poisened");
         inner.add_operator(self.root_operator);
 
-        let worker = inner.operator_rt.block_on(
-           Worker::new(
+        let worker = inner.operator_rt.block_on(Worker::new(
             self.persistence,
             self.flavor.communication()?,
             self.flavor.this_worker_id(),
-        ) 
-        )?;
+        ))?;
         worker.execute(
             self.sys_msg_sender,
             inner.operator_rt,

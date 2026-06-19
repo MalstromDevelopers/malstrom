@@ -12,7 +12,8 @@ use crate::{
         SafeLogic, SafeLogicWrapper, StreamBuilder,
     },
     types::{
-        Barrier, Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp
+        Barrier, Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed,
+        Timestamp,
     },
 };
 

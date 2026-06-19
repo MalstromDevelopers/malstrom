@@ -13,7 +13,7 @@ pub(crate) struct BuildInformation {
     /// or none if starting fresh
     pub(crate) resume_snapshot: Option<u64>,
     /// CLuster config version to resmue
-    pub(crate) config_version: u64
+    pub(crate) config_version: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

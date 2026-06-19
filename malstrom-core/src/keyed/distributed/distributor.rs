@@ -87,7 +87,10 @@ pub(crate) struct DistributorBuilder<M: Kvt> {
     partition_func: WorkerPartitioner<M::Key>,
 }
 
-impl<M> DistributorBuilder<M> where M: Kvt {
+impl<M> DistributorBuilder<M>
+where
+    M: Kvt,
+{
     pub(crate) fn new(partition_func: WorkerPartitioner<M::Key>) -> Self {
         Self { partition_func }
     }
