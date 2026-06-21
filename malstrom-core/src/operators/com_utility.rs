@@ -41,7 +41,7 @@ where
     }
 }
 
-struct CommUtility<T> {
+pub struct CommUtility<T> {
     clients: HashMap<WorkerId, SenderReceiver<T>>,
     /// Communication backend for inter-operator communication
     comm: Rc<dyn OperatorOperatorComm>,

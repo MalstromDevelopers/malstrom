@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use futures::channel::oneshot::Cancellation;
 
 use crate::{
-    channels::operator_io::{Input, Output}, keyed::{Distribute as _, rendezvous_select}, operators::StreamSource, stream::{InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator, OperatorContext, StreamBuilder}, types::{
+    channels::operator_io::{Input, Output}, keyed::{Distribute as _, rendezvous_select}, operators::{CommUtility, StreamSource}, stream::{InitialStreamBuilder, Logic, LogicBuilder, Malstrom as _, Operator, OperatorContext, StreamBuilder}, types::{
         Data, DataMessage, Key, Kvt, Message, NoData, Timestamp, WorkerId, distributable::Distributable
     }
 };
@@ -106,6 +106,15 @@ struct PartitionsFinished;
 struct PartLister<Out: Kvt, S> {
     parts: Vec<Out::Key>,
     source_impl: S,
+    /// Communication to other Workers
+    comm: CommUtility<WorkerId>
+}
+
+enum PartListerCom<Part> {
+    /// Inform main PartLister that a partition has been finished
+    PartFinished(Part),
+    /// Inform the other workers, that all Partitions have been finished
+    AllPartsFinished
 }
 
 impl<Out, S> PartLister<Out, S> where Out: Kvt {

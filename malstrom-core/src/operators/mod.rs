@@ -37,3 +37,4 @@ pub use union::Union;
 
 // These are only to be used internally in malstrom
 pub(crate) mod stateless_op;
+pub use com_utility::CommUtility;
