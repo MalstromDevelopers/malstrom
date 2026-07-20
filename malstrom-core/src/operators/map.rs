@@ -1,11 +1,11 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
+use crate::operators::StatelessLogic;
 use crate::stream::StreamBuilder;
-
-use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Apply a function to every message in a stream
-pub trait Map<K, V, T, VO>: super::sealed::Sealed {
+pub trait Map<In: Kvt, T: Data, Mapper>: Sealed {
     /// Map transforms every value in a datastream into a different value
     /// by applying a given function or closure.
     ///
@@ -26,7 +26,7 @@ pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     ///     .build(move |provider: &mut dyn StreamProvider| {
     ///         provider.new_stream()
     ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
-    ///         .map("map", |x| x * 2)
+    ///         .map("map", async |x| x * 2)
     ///         .sink("sink", StatelessSink::new(sink_clone));
     ///     })
     ///     .execute()
@@ -36,42 +36,60 @@ pub trait Map<K, V, T, VO>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn map(self, name: &str, mapper: impl (FnMut(V) -> VO) + 'static) -> StreamBuilder<K, VO, T>;
+    fn map(
+        self,
+        name: impl Into<String>,
+        mapper: Mapper,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<K, V, T, VO> Map<K, V, T, VO> for StreamBuilder<K, V, T>
+impl<In, T, Mapper, Fut> Map<In, T, Mapper> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    V: Data,
-    VO: Data,
-    T: Timestamp,
+    In: Kvt,
+    T: Data,
+    Mapper: (FnMut(In::Value) -> Fut) + 'static,
+    Fut: Future<Output = T>,
 {
     fn map(
         self,
-        name: &str,
-        mut mapper: impl (FnMut(V) -> VO) + 'static,
-    ) -> StreamBuilder<K, VO, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, V, T>, out: &mut Output<K, VO, T>| {
-                out.send(Message::Data(DataMessage::new(
-                    item.key,
-                    mapper(item.value),
-                    item.timestamp,
-                )));
-            },
-        )
+        name: impl Into<String>,
+        mapper: Mapper,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
+        self.stateless_op(name, MapOp { mapper })
     }
 }
+
+struct MapOp<F> {
+    mapper: F,
+}
+
+impl<In, T, F, Fut> StatelessLogic<In, T> for MapOp<F>
+where
+    In: Kvt,
+    T: Data,
+    F: (FnMut(In::Value) -> Fut) + 'static,
+    Fut: Future<Output = T>,
+{
+    async fn on_data(
+        &mut self,
+        mut msg: DataMessage<In>,
+        output: &mut Output<(In::Key, T, In::Timestamp)>,
+    ) {
+        let new_value = (self.mapper)(msg.value).await;
+        let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
+        output.send(Message::Data(out_msg)).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
     use crate::{
-        operators::{map::Map, source::Source, Sink},
+        operators::{Sink, map::Map, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]
@@ -87,7 +105,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(input)),
                 )
-                .map("get-len", |x| x.len())
+                .map("get-len", async |x| x.len())
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();

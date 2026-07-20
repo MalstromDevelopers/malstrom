@@ -2,9 +2,9 @@
 use malstrom::keyed::partitioners::rendezvous_select;
 use malstrom::operators::*;
 use malstrom::sinks::{StatelessSink, StdOutSink};
+use malstrom::snapshot::slatedb::object_store::{local::LocalFileSystem, path::Path};
 use malstrom::sources::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
 use malstrom::{runtime::SingleThreadRuntime, snapshot::SlateDbBackend, worker::StreamProvider};
-use malstrom::snapshot::slatedb::object_store::{local::LocalFileSystem, path::Path};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};

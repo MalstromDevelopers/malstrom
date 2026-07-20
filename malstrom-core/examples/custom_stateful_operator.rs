@@ -6,24 +6,23 @@ use malstrom::runtime::SingleThreadRuntime;
 use malstrom::sinks::{StatelessSink, StdOutSink};
 use malstrom::snapshot::NoPersistence;
 use malstrom::sources::{SingleIteratorSource, StatelessSource};
-use malstrom::types::{Data, DataMessage, Key, Message, Timestamp};
+use malstrom::types::{Data, DataMessage, Key, Kvt, Message, Timestamp};
 use malstrom::worker::StreamProvider;
 
 // #region custom_impl
 struct CustomBatching(usize);
 // #region impl_head
-impl<K, V, T> StatefulLogic<K, V, T, Vec<V>, Vec<V>> for CustomBatching
+impl<Msg> StatefulLogic<Msg, Vec<Msg::Value>, Vec<Msg::Value>> for CustomBatching
 where
-    K: Key,
-    T: Timestamp,
-    V: Data, // #endregion impl_head
+    Msg: Kvt,
+    Msg::Timestamp: Timestamp,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
-        msg: DataMessage<K, V, T>,
-        mut key_state: Vec<V>,
-        output: &mut Output<K, Vec<V>, T>,
-    ) -> Option<Vec<V>> {
+        msg: DataMessage<Msg>,
+        mut key_state: Vec<Msg::Value>,
+        output: &mut Output<(Msg::Key, Vec<Msg::Value>, Msg::Timestamp)>,
+    ) -> Option<Vec<Msg::Value>> {
         key_state.push(msg.value);
         if key_state.len() == self.0 {
             output.send(Message::Data(DataMessage::new(
@@ -39,16 +38,16 @@ where
     // #endregion custom_impl
 
     // #region on_epoch
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
-        epoch: &T,
-        state: &mut IndexMap<K, Vec<V>>,
-        output: &mut Output<K, Vec<V>, T>,
+        epoch: &Msg::Timestamp,
+        state: &mut IndexMap<Msg::Key, Vec<Msg::Value>>,
+        output: &mut Output<(Msg::Key, Vec<Msg::Value>, Msg::Timestamp)>,
     ) {
-        if *epoch == T::MAX {
+        if *epoch == Msg::Timestamp::MAX {
             // emit all states
             for (k, v) in state.drain(..) {
-                output.send(Message::Data(DataMessage::new(k, v, T::MAX)));
+                output.send(Message::Data(DataMessage::new(k, v, Msg::Timestamp::MAX)));
             }
         }
     }
@@ -72,6 +71,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             "iter-source",
             StatelessSource::new(SingleIteratorSource::new(data)),
         )
+        .key_local("key-one", |_| ()) // only keyed streams can use state
         .stateful_op("batches", CustomBatching(5))
         .sink("stdout", StatelessSink::new(StdOutSink));
 }

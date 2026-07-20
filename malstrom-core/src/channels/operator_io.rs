@@ -2,44 +2,60 @@
 //! **on the same worker** communicate with each other.
 //! Essentially these are the edges in the stream graph.
 use super::spsc;
-use crate::types::{MaybeTime, Message, OperatorPartitioner};
+use crate::{
+    channels::{
+        alignment::{AlignedValue, AlignmentGroup},
+        recv_trait::Receiver,
+        signal::{Signal, SignalHandle},
+    },
+    snapshot::SnapshotBarrier,
+    types::{
+        Barrier, Kvt, MaybeTime, Message, OperatorId, OperatorPartitioner, SuspendMarker, Timestamp,
+    },
+};
+use futures::{FutureExt, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Itertools;
-use std::rc::Rc;
+use std::{rc::Rc, usize};
+use tokio::sync::{oneshot, watch};
 
 /// Operator Output
-pub struct Output<K, V, T> {
+pub struct Output<M: Kvt> {
     // Each sender in this Vec is essentially one outgoing
     // edge from the operator
-    senders: Vec<spsc::Sender<Message<K, V, T>>>,
-    #[allow(clippy::type_complexity)] // it's not thaaat complex
-    partitioner: Rc<dyn OperatorPartitioner<K, V, T>>,
-    frontier: Option<T>,
-    suspended: bool,
+    senders: Vec<spsc::Sender<Message<M>>>,
+    partitioner: Box<dyn OperatorPartitioner<M>>,
+    frontier: Option<<M as Kvt>::Timestamp>,
+    /// signal will be sent here if the Output gets closed,
+    /// either because it has seen the MAX timestamp or because
+    /// it was suspended
+    closed_signal: watch::Sender<bool>,
 }
 
-impl<K, V, T> Output<K, V, T>
-where
-    K: Clone,
-    V: Clone,
-    T: Clone + MaybeTime,
-{
+impl<M: Kvt> Output<M> {
     /// Create a new Sender with **no** associated Receiver
     /// Link a receiver with [link].
-    pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<K, V, T>) -> Self {
-        Self {
+    pub(crate) fn new_unlinked(partitioner: impl OperatorPartitioner<M>) -> Self {
+        /// Allow NoTime type to indicate a final output
+        /// even if send is never called on this output
+        let finalized_signal = Signal::new(M::Timestamp::CHECK_FINISHED(&None));
+        let this = Self {
             senders: Vec::new(),
-            partitioner: Rc::new(partitioner),
+            partitioner: Box::new(partitioner),
             frontier: None,
-            suspended: false,
-        }
+            closed_signal: watch::Sender::new(false),
+        };
+        this
     }
 
     /// Send a value into this channel.
     /// Data messages are distributed as per the partioning function.
     ///
     /// System messages are always broadcasted.
-    pub fn send(&mut self, msg: Message<K, V, T>) {
-        debug_assert!(!self.suspended);
+    pub async fn send(&mut self, msg: Message<M>)
+    where
+        M: Clone,
+    {
+        debug_assert!(!*self.closed_signal.borrow());
         if let Message::Epoch(e) = &msg {
             if self.frontier.as_ref().is_some_and(|x| e > x) || self.frontier.is_none() {
                 self.frontier = Some(e.clone());
@@ -58,13 +74,13 @@ where
                         // the sum of all `true` vals
                         #[allow(clippy::unwrap_used)]
                         let msg = messages.next().unwrap();
-                        sender.send(msg);
+                        sender.send(msg).await;
                     }
                 }
             }
             x => {
-                if matches!(x, Message::SuspendMarker(_)) {
-                    self.suspended = true
+                if matches!(x, Message::AbsBarrier(Barrier::Suspend(_))) {
+                    self.closed_signal.send(true);
                 }
                 // repeat_n will clone for every iteration except the last
                 // this gives us a small optimization on the common "1 receiver" case :)
@@ -73,169 +89,156 @@ where
                     .iter_mut()
                     .zip(itertools::repeat_n(x, recipient_len));
                 for (sender, elem) in messages {
-                    sender.send(elem);
+                    sender.send(elem).await;
                 }
             }
+        };
+        if M::Timestamp::CHECK_FINISHED(&self.frontier) {
+            self.closed_signal.send(true);
         };
     }
     /// Get the frontier on this Sender, i.e the timestamp of the largest
     /// Epoch sent with this sender or `None` if no Epoch has been sent with
     /// this sender yet
     #[inline]
-    pub fn get_frontier(&self) -> &Option<T> {
+    pub fn get_frontier(&self) -> &Option<<M as Kvt>::Timestamp> {
         &self.frontier
     }
 
-    /// Check if a [Message::SuspendMarker] has been sent into this output
-    #[inline]
-    pub(crate) fn is_suspended(&self) -> bool {
-        self.suspended
+    pub(crate) fn get_closed_signal(&self) -> ClosedSignal {
+        let sub = self.closed_signal.subscribe();
+        ClosedSignal(sub)
+    }
+}
+
+struct ClosedSignal(watch::Receiver<bool>);
+
+impl ClosedSignal {
+    pub(crate) async fn wait_for(&mut self) -> impl Future<Output = ()> {
+        // can ignore result because Err just means Sender was dropped
+        async {
+            let _ = self.0.wait_for(|x| *x).await;
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct RootOutput {
+    senders: Vec<spsc::Sender<Message<()>>>,
+}
+
+impl RootOutput {
+    // send a system message, this method is not async to allow sending
+    // from a different or no runtime
+    pub(crate) fn send_system(&mut self, msg: Message<()>) {
+        for s in self.senders.iter() {
+            s.force_send(msg.clone())
+        }
     }
 }
 
 /// State of the upstream sender providing us messages
-struct UpstreamState<K, V, T> {
+#[derive(Default)]
+struct UpstreamState<M: Kvt> {
     /// Most recent epoch the sender sent
-    epoch: Option<T>,
-    /// Receiver linked to Sender
-    receiver: spsc::Receiver<Message<K, V, T>>,
+    epoch: Option<M::Timestamp>,
+    /// Barrier currently waiting for alignment
+    barred: bool,
+    /// Susepend currently waiting for alignment
+    suspended: bool,
 }
-impl<K, V, T> UpstreamState<K, V, T> {
-    fn new(receiver: spsc::Receiver<Message<K, V, T>>) -> Self {
+impl<M: Kvt> UpstreamState<M> {
+    fn new() -> Self {
         Self {
             epoch: None,
-            receiver,
+            barred: false,
+            suspended: false,
         }
     }
+}
+
+/// Outer group for Barriers, inner group for SuspendMarkers
+type BarrierAlign<M> =
+    AlignmentGroup<OperatorId, spsc::Receiver<Message<M>>, fn(&Message<M>) -> bool>;
+
+fn is_barrier<M: Kvt>(msg: &Message<M>) -> bool {
+    matches!(msg, Message::AbsBarrier(_))
 }
 
 /// Operator Input
-pub struct Input<K, V, T> {
-    /// Each receiver in this Vec is an inbound edge to the
-    /// operator
-    receivers: Vec<UpstreamState<K, V, T>>,
-    // largest observed Epoch
-    frontier: Option<T>,
+pub struct Input<M: Kvt> {
+    /// Highest epoch seen so far per inbound edge,
+    frontiers: Vec<Option<M::Timestamp>>,
+    /// last Epoch value we sent out
+    last_epoch: Option<M::Timestamp>,
+    receivers: BarrierAlign<M>,
 }
 
-impl<K, V, T> Input<K, V, T> {
+impl<M: Kvt> Input<M> {
     /// Create a new input which is not (yet) linked to any output
-    pub(crate) fn new_unlinked() -> Self {
+    pub(crate) fn new_unlinked() -> Input<M> {
+        let barrier_align = BarrierAlign::new_empty(is_barrier);
         Self {
-            receivers: Vec::new(),
-            frontier: None,
+            frontiers: Vec::new(),
+            last_epoch: None,
+            receivers: barrier_align,
         }
     }
+}
 
-    /// Return true if this input is currently capable of receiving messages and progressing
-    /// its inputs.
-    /// Being capable does not necessarily mean there are any messages.
-    pub(crate) fn can_progress(&self) -> bool {
-        self.receivers
-            .iter()
-            .any(|x| x.receiver.can_recv_unaligned())
-    }
-
-    /// Get the frontier of this Input, i.e. the largest Epoch it has seen so far
+impl<M: Kvt> Input<M>
+where
+    M::Timestamp: MaybeTime,
+{
+    /// Get the frontier of this Input, i.e. the smallest Epoch currently merged
     #[inline]
-    pub(crate) fn get_frontier(&self) -> &Option<T> {
-        &self.frontier
+    pub(crate) fn get_frontier(&self) -> Option<M::Timestamp> {
+        self.last_epoch.clone()
     }
 }
 
-impl<K, V, T> Input<K, V, T>
+impl<M: Kvt> Input<M>
 where
-    T: MaybeTime,
+    <M as Kvt>::Timestamp: MaybeTime,
 {
-    /// Receive a value. None if no value to receive or all Senders dropped.
+    /// Receive a value
     ///
     /// This method synchronizes barriers, i.e. if a channel is barred, it will
     /// not receive any messages from that channel until all channels are barred.
     /// Once all channels are barred, a single barrier will be emitted
-    pub fn recv(&mut self) -> Option<Message<K, V, T>> {
-        // TODO: This is left biased
-        let next = self
-            .receivers
-            .iter()
-            .enumerate()
-            .find_map(|(i, x)| x.receiver.recv_unaligned().map(|msg| (msg, i)));
-        match next {
-            Some((msg, sender_idx)) => match msg {
+    pub async fn recv(&mut self) -> Message<M> {
+        loop {
+            // We loop here just for the case where we get an epoch but can not emit it
+            // because of inputs which are behind or because it would not advance the frontier
+            let (key, msg) = match self.receivers.recv().await {
+                AlignedValue::Unaligned((key, msg)) => (key, msg),
+                AlignedValue::Aligned(mut items) => {
+                    // does not matter which barrier we send, as long as they are aligned
+                    // index also does not matter
+                    items
+                        .pop()
+                        .expect("Expected at least one receiver in Input")
+                }
+            };
+            match msg {
                 Message::Epoch(e) => {
-                    // PANIC: We can unwrap because we got the idx from the iterator above
-                    self.receivers
-                        .get_mut(sender_idx)
-                        .expect("Expected valid index")
-                        .epoch = Some(e);
-                    let merged = merge_timestamps(self.receivers.iter().map(|x| &x.epoch));
-                    if let Some(m) = merged.as_ref() {
-                        if self.frontier.as_ref().is_none_or(|frontier| frontier < m) {
-                            self.frontier = Some(m.clone());
-                        }
+                    self.frontiers[key as usize] = Some(e);
+                    let merged = merge_timestamps(self.frontiers.iter());
+                    // Only sent out if we would advance the frontier
+                    // TODO: test
+                    let out_epoch = match (self.last_epoch.as_ref(), merged) {
+                        (None, Some(e)) => Some(e),
+                        (Some(le), Some(me)) if me > *le => Some(me),
+                        _ => None,
+                    };
+                    if let Some(e) = out_epoch {
+                        self.last_epoch = Some(e.clone());
+                        return Message::Epoch(e);
                     }
-                    merged.map(|x| Message::Epoch(x.clone()))
                 }
-                x => Some(x),
-            },
-            None => {
-                // there are multiple possibilities on why we did not get a next msg
-                // 1. all messages are barriers, suspend markers or none
-                // 2. self.receivers is empty
-                // 3. all channels have barrier upcoming
-                // 4. all channels have a suspend upcoming
-
-                // 1 is most common so we check it first
-                if self.receivers.iter().any(|x| x.receiver.is_empty()) {
-                    return None;
-                }
-                // 2
-                if self.receivers.is_empty() {
-                    return None;
-                }
-                // 3. all channels have barrier upcoming
-                if self.receivers.iter().all(|x| {
-                    x.receiver
-                        .peek_apply(|y| matches!(y, Message::AbsBarrier(_)))
-                        .unwrap_or(false)
-                }) {
-                    // take .last() to clear the barriers from all receivers
-                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
-                }
-                // 4. all channels have a suspend upcoming
-                if self.receivers.iter().all(|x| {
-                    x.receiver
-                        .peek_apply(|y| matches!(y, Message::SuspendMarker(_)))
-                        .unwrap_or(false)
-                }) {
-                    // take .last() to clear the marker from all receivers
-                    return self.receivers.iter().flat_map(|x| x.receiver.recv()).last();
-                }
-                // This could only be reached if there where mixed messages requiring alignement
-                // like some receivers had a barrier and others a suspend marker which should
-                // never happen
-                unreachable!()
+                x => return x,
             }
         }
-    }
-}
-
-trait RecvUnaligned<K, V, T> {
-    /// Peek only those message types which do not
-    /// require alignement, i.e. no barriers and suspend markers
-    fn can_recv_unaligned(&self) -> bool;
-    /// Receive only those message types which do not
-    /// require alignement, i.e. no barriers and suspend markers
-    fn recv_unaligned(&self) -> Option<Message<K, V, T>>;
-}
-
-impl<K, V, T> RecvUnaligned<K, V, T> for spsc::Receiver<Message<K, V, T>> {
-    fn recv_unaligned(&self) -> Option<Message<K, V, T>> {
-        self.can_recv_unaligned().then(|| self.recv()).flatten()
-    }
-
-    fn can_recv_unaligned(&self) -> bool {
-        self.peek_apply(|next| !matches!(next, Message::AbsBarrier(_) | Message::SuspendMarker(_)))
-            .unwrap_or(false)
     }
 }
 
@@ -246,14 +249,17 @@ pub(crate) fn full_broadcast<T>(_: &T, outputs: &mut [bool]) {
 }
 
 /// Link a Sender and receiver together
-pub(crate) fn link<K, V, T>(sender: &mut Output<K, V, T>, receiver: &mut Input<K, V, T>) {
+pub(crate) fn link<M: Kvt>(sender: &mut Output<M>, receiver: &mut Input<M>) {
     let (tx, rx) = spsc::unbounded();
     sender.senders.push(tx);
-    receiver.receivers.push(UpstreamState::new(rx));
+    let next_key = receiver.receivers.keys().last().unwrap_or(&0) + 1;
+    receiver.receivers.insert(next_key, rx);
+    receiver.frontiers.push(None);
 }
 
 /// Small reducer hack, as we can't use iter::reduce because of ownership
-fn merge_timestamps<'a, T: MaybeTime>(
+/// TODO: Move this somewhere else
+pub(crate) fn merge_timestamps<'a, T: MaybeTime>(
     mut timestamps: impl Iterator<Item = &'a Option<T>>,
 ) -> Option<T> {
     let mut merged = timestamps.next()?.clone();
@@ -267,21 +273,10 @@ fn merge_timestamps<'a, T: MaybeTime>(
     merged
 }
 
-/// Mege multiple inputs into a single input. The new Input will be linked to all the original
-/// upstream Outputs.
-pub(crate) fn merge_inputs<K, V, T: MaybeTime>(groups: Vec<Input<K, V, T>>) -> Input<K, V, T> {
-    let frontier = merge_timestamps(groups.iter().map(|x| x.get_frontier()));
-    let receivers: Vec<_> = groups.into_iter().flat_map(|x| x.receivers).collect();
-    Input {
-        receivers,
-        frontier,
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::{
-        snapshot::{Barrier, NoPersistence},
+        snapshot::{NoPersistence, SnapshotBarrier},
         types::{DataMessage, NoData, NoKey, NoTime, SuspendMarker},
     };
 
@@ -290,8 +285,8 @@ mod test {
     /// Check we only emit an epoch when it changes
     #[test]
     fn emit_epoch_on_change() {
-        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
-        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
@@ -306,17 +301,21 @@ mod test {
     /// only issue a barrier once it is aligned
     #[test]
     fn aligns_barriers() {
-        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
-        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         let received = receiver.recv();
         assert!(received.is_none(), "{received:?}");
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
     }
@@ -324,18 +323,22 @@ mod test {
     /// should buffer messages if the channels if barred
     #[test]
     fn buffer_on_barriers() {
-        let mut sender: Output<NoKey, i32, NoTime> = Output::new_unlinked(full_broadcast);
-        let mut sender2: Output<NoKey, i32, NoTime> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, i32, NoTime)> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<(NoKey, i32, NoTime)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
 
-        sender.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        sender.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
 
         sender.send(Message::Data(DataMessage::new(NoKey, 42, NoTime)));
         sender.send(Message::Data(DataMessage::new(NoKey, 177, NoTime)));
 
-        sender2.send(Message::AbsBarrier(Barrier::new(Box::new(NoPersistence))));
+        sender2.send(Message::AbsBarrier(SnapshotBarrier::new(Box::new(
+            NoPersistence,
+        ))));
         assert!(matches!(receiver.recv(), Some(Message::AbsBarrier(_))));
 
         let msg = receiver.recv();
@@ -363,8 +366,8 @@ mod test {
     /// only issue shutdown markers once they are aligned
     #[test]
     fn aligns_shutdowns() {
-        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
-        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
         link(&mut sender2, &mut receiver);
@@ -381,7 +384,7 @@ mod test {
     /// Check the accessor for the largest sent epoch (frontier)
     #[test]
     fn observe_frontier() {
-        let mut sender: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender, &mut receiver);
 
@@ -400,8 +403,8 @@ mod test {
 
     #[test]
     fn receiver_observe_frontier() {
-        let mut sender1: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
-        let mut sender2: Output<NoKey, NoData, i32> = Output::new_unlinked(full_broadcast);
+        let mut sender1: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
+        let mut sender2: Output<(NoKey, NoData, i32)> = Output::new_unlinked(full_broadcast);
         let mut receiver = Input::new_unlinked();
         link(&mut sender1, &mut receiver);
         link(&mut sender2, &mut receiver);
@@ -436,7 +439,7 @@ mod test {
     /// Should just discard messages
     #[test]
     fn sender_without_sink_discards() {
-        let mut sender = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(&str, Rc<&str>, i32)> = Output::new_unlinked(full_broadcast);
         let elem = Rc::new("brox");
         // this should not panic
         sender.send(Message::Data(DataMessage::new("Beeble", elem.clone(), 42)));
@@ -447,7 +450,7 @@ mod test {
     /// Output should be suspended after sending suspend marker
     #[test]
     fn output_suspended_after_marker() {
-        let mut sender: Output<NoKey, NoData, NoTime> = Output::new_unlinked(full_broadcast);
+        let mut sender: Output<(NoKey, NoData, NoTime)> = Output::new_unlinked(full_broadcast);
         sender.send(Message::SuspendMarker(SuspendMarker::default()));
         assert!(sender.is_suspended())
     }

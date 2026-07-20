@@ -8,7 +8,7 @@ use malstrom::worker::StreamProvider;
 
 fn main() {
     MultiThreadRuntime::builder()
-        .parrallelism(2)
+        .parrallelism(1)
         .persistence(NoPersistence)
         .build(build_dataflow)
         .execute()
@@ -23,7 +23,7 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
         .key_distribute("key-odd-even", |x| (x.value & 1) == 0, rendezvous_select)
-        .inspect("print", |x, ctx| {
+        .inspect("print", async |x, ctx| {
             println!("{x:?} @ Worker {}", ctx.worker_id)
         });
 }

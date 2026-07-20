@@ -1,15 +1,18 @@
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::Output,
+    operators::State,
     stream::StreamBuilder,
-    types::{Data, DataMessage, Key, MaybeData, MaybeKey, MaybeTime, Message, Timestamp},
+    types::{
+        Data, DataMessage, Key, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed, Timestamp,
+    },
 };
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
 
 /// Apply a stateful function to every message in the stream
-pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
+pub trait StatefulMap<In: Kvt, T: Data, Mapper, S>: Sealed {
     /// Transforms data utilizing some managed state.
     ///
     /// This operator will apply a transforming function to every message.
@@ -57,11 +60,8 @@ pub trait StatefulMap<K, VI, T>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
-        self,
-        name: &str,
-        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> StreamBuilder<K, VO, T>;
+    fn stateful_map(self, name: &str, mapper: Mapper)
+    -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
 struct MapperOp<F> {
@@ -73,38 +73,40 @@ impl<F> MapperOp<F> {
     }
 }
 
-impl<F, K, VI, T, VO, S> StatefulLogic<K, VI, T, VO, S> for MapperOp<F>
+impl<In, OutVal, S, Mapper> StatefulLogic<In, OutVal, S> for MapperOp<Mapper>
 where
-    K: MaybeKey,
-    VO: MaybeData,
-    T: MaybeTime,
-    F: FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
+    In: Kvt,
+    In::Key: State + Key,
+    OutVal: Data,
     S: Serialize + DeserializeOwned,
+    Mapper: AsyncFnMut(&In::Key, In::Value, S) -> (OutVal, Option<S>) + 'static,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
-        msg: DataMessage<K, VI, T>,
+        msg: DataMessage<In>,
         key_state: S,
-        output: &mut Output<K, VO, T>,
+        output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) -> Option<S> {
-        let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state);
+        let (new_value, new_state) = (self.mapper)(&msg.key, msg.value, key_state).await;
         let out_msg = DataMessage::new(msg.key, new_value, msg.timestamp);
-        output.send(Message::Data(out_msg));
+        output.send(Message::Data(out_msg)).await;
         new_state
     }
 }
 
-impl<K, VI, T> StatefulMap<K, VI, T> for StreamBuilder<K, VI, T>
+impl<In, T, Mapper, S> StatefulMap<In, T, Mapper, S> for StreamBuilder<In>
 where
-    K: Key + Serialize + DeserializeOwned,
-    VI: Data + Serialize + DeserializeOwned,
-    T: Timestamp,
+    In: Kvt,
+    In::Key: State + Key,
+    T: Data,
+    Mapper: AsyncFnMut(&In::Key, In::Value, S) -> (T, Option<S>) + 'static,
+    S: Default + Serialize + DeserializeOwned + 'static,
 {
-    fn stateful_map<VO: Data, S: Default + Serialize + DeserializeOwned + 'static>(
+    fn stateful_map(
         self,
         name: &str,
-        mapper: impl FnMut(&K, VI, S) -> (VO, Option<S>) + 'static,
-    ) -> StreamBuilder<K, VO, T> {
+        mapper: Mapper,
+    ) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
         self.stateful_op(name, MapperOp::new(mapper))
     }
 }
@@ -119,7 +121,7 @@ mod test {
 
     use crate::sinks::StatelessSink;
     use crate::sources::{SingleIteratorSource, StatelessSource};
-    use crate::testing::{get_test_rt, VecSink};
+    use crate::testing::{VecSink, get_test_rt};
 
     use super::StatefulMap;
 
@@ -137,7 +139,7 @@ mod test {
                 )
                 // calculate a running total split by odd and even numbers
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .stateful_map("add", |_, i, s: i32| (s + i, Some(s + i)))
+                .stateful_map("add", async |_, i, s: i32| (s + i, Some(s + i)))
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();
@@ -170,7 +172,7 @@ mod test {
                 )
                 // concat the words
                 .key_local("key-local", |x| x.value.len())
-                .stateful_map("concat", |_, x, mut s: String| {
+                .stateful_map("concat", async |_, x, mut s: String| {
                     s.push_str(&x);
                     if s.len() >= 6 {
                         (s, None)

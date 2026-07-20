@@ -3,10 +3,11 @@ use std::{collections::HashMap, rc::Rc, sync::Mutex};
 
 use crate::keyed::distributed::{Acquire, Collect, Interrogate};
 
-use crate::runtime::communication::Distributable;
 use crate::runtime::SingleThreadRuntime;
-use crate::snapshot::{Barrier, SnapshotVersion};
-use crate::types::{Key, SuspendMarker};
+use crate::runtime::communication::Distributable;
+use crate::snapshot::{SnapshotBarrier, SnapshotVersion};
+use crate::stream::Logic;
+use crate::types::{Key, Kvt, SuspendMarker};
 use crate::types::{MaybeTime, RescaleMessage};
 use crate::worker::StreamProvider;
 use crate::{
@@ -74,18 +75,17 @@ impl PersistenceClient for CapturingPersistenceBackend {
 }
 
 /// A test which panics if the given operator does not forward a system message from local upstream
-pub fn test_forward_system_messages<
-    KI: Key + Default,
-    VI: MaybeData,
-    TI: MaybeTime,
-    KO: MaybeKey,
-    VO: MaybeData,
-    TO: MaybeTime,
+pub(crate) fn test_forward_system_messages<
+    In: Kvt,
+    Out: Kvt,
+    L: Logic<In, Out>,
     R: Distributable + Send + Sync + 'static,
 >(
-    tester: &mut OperatorTester<KI, VI, TI, KO, VO, TO, R>,
-) {
-    let msg = Message::AbsBarrier(Barrier::new(Box::new(NoPersistence)));
+    tester: &mut OperatorTester<In, Out, L, R>,
+) where
+    In::Key: Key + Default,
+{
+    let msg = Message::AbsBarrier(SnapshotBarrier::new(Box::new(NoPersistence)));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(
@@ -93,12 +93,12 @@ pub fn test_forward_system_messages<
         Message::AbsBarrier(_)
     ));
 
-    let msg = Message::Acquire(Acquire::new(KI::default(), IndexMap::new()));
+    let msg = Message::Acquire(Acquire::new(In::Key::default(), IndexMap::new()));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(tester.recv_local().unwrap(), Message::Acquire(_)));
 
-    let msg = Message::Collect(Collect::new(KI::default()));
+    let msg = Message::Collect(Collect::new(In::Key::default()));
     tester.send_local(msg);
     tester.step();
     assert!(matches!(tester.recv_local().unwrap(), Message::Collect(_)));

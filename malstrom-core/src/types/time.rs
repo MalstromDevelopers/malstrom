@@ -16,7 +16,7 @@ pub trait Timestamp: PartialOrd + Ord + Clone + std::fmt::Debug + 'static {
     fn merge(&self, other: &Self) -> Self;
 }
 
-/// Zero sozed marker indicating a stream with no timestamps associated.
+/// Zero sized marker indicating a stream with no timestamps associated.
 ///
 /// **IMPORTANT:** The NoTime type has a special meaning in JetStream:
 /// Operators emittng `NoTime` are seen as not able to advance the computation.
@@ -28,6 +28,20 @@ pub struct NoTime;
 impl PartialOrd for NoTime {
     fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
         None
+    }
+}
+
+/// A timestamp which can only either be finished or not, but nothing in between
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct OnceTime(bool);
+
+impl Timestamp for OnceTime {
+    const MAX: Self = Self(true);
+
+    const MIN: Self = Self(false);
+
+    fn merge(&self, other: &Self) -> Self {
+        Self(self.0 & other.0)
     }
 }
 

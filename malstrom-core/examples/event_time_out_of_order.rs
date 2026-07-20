@@ -92,23 +92,23 @@ fn build_dataflow(provider: &mut dyn StreamProvider) {
 }
 struct TransactionCounter;
 
-impl StatefulLogic<(i32, u32), Transaction, TransactionTime, f32, f32> for TransactionCounter {
-    fn on_data(
+impl StatefulLogic<((i32, u32), Transaction, TransactionTime), f32, f32> for TransactionCounter {
+    async fn on_data(
         &mut self,
-        msg: DataMessage<(i32, u32), Transaction, TransactionTime>,
+        msg: DataMessage<((i32, u32), Transaction, TransactionTime)>,
         key_state: f32,
-        _output: &mut Output<(i32, u32), f32, TransactionTime>,
+        _output: &mut Output<((i32, u32), f32, TransactionTime)>,
     ) -> Option<f32> {
         // update the balance
         Some(key_state + msg.value.amount)
     }
 
     /// At the end of every month emit and reset the balance
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
         epoch: &TransactionTime,
         state: &mut IndexMap<(i32, u32), f32>,
-        output: &mut Output<(i32, u32), f32, TransactionTime>,
+        output: &mut Output<((i32, u32), f32, TransactionTime)>,
     ) {
         // remove all closed months from state
         state.retain(|(year, month), balance| {

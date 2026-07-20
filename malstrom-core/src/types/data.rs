@@ -1,5 +1,7 @@
 //! Types and traits for data processed in JetStream
 
+use serde::{Deserialize, Serialize};
+
 /// Data which may move through a stream
 #[diagnostic::on_unimplemented(message = "Type must be `Clone + 'static` to be used as data")]
 pub trait Data: Clone + 'static {}
@@ -10,5 +12,5 @@ pub trait MaybeData: Clone + 'static {}
 impl<T: Clone + 'static> MaybeData for T {}
 
 /// Zero sized indicator for a stream with no data
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoData;

@@ -4,41 +4,43 @@
 use std::{cell::RefCell, hash::Hash, marker::PhantomData, rc::Rc};
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::{Input, Output},
     keyed::{
-        distributed::{Acquire, Collect, DistData, DistKey, DistTimestamp, Interrogate},
-        partitioners::rendezvous_select,
         KeyDistribute,
+        distributed::{Acquire, Collect, Interrogate},
+        rendezvous_select,
     },
     operators::StreamSink,
-    runtime::communication::Distributable,
-    snapshot::Barrier,
-    stream::{BuildContext, LogicWrapper, OperatorBuilder, OperatorContext, StreamBuilder},
+    snapshot::SnapshotBarrier,
+    stream::{
+        BuildContext, Logic, Malstrom, Operator, OperatorContext, SafeLogic, SafeLogicWrapper,
+        StreamBuilder,
+    },
     types::{
-        Data, DataMessage, MaybeKey, MaybeTime, Message, NoData, NoTime, RescaleMessage,
-        SuspendMarker,
+        Barrier, Data, DataMessage, Key, Kvt, MaybeKey, MaybeTime, Message, NoData, NoKey, NoTime,
+        RescaleMessage, SuspendMarker, distributable::Distributable,
     },
 };
 /// Implementation of a stateful sink
-pub trait StatefulSinkImpl<K, V, T>: 'static {
+pub trait StatefulSinkImpl<M: Kvt>: 'static {
     /// A `Part` of a partition is a key by which any partition of the source is
     /// uniquely identified. It is perfectly valid for a source to only have a single part and in
     /// turn only a single partition, though this may not be very useful.
-    type Part: DistKey;
+    type Part: Key + Distributable;
     /// State for a partition of this sink. The state is persisted across job restarts
     /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState: Distributable;
     /// A partition of this sink.
     /// Partitions may be moved to different workers, when the jobs worker set changes.
-    type SinkPartition: StatefulSinkPartition<K, V, T, PartitionState = Self::PartitionState>;
+    type SinkPartition: StatefulSinkPartition<M, PartitionState = Self::PartitionState>;
 
     /// Assign a message to a specific sink partition, if the partition does not yet
     /// exist it will be created using the "build_part" function.
     /// **This function MUST BE stable and deterministic**.
-    fn assign_part(&self, msg: &DataMessage<K, V, T>) -> Self::Part;
+    fn assign_part(&self, msg: &DataMessage<M>) -> Self::Part;
 
     /// Build the partition for the given part
     fn build_part(
@@ -49,9 +51,9 @@ pub trait StatefulSinkImpl<K, V, T>: 'static {
 }
 
 /// A sink which emits records and holds some persistent state.
-pub struct StatefulSink<K, V, T, S: StatefulSinkImpl<K, V, T>>(S, PhantomData<(K, V, T)>);
+pub struct StatefulSink<M: Kvt, S: StatefulSinkImpl<M>>(S, PhantomData<M>);
 
-impl<K, V, T, S: StatefulSinkImpl<K, V, T>> StatefulSink<K, V, T, S> {
+impl<M: Kvt, S: StatefulSinkImpl<M>> StatefulSink<M, S> {
     /// Create a new stateful sink by wrapping an implementation
     pub fn new(source: S) -> Self {
         Self(source, PhantomData)
@@ -59,13 +61,13 @@ impl<K, V, T, S: StatefulSinkImpl<K, V, T>> StatefulSink<K, V, T, S> {
 }
 
 /// A source which emits records and holds some persistent state.
-pub trait StatefulSinkPartition<K, V, T> {
+pub trait StatefulSinkPartition<M: Kvt> {
     /// State for a partition of this sink. The state is persisted across job restarts
     /// and moved with the partition to a different worker when the jobs worker set changes.
     type PartitionState;
 
     /// Poll this partition, possibly returning a record
-    fn sink(&mut self, msg: DataMessage<K, V, T>);
+    fn sink(&mut self, msg: DataMessage<M>);
 
     /// snapshot the current state of this partition
     fn snapshot(&self) -> Self::PartitionState;
@@ -75,62 +77,74 @@ pub trait StatefulSinkPartition<K, V, T> {
     fn collect(self) -> Self::PartitionState;
 }
 
-impl<K, V, T, S> StreamSink<K, V, T> for StatefulSink<K, V, T, S>
+impl<M, S> StreamSink<M> for StatefulSink<M, S>
 where
-    S: StatefulSinkImpl<K, V, T>,
-    K: DistKey,
-    V: DistData,
-    T: DistTimestamp,
+    M: Kvt,
+    M::Key: Serialize + DeserializeOwned,
+    M::Value: Serialize + DeserializeOwned,
+    M::Timestamp: Serialize + DeserializeOwned,
+    S: StatefulSinkImpl<M>,
 {
-    fn consume_stream(self, name: &str, builder: StreamBuilder<K, V, T>) {
+    fn consume_stream(self, name: &str, builder: StreamBuilder<M>) {
         // HACK: Bit ugly, but RefCell works because the scheduler will only schedule
         // one operator at a time.
         let builder_ref = Rc::new(RefCell::new(self.0));
         let assigner = Rc::clone(&builder_ref);
-        let part_assigner = OperatorBuilder::direct(
-            &format!("{name}-assign-parts"),
-            move |input: &mut Input<K, V, T>, output: &mut Output<S::Part, (K, V), T>, _ctx| {
-                if let Some(msg) = input.recv() {
-                    match msg {
-                        Message::Data(d) => {
-                            let part = assigner.borrow().assign_part(&d);
-                            output.send(Message::Data(DataMessage::new(
-                                part,
-                                (d.key, d.value),
-                                d.timestamp,
-                            )))
-                        }
-                        Message::Epoch(e) => output.send(Message::Epoch(e)),
-                        Message::AbsBarrier(barrier) => output.send(Message::AbsBarrier(barrier)),
-                        Message::Rescale(rescale_message) => {
-                            output.send(Message::Rescale(rescale_message))
-                        }
-                        Message::SuspendMarker(suspend_marker) => {
-                            output.send(Message::SuspendMarker(suspend_marker))
-                        }
-                        // these don't matter since we have a key_distribute next anyway
-                        Message::Interrogate(_) => (),
-                        Message::Collect(_) => (),
-                        Message::Acquire(_) => (),
-                    }
-                }
-            },
-        );
+        let part_assigner: Operator<_, _, (S::Part, (M::Key, M::Value), M::Timestamp)> =
+            Operator::direct(format!("{name}-assign-parts"), PartAssigner { assigner });
 
-        builder
-            .then(part_assigner)
-            .key_distribute(
-                &format!("{name}-distribute-partitions"),
-                |msg| msg.key.clone(),
-                rendezvous_select,
-            )
-            .then(OperatorBuilder::built_by(
-                &format!("{name}-partition"),
-                |ctx| {
-                    let partition_op = StatefulSinkPartitionOp::<K, V, T, S>::new(ctx, builder_ref);
-                    partition_op.into_logic()
-                },
-            ));
+        let stream = builder.then(part_assigner);
+        let stream = stream.key_distribute(
+            &format!("{name}-distribute-partitions"),
+            |msg| msg.key.clone(),
+            rendezvous_select,
+        );
+        stream.then(Operator::direct(
+            format!("{name}-partition"),
+            StatefulSinkPartitionOp::<M, S>::new(builder_ref).into_logic(),
+        ));
+    }
+}
+
+struct PartAssigner<S> {
+    assigner: Rc<RefCell<S>>,
+}
+
+impl<M, S> Logic<M, (S::Part, (M::Key, M::Value), M::Timestamp)> for PartAssigner<S>
+where
+    M: Kvt,
+    S: StatefulSinkImpl<M>,
+{
+    async fn apply(
+        &mut self,
+        input: &mut Input<M>,
+        output: &mut Output<(S::Part, (M::Key, M::Value), M::Timestamp)>,
+        _ctx: &mut OperatorContext,
+    ) {
+        match input.recv().await {
+            Message::Data(d) => {
+                let part = self.assigner.borrow().assign_part(&d);
+                output
+                    .send(Message::Data(DataMessage::new(
+                        part,
+                        (d.key, d.value),
+                        d.timestamp,
+                    )))
+                    .await
+            }
+            Message::Epoch(e) => output.send(Message::Epoch(e)).await,
+            Message::AbsBarrier(barrier) => output.send(Message::AbsBarrier(barrier)).await,
+            Message::Rescale(rescale_message) => {
+                output.send(Message::Rescale(rescale_message)).await
+            }
+            Message::ReconfigComplete(reconfig) => {
+                output.send(Message::ReconfigComplete(reconfig)).await
+            }
+            // these don't matter since we have a key_distribute next anyway
+            Message::Interrogate(_) => (),
+            Message::Collect(_) => (),
+            Message::Acquire(_) => (),
+        }
     }
 }
 
@@ -144,22 +158,21 @@ enum PartOrData<V> {
     Data(V),
 }
 
-struct StatefulSinkPartitionOp<K, V, T, Builder: StatefulSinkImpl<K, V, T>> {
+struct StatefulSinkPartitionOp<M: Kvt, Builder: StatefulSinkImpl<M>> {
     partitions: IndexMap<Builder::Part, Builder::SinkPartition>,
     part_builder: Rc<RefCell<Builder>>,
-    _phantom: PhantomData<(Builder::PartitionState, V)>,
 }
 
-impl<K, V, T, Builder> StatefulSinkPartitionOp<K, V, T, Builder>
+impl<M, Builder> StatefulSinkPartitionOp<M, Builder>
 where
-    Builder: StatefulSinkImpl<K, V, T>,
+    M: Kvt,
+    Builder: StatefulSinkImpl<M>,
     Builder::Part: Hash + Eq,
 {
-    fn new(_ctx: &mut BuildContext, part_builder: Rc<RefCell<Builder>>) -> Self {
+    fn new(part_builder: Rc<RefCell<Builder>>) -> Self {
         Self {
             partitions: IndexMap::new(),
             part_builder,
-            _phantom: PhantomData,
         }
     }
 
@@ -169,25 +182,17 @@ where
     }
 }
 
-impl<K, V, T, Builder> LogicWrapper<Builder::Part, (K, V), T, NoData, NoTime>
-    for StatefulSinkPartitionOp<K, V, T, Builder>
+impl<M, Builder>
+    SafeLogic<(Builder::Part, (M::Key, M::Value), M::Timestamp), (Builder::Part, (), M::Timestamp)>
+    for StatefulSinkPartitionOp<M, Builder>
 where
-    Builder: StatefulSinkImpl<K, V, T>,
-    K: MaybeKey,
-    V: Data,
-    T: MaybeTime,
+    M: Kvt,
+    Builder: StatefulSinkImpl<M>,
 {
-    fn on_schedule(
+    async fn on_data(
         &mut self,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
-        _ctx: &mut OperatorContext,
-    ) {
-    }
-
-    fn on_data(
-        &mut self,
-        data_message: DataMessage<Builder::Part, (K, V), T>,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
+        data_message: DataMessage<(Builder::Part, (M::Key, M::Value), M::Timestamp)>,
+        _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         _ctx: &mut OperatorContext,
     ) {
         let partition = self
@@ -202,10 +207,10 @@ where
         partition.sink(msg);
     }
 
-    fn on_barrier(
+    async fn on_barrier(
         &mut self,
         barrier: &mut Barrier,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
+        _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
         let state: Vec<_> = self
@@ -216,61 +221,37 @@ where
         barrier.persist(&state, &ctx.operator_id);
     }
 
-    fn on_rescale(
-        &mut self,
-        _rescale_message: &mut RescaleMessage,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
-        _ctx: &mut OperatorContext,
-    ) {
-    }
-
-    fn on_suspend(
-        &mut self,
-        _suspend_marker: &mut SuspendMarker,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
-        _ctx: &mut OperatorContext,
-    ) {
-    }
-
-    fn on_interrogate(
+    async fn on_interrogate(
         &mut self,
         interrogate: &mut Interrogate<Builder::Part>,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
+        _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         _ctx: &mut OperatorContext,
     ) {
-        let keys = self.partitions.keys();
+        let keys = self.partitions.keys().cloned();
         interrogate.add_keys(keys);
     }
 
-    fn on_collect(
+    async fn on_collect(
         &mut self,
         collect: &mut Collect<Builder::Part>,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
+        _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
-        let key_state = self.partitions.swap_remove(&collect.key);
+        let key_state = self.partitions.swap_remove(&collect.get_key().clone());
         if let Some(partition) = key_state {
-            collect.add_state(ctx.operator_id, partition.collect());
+            collect.add_state(ctx.operator_id, &partition.collect());
         }
     }
 
-    fn on_acquire(
+    async fn on_acquire(
         &mut self,
         acquire: &mut Acquire<Builder::Part>,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
+        _output: &mut Output<(Builder::Part, (), M::Timestamp)>,
         ctx: &mut OperatorContext,
     ) {
         let partition_state = acquire.take_state(&ctx.operator_id);
         if let Some((part, part_state)) = partition_state {
             self.add_partition(part, Some(part_state));
         }
-    }
-
-    fn on_epoch(
-        &mut self,
-        _epoch: T,
-        _output: &mut Output<Builder::Part, NoData, NoTime>,
-        _ctx: &mut OperatorContext,
-    ) {
     }
 }

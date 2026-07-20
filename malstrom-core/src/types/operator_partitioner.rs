@@ -1,5 +1,7 @@
 //! Trait for inter-operator routing of messages
 
+use crate::types::Kvt;
+
 use super::DataMessage;
 
 /// Uniquely identifies an operator within a worker
@@ -11,8 +13,10 @@ pub type OperatorId = u64;
 /// - the count of available receivers
 ///
 /// And should emit the **indices** of the receivers, which should receive this message
-pub trait OperatorPartitioner<K, V, T>: Fn(&DataMessage<K, V, T>, &mut [bool]) + 'static {}
-impl<K, V, T, U> OperatorPartitioner<K, V, T> for U where
-    U: Fn(&DataMessage<K, V, T>, &mut [bool]) + 'static
+pub trait OperatorPartitioner<M: Kvt>: Fn(&DataMessage<M>, &mut [bool]) + 'static {}
+impl<M, U> OperatorPartitioner<M> for U
+where
+    M: Kvt,
+    U: Fn(&DataMessage<M>, &mut [bool]) + 'static,
 {
 }

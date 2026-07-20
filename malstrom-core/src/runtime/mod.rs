@@ -4,6 +4,6 @@ pub mod communication;
 pub(crate) mod runtime_flavor;
 pub mod threaded;
 
-pub use communication::{BiCommunicationClient, CommunicationClient, OperatorOperatorComm};
-pub use runtime_flavor::{CommunicationError, RuntimeFlavor};
-pub use threaded::{MultiThreadRuntime, SingleThreadRuntime, SingleThreadRuntimeFlavor};
+pub use communication::OperatorOperatorComm;
+pub use runtime_flavor::RuntimeFlavor;
+pub use threaded::{SingleThreadRuntime, SingleThreadRuntimeFlavor};

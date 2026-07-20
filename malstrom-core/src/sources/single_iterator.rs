@@ -71,14 +71,17 @@ where
 
 pub struct SingleIteratorPartition<V>(Peekable<Enumerate<Box<dyn Iterator<Item = V>>>>);
 
-impl<V> StatelessSourcePartition<V, usize> for SingleIteratorPartition<V> {
-    fn poll(&mut self) -> Option<(V, usize)> {
+impl<V> StatelessSourcePartition<V, usize> for SingleIteratorPartition<V>
+where
+    V: Data,
+{
+    async fn poll(&mut self) -> Option<(V, usize)> {
         self.0.next().map(|x| (x.1, x.0))
     }
 
-    fn is_finished(&mut self) -> bool {
-        self.0.peek().is_none()
-    }
+    // fn is_finished(&mut self) -> bool {
+    //     self.0.peek().is_none()
+    // }
 }
 
 // impl<V> StreamSource<NoKey, V, usize> for SingleIteratorSource<V>
@@ -136,13 +139,12 @@ mod tests {
     use proptest::bits::usize;
 
     use crate::{
-        channels::operator_io::Input,
+        channels::operator_io::{Input, Output},
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        stream::OperatorBuilder,
-        testing::get_test_rt,
-        testing::VecSink,
+        stream::{Malstrom as _, Operator, OperatorContext},
+        testing::{VecSink, get_test_rt},
         types::{Message, NoKey},
     };
 
@@ -191,6 +193,7 @@ mod tests {
     /// be emitted
     #[test]
     fn emits_max_epoch() {
+        type Msg = (NoKey, i32, usize);
         let sink = VecSink::new();
         let rt = get_test_rt(|provider| {
             let sink = sink.clone();
@@ -200,9 +203,11 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(0..10)),
                 )
-                .then(OperatorBuilder::direct(
-                    "sink-epochs",
-                    move |input: &mut Input<NoKey, i32, usize>, output, _ctx| match input.recv() {
+                .then(Operator::direct(
+                    "sink-epochs".to_string(),
+                    async move |input: &mut Input<Msg>,
+                                output: &mut Output<Msg>,
+                                _ctx: &mut OperatorContext| match input.recv() {
                         Some(Message::Epoch(x)) => {
                             sink.give(x.clone());
                             output.send(Message::Epoch(x));

@@ -1,22 +1,21 @@
-use std::hash::Hash;
+use std::{hash::Hash, marker::PhantomData};
 
 pub use expiremap;
 use expiremap::ExpireMap;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     channels::operator_io::Output,
+    operators::State,
     stream::StreamBuilder,
-    types::{Data, DataMessage, Key, MaybeData, Message, Timestamp},
+    types::{Data, DataMessage, Key, Kvt, MaybeData, Message, Sealed, Timestamp},
 };
 
 use super::stateful_op::{StatefulLogic, StatefulOp};
+pub use malstrom_macros::TTLState;
 
 /// Map with automatic state clean up based on ttl.
-pub trait TtlMap<K, VI, T>: super::sealed::Sealed
-where
-    T: Serialize + DeserializeOwned,
-{
+pub trait TtlMap<In: Kvt, OutVal: Data, Mapper, TtlState>: Sealed {
     /// Transforms data utilizing managed state where every value has a finite Time to Live (TTL).
     /// When an Epoch reaches this operator, all state values with a whos expiry time is less than
     /// or equal to the value of the Epoch will be removed from state.
@@ -28,39 +27,40 @@ where
     ///
     /// Any state can be used as long as it implements the `Default`, `Serialize`
     /// and `DeserializeOwned` traits.
-    fn ttl_map<VO, S, UK, F>(self, name: &str, function: F) -> StreamBuilder<K, VO, T>
-    where
-        VO: Data,
-        S: Default + Serialize + DeserializeOwned + 'static,
-        UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-        F: FnMut(&K, VI, &T, ExpireMap<UK, S, T>) -> (VO, Option<ExpireMap<UK, S, T>>) + 'static;
+    fn ttl_map(self, name: &str, mapper: Mapper)
+    -> StreamBuilder<(In::Key, OutVal, In::Timestamp)>;
 }
 
-struct TtlOp<F> {
-    function: F,
+struct TtlOp<F, OpState> {
+    mapper: F,
+    op_state: PhantomData<OpState>,
 }
-impl<F> TtlOp<F> {
-    fn new(function: F) -> Self {
-        Self { function }
+impl<F, OpState> TtlOp<F, OpState> {
+    fn new(mapper: F) -> Self {
+        Self {
+            mapper,
+            op_state: PhantomData,
+        }
     }
 }
 
-impl<F, K, VI, T, VO, UK, S> StatefulLogic<K, VI, T, VO, ExpireMap<UK, S, T>> for TtlOp<F>
+impl<In, OutVal, Mapper, OpState> StatefulLogic<In, OutVal, OpState> for TtlOp<Mapper, OpState>
 where
-    K: Key,
-    VO: MaybeData,
-    T: Timestamp,
-    UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-    F: FnMut(&K, VI, &T, ExpireMap<UK, S, T>) -> (VO, Option<ExpireMap<UK, S, T>>) + 'static,
-    S: Serialize + DeserializeOwned,
+    In: Kvt,
+    In::Key: State + Key,
+    In::Timestamp: Ord,
+    OutVal: Data,
+    OpState: TTLState<Timestamp = In::Timestamp> + 'static,
+    Mapper: AsyncFnMut(&In::Key, In::Value, &In::Timestamp, OpState) -> (OutVal, Option<OpState>)
+        + 'static,
 {
-    fn on_data(
+    async fn on_data(
         &mut self,
-        msg: DataMessage<K, VI, T>,
-        key_state: ExpireMap<UK, S, T>,
-        output: &mut Output<K, VO, T>,
-    ) -> Option<ExpireMap<UK, S, T>> {
-        let (value, state) = (self.function)(&msg.key, msg.value, &msg.timestamp, key_state);
+        msg: DataMessage<In>,
+        key_state: OpState,
+        output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
+    ) -> Option<OpState> {
+        let (value, state) = (self.mapper)(&msg.key, msg.value, &msg.timestamp, key_state).await;
         output.send(Message::Data(DataMessage::new(
             msg.key,
             value,
@@ -69,11 +69,11 @@ where
         state
     }
 
-    fn on_epoch(
+    async fn on_epoch(
         &mut self,
-        epoch: &T,
-        state: &mut indexmap::IndexMap<K, ExpireMap<UK, S, T>>,
-        _output: &mut Output<K, VO, T>,
+        epoch: &In::Timestamp,
+        state: &mut indexmap::IndexMap<In::Key, OpState>,
+        _output: &mut Output<(In::Key, OutVal, In::Timestamp)>,
     ) {
         state.retain(|_, v| {
             v.expire(epoch);
@@ -82,20 +82,46 @@ where
     }
 }
 
-impl<K, VI, T> TtlMap<K, VI, T> for StreamBuilder<K, VI, T>
+impl<In, OutVal, Mapper, OpState> TtlMap<In, OutVal, Mapper, OpState> for StreamBuilder<In>
 where
-    K: Key + Serialize + DeserializeOwned,
-    VI: Data + Serialize + DeserializeOwned,
+    In: Kvt,
+    In::Key: State + Key,
+    In::Timestamp: Ord + State,
+    OutVal: Data,
+    OpState: TTLState<Timestamp = In::Timestamp> + 'static,
+    Mapper: AsyncFnMut(&In::Key, In::Value, &In::Timestamp, OpState) -> (OutVal, Option<OpState>)
+        + 'static,
+{
+    fn ttl_map(
+        self,
+        name: &str,
+        mapper: Mapper,
+    ) -> StreamBuilder<(In::Key, OutVal, In::Timestamp)> {
+        self.stateful_op(name, TtlOp::<Mapper, OpState>::new(mapper))
+    }
+}
+
+pub trait TTLState: State {
+    type Timestamp: Timestamp;
+    fn expire(&mut self, epoch: &Self::Timestamp);
+
+    fn is_empty(&self) -> bool;
+}
+
+impl<K, V, T> TTLState for ExpireMap<K, V, T>
+where
+    K: Clone + Hash + Eq + 'static + Serialize + DeserializeOwned,
+    V: 'static + Serialize + DeserializeOwned,
     T: Timestamp + Serialize + DeserializeOwned,
 {
-    fn ttl_map<VO, S, UK, F>(self, name: &str, function: F) -> StreamBuilder<K, VO, T>
-    where
-        VO: Data,
-        S: Default + Serialize + DeserializeOwned + 'static,
-        UK: Eq + Hash + Clone + Serialize + DeserializeOwned + 'static,
-        F: FnMut(&K, VI, &T, ExpireMap<UK, S, T>) -> (VO, Option<ExpireMap<UK, S, T>>) + 'static,
-    {
-        self.stateful_op(name, TtlOp::new(function))
+    type Timestamp = T;
+
+    fn expire(&mut self, epoch: &Self::Timestamp) {
+        self.expire(epoch);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
     }
 }
 
@@ -110,13 +136,20 @@ mod test {
 
     use crate::sinks::StatelessSink;
     use crate::sources::{SingleIteratorSource, StatelessSource};
-    use crate::testing::{get_test_rt, VecSink};
+    use crate::testing::{VecSink, get_test_rt};
 
-    use super::TtlMap;
+    use super::{TTLState, TtlMap};
+    use crate as malstrom;
 
     /// Simple test to check we are keeping state
     #[test]
     fn keeps_state() {
+        #[derive(TTLState)]
+        #[timestamp_type(usize)]
+        struct Foo {
+            x: i32,
+        }
+
         let collector = VecSink::new();
 
         let rt = get_test_rt(|provider| {
@@ -132,26 +165,28 @@ mod test {
             // calculate a running total split by odd and even numbers
             on_time
                 .key_local("key-local", |x| (x.value & 1) == 1)
-                .ttl_map(
-                    "add",
-                    |_key, inp, ts, mut state: ExpireMap<String, i32, usize>| {
-                        let g = state.get(&"key".to_owned());
-                        let val = if let Some(val) = g {
-                            let v = inp + *val;
-                            state.insert("key".to_owned(), v, ts + 15);
-                            v
-                        } else {
-                            state.insert("key".to_owned(), inp, ts + 15);
+                .ttl_map("add", async |_key, inp, ts, mut state: TTLFoo| {
+                    let val: i32 = match state.x.as_mut() {
+                        Some(x) => {
+                            let val = inp + x.0;
+                            *x = (val, ts + 15);
+                            val
+                        }
+                        None => {
+                            state.set_x(inp, ts + 15);
                             inp
-                        };
-                        (val, Some(state))
-                    },
-                )
+                        }
+                    };
+                    (val, Some(state))
+                })
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().expect("Executing runtime failed");
 
-        let result = collector.into_iter().map(|x| x.value).collect_vec();
+        let result = collector
+            .into_iter()
+            .map(|x| x.value.to_owned())
+            .collect_vec();
         let even_sums = (0..100).step_by(2).scan(0, |s, i| {
             *s += i;
             Some(*s)
@@ -185,13 +220,13 @@ mod test {
                 .key_local("key-local", |_| 0)
                 .ttl_map(
                     "concat",
-                    |_key, inp, ts, mut state: ExpireMap<usize, String, usize>| {
+                    async |_key, inp, ts, mut state: ExpireMap<usize, String, usize>| {
                         state.insert(*ts, inp, ts + 2);
                         let res = (0..=*ts).filter_map(|i| state.get(&i)).join("|");
                         (res, Some(state))
                     },
                 )
-                .filter("remove-empty", |x| !x.is_empty())
+                .filter("remove-empty", async |x| !x.is_empty())
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
 

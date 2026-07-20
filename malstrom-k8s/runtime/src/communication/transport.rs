@@ -3,8 +3,8 @@ use std::time::Duration;
 use super::{
     coordinator_backend::CoordinatorGrpcBackend,
     exchange::{
-        coordinator_service_client::CoordinatorServiceClient, CoordinatorWorkerRequest,
-        OperatorOperatorRequest, WorkerCoordinatorRequest,
+        CoordinatorWorkerRequest, OperatorOperatorRequest, WorkerCoordinatorRequest,
+        coordinator_service_client::CoordinatorServiceClient,
     },
     util::new_channel,
     worker_backend::WorkerGrpcBackend,
@@ -19,7 +19,7 @@ use malstrom::{
 };
 use thiserror::Error;
 use tokio::task::JoinHandle;
-use tonic::{metadata::MetadataValue, transport::Endpoint, Request};
+use tonic::{Request, metadata::MetadataValue, transport::Endpoint};
 use tracing::{debug, error};
 
 /// A Malstrom transport which sends message over the Network via unidirectional

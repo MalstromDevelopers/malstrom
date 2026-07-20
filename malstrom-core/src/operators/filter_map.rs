@@ -1,10 +1,11 @@
 use super::stateless_op::StatelessOp;
 use crate::channels::operator_io::Output;
+use crate::operators::StatelessLogic;
 use crate::stream::StreamBuilder;
-use crate::types::{Data, DataMessage, MaybeKey, Message, Timestamp};
+use crate::types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp};
 
 /// Filter messages in a stream while at the same time applying a function to all values.
-pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
+pub trait FilterMap<In: Kvt, T: Data, Mapper>: Sealed {
     /// Applies a function to every element of the stream.
     /// All elements for which the function returns `Some(x)` are emitted downstream
     /// as `x`, all elements for which the function returns `None` are removed from
@@ -41,34 +42,41 @@ pub trait FilterMap<K, VI, T>: super::sealed::Sealed {
     /// let out: Vec<i32> = sink.into_iter().map(|x| x.value).collect();
     /// assert_eq!(out, expected);
     /// ```
-    fn filter_map<VO: Data>(
-        self,
-        name: &str,
-
-        mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> StreamBuilder<K, VO, T>;
+    fn filter_map(self, name: &str, mapper: Mapper) -> StreamBuilder<(In::Key, T, In::Timestamp)>;
 }
 
-impl<K, VI, T> FilterMap<K, VI, T> for StreamBuilder<K, VI, T>
+impl<In, T, Mapper, Fut> FilterMap<In, T, Mapper> for StreamBuilder<In>
 where
-    K: MaybeKey,
-    VI: Data,
-    T: Timestamp,
+    In: Kvt,
+    T: Data,
+    Mapper: FnMut(In::Value) -> Fut + 'static,
+    Fut: Future<Output = Option<T>>,
 {
-    fn filter_map<VO: Data>(
-        self,
-        name: &str,
+    fn filter_map(self, name: &str, mapper: Mapper) -> StreamBuilder<(In::Key, T, In::Timestamp)> {
+        self.stateless_op(name, FilterMapOp { mapper })
+    }
+}
 
-        mut mapper: impl FnMut(VI) -> Option<VO> + 'static,
-    ) -> StreamBuilder<K, VO, T> {
-        self.stateless_op(
-            name,
-            move |item: DataMessage<K, VI, T>, out: &mut Output<K, VO, T>| {
-                if let Some(x) = mapper(item.value) {
-                    out.send(Message::Data(DataMessage::new(item.key, x, item.timestamp)))
-                }
-            },
-        )
+struct FilterMapOp<Mapper> {
+    mapper: Mapper,
+}
+impl<In, Mapper, Fut, T> StatelessLogic<In, T> for FilterMapOp<Mapper>
+where
+    In: Kvt,
+    T: Data,
+    Mapper: FnMut(In::Value) -> Fut + 'static,
+    Fut: Future<Output = Option<T>>,
+{
+    async fn on_data(
+        &mut self,
+        msg: DataMessage<In>,
+        output: &mut Output<(<In as Kvt>::Key, T, <In as Kvt>::Timestamp)>,
+    ) {
+        if let Some(x) = (self.mapper)(msg.value).await {
+            output
+                .send(Message::Data(DataMessage::new(msg.key, x, msg.timestamp)))
+                .await
+        }
     }
 }
 
@@ -78,7 +86,7 @@ mod tests {
         operators::{sink::Sink, source::Source},
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     use super::*;
@@ -92,7 +100,10 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(0..100)),
                 )
-                .filter_map("less-than-42", |x| if x < 42 { Some(x * 2) } else { None })
+                .filter_map(
+                    "less-than-42",
+                    async |x| if x < 42 { Some(x * 2) } else { None },
+                )
                 .sink("sink", StatelessSink::new(collector.clone()));
         });
         rt.execute().unwrap();

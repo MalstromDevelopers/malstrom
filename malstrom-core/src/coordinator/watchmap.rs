@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use std::hash::Hash;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 /// A Send + Sync map which evaluates given conditions upon every change
 #[derive(Default, Clone)]

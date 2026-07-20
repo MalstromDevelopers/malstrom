@@ -1,18 +1,21 @@
 use crate::{
     channels::operator_io::Output,
     operators::{map::Map, split::Split},
-    stream::StreamBuilder,
-    types::{DataMessage, MaybeData, MaybeKey, Message, Timestamp},
+    stream::{DirectLogic, Operator, StreamBuilder},
+    types::{DataMessage, Kvt, MaybeData, MaybeKey, Message, Timestamp},
 };
 
 use super::assign_timestamps::OnTimeLate;
 
 #[inline(always)]
-pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    prev_epoch: Option<&T>,
-    d: DataMessage<K, V, T>,
-    output: &mut Output<K, OnTimeLate<V>, T>,
-) {
+pub(super) fn handle_maybe_late_msg<In, Out>(
+    prev_epoch: Option<&In::Timestamp>,
+    d: DataMessage<In>,
+    output: &mut Output<Out>,
+) where
+    In: Kvt,
+    Out: Kvt<Key = In::Key, Value = OnTimeLate<In::Value>, Timestamp = In::Timestamp>,
+{
     let wrapped = if let Some(prev) = prev_epoch.as_ref() {
         if **prev < d.timestamp {
             OnTimeLate::OnTime(d.value)
@@ -26,9 +29,12 @@ pub(super) fn handle_maybe_late_msg<K: MaybeKey, V: MaybeData, T: Timestamp>(
     output.send(Message::Data(DataMessage::new(d.key, wrapped, d.timestamp)));
 }
 
-pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
-    mixed: StreamBuilder<K, OnTimeLate<V>, T>,
-) -> (StreamBuilder<K, V, T>, StreamBuilder<K, V, T>) {
+pub(super) fn split_mixed_stream<T: MaybeData, In: Kvt<Value = OnTimeLate<T>>>(
+    mixed: StreamBuilder<In>,
+) -> (
+    StreamBuilder<(In::Key, T, In::Timestamp)>,
+    StreamBuilder<(In::Key, T, In::Timestamp)>,
+) {
     // create a randint so we do not get name collisions.
     // u32 because unlick u64 it works well when displayed in a
     // browser (floats only)
@@ -44,12 +50,12 @@ pub(super) fn split_mixed_stream<K: MaybeKey, V: MaybeData, T: Timestamp>(
             }
         },
     );
-    let ontime = ontime.map(&format!("malstrom::ontime-{randint}"), |x| match x {
+    let ontime = ontime.map(&format!("malstrom::ontime-{randint}"), async |x| match x {
         OnTimeLate::OnTime(y) => y,
         OnTimeLate::Late(_) => unreachable!("ontime"),
     });
 
-    let late = late.map(&format!("malstrom::late-{randint}"), |x| match x {
+    let late = late.map(&format!("malstrom::late-{randint}"), async |x| match x {
         OnTimeLate::OnTime(_) => unreachable!("late"),
         OnTimeLate::Late(y) => y,
     });

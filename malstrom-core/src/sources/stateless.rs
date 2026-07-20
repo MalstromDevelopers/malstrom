@@ -3,9 +3,11 @@ use std::marker::PhantomData;
 
 use crate::{
     operators::{Source, StreamSource},
-    runtime::communication::Distributable,
-    stream::StreamBuilder,
-    types::{Data, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp},
+    stream::{InitialStreamBuilder, Malstrom, StreamBuilder},
+    types::{
+        Data, Key, Kvt, MaybeKey, MaybeTime, NoData, NoKey, NoTime, Timestamp,
+        distributable::Distributable,
+    },
 };
 
 use super::{StatefulSource, StatefulSourceImpl, StatefulSourcePartition};
@@ -45,26 +47,26 @@ pub trait StatelessSourceImpl<V, T>: 'static {
 /// A single partition of a stateless source. A partition is the smallest unit of a source and may
 /// be moved to a different worker when the job's worker set changes.
 pub trait StatelessSourcePartition<V, T> {
-    /// Poll this partition, return anywhere from 0 to N new records
-    fn poll(&mut self) -> Option<(V, T)>;
+    /// Poll this partition, return None if no further records
+    /// will be returned by this partition
+    async fn poll(&mut self) -> Option<(V, T)>;
 
     /// Suspend this partition.
     /// Suspend means the execution will be halted, but could continue later.
     /// Use this method to clean up any recources like external connections or
     /// file handles
     fn suspend(&mut self) {}
-
-    /// Return true if this parition is finished and can be removed
-    fn is_finished(&mut self) -> bool;
 }
 
 /// NewType on which we can implement StatefulSourceImpl
 struct SourceWrapper<V, T, S: StatelessSourceImpl<V, T>>(S, PhantomData<(V, T)>);
-impl<S, V, T> StatefulSourceImpl<V, T> for SourceWrapper<V, T, S>
+
+impl<V, T, S> StatefulSourceImpl<V, T> for SourceWrapper<V, T, S>
 where
     V: Data,
-    T: MaybeTime,
+    T: Timestamp,
     S: StatelessSourceImpl<V, T>,
+    S::Part: Key,
 {
     type Part = S::Part;
     type PartitionState = ();
@@ -85,14 +87,16 @@ where
 
 struct PartitionWrapper<S>(S);
 
-impl<S, V, T> StatefulSourcePartition<V, T> for PartitionWrapper<S>
+impl<V, T, S> StatefulSourcePartition<V, T> for PartitionWrapper<S>
 where
+    V: Data,
+    T: Timestamp,
     S: StatelessSourcePartition<V, T>,
 {
     type PartitionState = ();
 
-    fn poll(&mut self) -> Option<(V, T)> {
-        self.0.poll()
+    async fn poll(&mut self) -> Option<(V, T)> {
+        self.0.poll().await
     }
 
     fn snapshot(&self) -> Self::PartitionState {}
@@ -105,22 +109,23 @@ where
         self.0.suspend();
     }
 
-    fn is_finished(&mut self) -> bool {
-        self.0.is_finished()
-    }
+    // fn is_finished(&mut self) -> bool {
+    //     self.0.is_finished()
+    // }
 }
 
-impl<V, T, S> StreamSource<S::Part, V, T> for StatelessSource<V, T, S>
+impl<V, T, S> StreamSource<(S::Part, V, T)> for StatelessSource<V, T, S>
 where
     V: Data,
     T: Timestamp,
     S: StatelessSourceImpl<V, T>,
+    S::Part: Key,
 {
     fn into_stream(
         self,
         name: &str,
-        builder: StreamBuilder<NoKey, NoData, NoTime>,
-    ) -> StreamBuilder<S::Part, V, T> {
-        builder.source(name, StatefulSource::new(self.0))
+        builder: InitialStreamBuilder,
+    ) -> StreamBuilder<(S::Part, V, T)> {
+        builder.source(name, StatefulSource::<(S::Part, V, T), _>::new(self.0))
     }
 }

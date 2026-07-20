@@ -14,13 +14,13 @@ fn main() {
 }
 
 fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
-    provider
+    let stream = provider
         .new_stream()
         .source(
             // this is an operator
             "iter-source",
-            StatelessSource::new(SingleIteratorSource::new(0..=100)),
+            StatelessSource::new(SingleIteratorSource::new(0..=10)),
         )
-        .map("double", |x| x * 2)
-        .inspect("print", |x, _| println!("{}", x.value)); // <-- and this too
+        .map("double", async |x| x * 2)
+        .inspect("print", async |x, _| println!("{}", x.value)); // <-- and this too
 }

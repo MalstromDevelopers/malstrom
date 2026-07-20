@@ -1,8 +1,12 @@
 //! Keyed streams for logical and physical partitioning of data
-pub(crate) mod distributed;
-mod key_distribute;
 mod key_local;
-pub mod partitioners;
+pub use key_local::KeyLocal;
+mod key_distribute;
 pub(crate) use key_distribute::Distribute;
 pub use key_distribute::KeyDistribute;
-pub use key_local::KeyLocal;
+mod broadcast;
+pub use broadcast::WorkerBroadcast;
+mod worker_partitioners;
+pub use worker_partitioners::{WorkerPartitioner, index_select, rendezvous_select};
+
+pub(crate) mod distributed;

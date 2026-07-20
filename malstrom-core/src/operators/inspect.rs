@@ -1,10 +1,13 @@
+use std::marker::PhantomData;
+
 use crate::{
-    stream::{OperatorBuilder, OperatorContext, StreamBuilder},
-    types::{Data, DataMessage, MaybeKey, Message, Timestamp},
+    channels::operator_io::{Input, Output},
+    stream::{Malstrom as _, Operator, OperatorContext, SafeLogic, StreamBuilder},
+    types::{Data, DataMessage, Kvt, MaybeKey, Message, Sealed, Timestamp},
 };
 
 /// Inspect messages in a stream without modifying them
-pub trait Inspect<K, V, T>: super::sealed::Sealed {
+pub trait Inspect<Msg: Kvt, Inspector>: Sealed {
     /// Observe values in a stream without modifying them.
     /// This is often done for debugging purposes or to record metrics.
     ///
@@ -32,7 +35,7 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
     ///         provider.new_stream()
     ///         .source("numbers", StatelessSource::new(SingleIteratorSource::new(0..100)))
     ///         .
-    /// inspect("inspect", move |msg, _ctx| sink_insepct.give(msg.clone()))
+    /// inspect("inspect", async move |msg, _ctx| sink_insepct.give(msg.clone()))
     ///         .sink("sink", StatelessSink::new(sink_output));
     ///     })
     ///     .execute()
@@ -44,34 +47,54 @@ pub trait Inspect<K, V, T>: super::sealed::Sealed {
     /// ```
     fn inspect(
         self,
-        name: &str,
-
-        inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T>;
+        name: impl Into<String>,
+        inspector: Inspector,
+    ) -> StreamBuilder<(Msg::Key, Msg::Value, Msg::Timestamp)>;
 }
 
-impl<K, V, T> Inspect<K, V, T> for StreamBuilder<K, V, T>
+impl<Msg, Inspector> Inspect<Msg, Inspector> for StreamBuilder<Msg>
 where
-    K: MaybeKey,
-    V: Data,
-    T: Timestamp,
+    Msg: Kvt,
+    Inspector: AsyncFnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
 {
     fn inspect(
         self,
-        name: &str,
-
-        mut inspector: impl FnMut(&DataMessage<K, V, T>, &OperatorContext) + 'static,
-    ) -> StreamBuilder<K, V, T> {
-        let operator =
-            OperatorBuilder::direct(name, move |input, output, ctx| match input.recv() {
-                Some(Message::Data(d)) => {
-                    inspector(&d, ctx);
-                    output.send(Message::Data(d));
-                }
-                Some(x) => output.send(x),
-                None => (),
-            });
+        name: impl Into<String>,
+        mut inspector: Inspector,
+    ) -> StreamBuilder<(Msg::Key, Msg::Value, Msg::Timestamp)> {
+        let operator = Operator::direct(
+            name.into(),
+            InspectOp {
+                func: inspector,
+                _msg: PhantomData::<Msg>,
+            }
+            .into_logic(),
+        );
         self.then(operator)
+    }
+}
+
+struct InspectOp<Msg: Kvt, Inspector> {
+    func: Inspector,
+    _msg: PhantomData<Msg>,
+}
+
+impl<Msg, Inspector> SafeLogic<Msg, (Msg::Key, Msg::Value, Msg::Timestamp)>
+    for InspectOp<Msg, Inspector>
+where
+    Msg: Kvt,
+    Inspector: AsyncFnMut(&DataMessage<Msg>, &OperatorContext) + 'static,
+{
+    async fn on_data(
+        &mut self,
+        msg: DataMessage<Msg>,
+        output: &mut Output<(Msg::Key, Msg::Value, Msg::Timestamp)>,
+        ctx: &mut OperatorContext,
+    ) {
+        (self.func)(&msg, ctx).await;
+        // needed for type conversion
+        let out_msg = DataMessage::new(msg.key, msg.value, msg.timestamp);
+        output.send(Message::Data(out_msg)).await;
     }
 }
 
@@ -83,7 +106,7 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     #[test]
@@ -102,7 +125,7 @@ mod tests {
                     "source",
                     StatelessSource::new(SingleIteratorSource::new(input.clone())),
                 )
-                .inspect("inspect", move |x, _| {
+                .inspect("inspect", async move |x, _| {
                     inspect_collector.give(x.value.to_owned())
                 })
                 .sink("sink", StatelessSink::new(output_collector.clone()));

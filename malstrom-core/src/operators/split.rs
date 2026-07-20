@@ -1,10 +1,11 @@
-use crate::channels::operator_io::{link, Input, Output};
-use crate::stream::{AppendableOperator, OperatorBuilder, StreamBuilder};
-use crate::types::{DataMessage, MaybeData, MaybeKey, MaybeTime};
+use crate::channels::operator_io::{Input, Output, link};
+use crate::stream::{Operator, SafeLogic, StreamBuilder};
+use crate::types::{DataMessage, Kvt, MaybeData, MaybeKey, MaybeTime, Message, Sealed};
+use std::marker::PhantomData;
 use std::rc::Rc;
 
 /// Split one datastream into multiple streams
-pub trait Split<K, V, T>: super::sealed::Sealed {
+pub trait Split<Msg: Kvt>: Sealed {
     /// Split a stream into const N streams.
     /// Messages will be distributed according to the given partitioning function,
     /// the function receives a mutable array of booleans, all `false` by default,
@@ -16,9 +17,9 @@ pub trait Split<K, V, T>: super::sealed::Sealed {
     /// see [crate::operators::Cloned::const_cloned].
     fn const_split<const N: usize>(
         self,
-        name: &str,
-        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool; N]) + 'static,
-    ) -> [StreamBuilder<K, V, T>; N];
+        name: impl Into<String>,
+        partitioner: impl Fn(&DataMessage<Msg>, &mut [bool; N]) + 'static,
+    ) -> [StreamBuilder<Msg>; N];
 
     /// Split a stream into multiple streams
     /// Messages will be distributed according to the given partitioning function,
@@ -31,24 +32,25 @@ pub trait Split<K, V, T>: super::sealed::Sealed {
     /// see [crate::operators::Cloned::cloned].
     fn split(
         self,
-        name: &str,
-        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool]) + 'static,
+        name: impl Into<String>,
+        partitioner: impl Fn(&DataMessage<Msg>, &mut [bool]) + 'static,
         outputs: usize,
-    ) -> Vec<StreamBuilder<K, V, T>>;
+    ) -> Vec<StreamBuilder<Msg>>;
 }
 
-impl<K, V, T> Split<K, V, T> for StreamBuilder<K, V, T>
+impl<Msg> Split<Msg> for StreamBuilder<Msg>
 where
-    K: MaybeKey,
-    V: MaybeData,
-    T: MaybeTime,
+    Msg: Kvt,
+    Msg::Key: MaybeKey,
+    Msg::Value: MaybeData,
+    Msg::Timestamp: MaybeTime,
 {
     fn const_split<const N: usize>(
         self,
-        name: &str,
-        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool; N]) + 'static,
-    ) -> [StreamBuilder<K, V, T>; N] {
-        let partitioner = move |msg: &DataMessage<K, V, T>, outputs: &mut [bool]| {
+        name: impl Into<String>,
+        partitioner: impl Fn(&DataMessage<Msg>, &mut [bool; N]) + 'static,
+    ) -> [StreamBuilder<Msg>; N] {
+        let partitioner = move |msg: &DataMessage<Msg>, outputs: &mut [bool]| {
             // PANIC: Safe to unwrap as long as the impl of `split` is correct
             let outputs: &mut [bool; N] = outputs
                 .try_into()
@@ -64,45 +66,54 @@ where
 
     fn split(
         self,
-        name: &str,
-        partitioner: impl Fn(&DataMessage<K, V, T>, &mut [bool]) + 'static,
+        name: impl Into<String>,
+        partitioner: impl Fn(&DataMessage<Msg>, &mut [bool]) + 'static,
         outputs: usize,
-    ) -> Vec<StreamBuilder<K, V, T>> {
+    ) -> Vec<StreamBuilder<Msg>> {
         let rt = self.get_runtime();
-        let mut stream_receiver = self.finish_pop_tail();
-        let mut downstream_receivers: Vec<Input<K, V, T>> =
+        let mut input = self.tail;
+
+        let mut downstream_receivers: Vec<Input<Msg>> =
             (0..outputs).map(|_| Input::new_unlinked()).collect();
 
-        let output = Output::new_unlinked(partitioner);
-
-        let mut partition_op = OperatorBuilder::new_with_output(
-            name,
-            |_| {
-                |input, output, _ctx| {
-                    if let Some(x) = input.recv() {
-                        output.send(x)
-                    }
-                }
-            },
-            output,
-        );
+        let mut partition_op =
+            Operator::direct(name.into(), Forward(PhantomData::<Msg>).into_logic());
         // we perform a swap so our new operator will get the messages
         // which come out of the input stream
-        std::mem::swap(partition_op.get_input_mut(), &mut stream_receiver);
+        std::mem::swap(&mut partition_op.input, &mut input);
+        // insert the partitioned output
+        let mut output = Output::new_unlinked(partitioner);
+        std::mem::swap(&mut partition_op.output, &mut output);
 
         // link all downstream receivers to our partition op
         for dr in downstream_receivers.iter_mut() {
-            link(partition_op.get_output_mut(), dr);
+            link(&mut partition_op.output, dr);
         }
         #[allow(clippy::unwrap_used)]
-        rt.lock()
-            .unwrap()
-            .add_operators([Box::new(partition_op).into_buildable()]);
+        rt.lock().unwrap().add_operator(partition_op);
 
         downstream_receivers
             .into_iter()
-            .map(|x| StreamBuilder::from_receiver(x, Rc::clone(&rt)))
+            .map(|x| StreamBuilder {
+                tail: x,
+                runtime: Rc::clone(&rt),
+            })
             .collect()
+    }
+}
+
+struct Forward<Msg>(PhantomData<Msg>);
+impl<Msg> SafeLogic<Msg, Msg> for Forward<Msg>
+where
+    Msg: Kvt,
+{
+    async fn on_data(
+        &mut self,
+        data_message: DataMessage<Msg>,
+        output: &mut Output<Msg>,
+        ctx: &mut crate::stream::OperatorContext,
+    ) {
+        output.send(Message::Data(data_message));
     }
 }
 
@@ -113,7 +124,7 @@ mod tests {
         operators::*,
         sinks::StatelessSink,
         sources::{SingleIteratorSource, StatelessSource},
-        testing::{get_test_rt, VecSink},
+        testing::{VecSink, get_test_rt},
     };
 
     /// Test const split

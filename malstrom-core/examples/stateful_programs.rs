@@ -24,9 +24,9 @@ fn build_dataflow(provider: &mut dyn StreamProvider) -> () {
             StatelessSource::new(SingleIteratorSource::new(0..=100)),
         )
         .key_distribute("key-by-value", |_| 0, rendezvous_select)
-        .stateful_map("sum", |_key, value, state: i32| {
+        .stateful_map("sum", async |_key, value, state: i32| {
             let state = state + value;
             (state.clone(), Some(state))
         })
-        .inspect("print", |x, _ctx_| println!("{}", x.value));
+        .inspect("print", async |x, _ctx_| println!("{}", x.value));
 }
